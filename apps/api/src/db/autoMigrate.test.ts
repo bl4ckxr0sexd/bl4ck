@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { detectState, hashSql, deriveAppConnectionString } from './autoMigrate';
+import {
+  detectState,
+  hashSql,
+  hasNoTransactionDirective,
+  splitSqlStatements,
+  deriveAppConnectionString,
+} from './autoMigrate';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -257,6 +263,129 @@ describe('autoMigrate', () => {
       }
 
       expect(violations).toEqual([]);
+    });
+  });
+
+  describe('hasNoTransactionDirective', () => {
+    it('returns true when "-- @no-transaction" is the first line', () => {
+      expect(hasNoTransactionDirective('-- @no-transaction\nCREATE INDEX foo ON bar (x);')).toBe(
+        true,
+      );
+    });
+
+    it('returns true when the directive has leading whitespace', () => {
+      expect(hasNoTransactionDirective('   -- @no-transaction\nSELECT 1;')).toBe(true);
+    });
+
+    it('returns true when the directive appears after non-directive lines', () => {
+      // Order in the file should not matter — operators may add the marker
+      // after a copyright header. The runner checks the whole file.
+      expect(
+        hasNoTransactionDirective('-- header\n-- comment\n-- @no-transaction\nSELECT 1;'),
+      ).toBe(true);
+    });
+
+    it('returns false when the directive is missing', () => {
+      expect(hasNoTransactionDirective('CREATE INDEX IF NOT EXISTS foo ON bar (x);')).toBe(false);
+    });
+
+    it('returns false for a comment that merely mentions @no-transaction inline', () => {
+      // The marker must be the start of the comment ("-- @no-transaction"),
+      // not a substring of a normal comment, so that a sentence like
+      // "# @no-transaction can be useful" in a docstring doesn't accidentally
+      // opt a migration out of the transaction.
+      expect(
+        hasNoTransactionDirective(
+          '-- This migration is normal. See the @no-transaction docs for index migrations.\nSELECT 1;',
+        ),
+      ).toBe(false);
+    });
+
+    it('returns false for a line that is not a SQL comment', () => {
+      expect(hasNoTransactionDirective('@no-transaction\nSELECT 1;')).toBe(false);
+      expect(hasNoTransactionDirective('# @no-transaction\nSELECT 1;')).toBe(false);
+    });
+
+    it('matches "@no-transaction" only as a whole word', () => {
+      expect(hasNoTransactionDirective('-- @no-transactional\nSELECT 1;')).toBe(false);
+    });
+  });
+
+  describe('splitSqlStatements', () => {
+    it('splits a typical CREATE INDEX CONCURRENTLY migration', () => {
+      const sql = `-- @no-transaction
+-- Devices: scale indexes for /devices list endpoint.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS devices_org_id_last_seen_at_idx
+  ON devices (org_id, last_seen_at DESC);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS devices_org_id_status_idx
+  ON devices (org_id, status);
+`;
+      const out = splitSqlStatements(sql);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toContain('devices_org_id_last_seen_at_idx');
+      expect(out[1]).toContain('devices_org_id_status_idx');
+      expect(out[0]).not.toContain(';');
+      expect(out[1]).not.toContain(';');
+    });
+
+    it('returns an empty array for a comment-only file', () => {
+      expect(splitSqlStatements('-- nothing here\n-- @no-transaction\n')).toEqual([]);
+    });
+
+    it('returns a single statement when there is no trailing semicolon', () => {
+      expect(splitSqlStatements('SELECT 1')).toEqual(['SELECT 1']);
+    });
+
+    it('preserves semicolons inside single-quoted string literals', () => {
+      const sql = "INSERT INTO t (s) VALUES ('a;b;c'); INSERT INTO t (s) VALUES ('d');";
+      const out = splitSqlStatements(sql);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toBe("INSERT INTO t (s) VALUES ('a;b;c')");
+      expect(out[1]).toBe("INSERT INTO t (s) VALUES ('d')");
+    });
+
+    it("handles SQL-doubled single quotes inside literals", () => {
+      const sql = "INSERT INTO t (s) VALUES ('Bobby''s; table'); SELECT 1;";
+      const out = splitSqlStatements(sql);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toBe("INSERT INTO t (s) VALUES ('Bobby''s; table')");
+      expect(out[1]).toBe('SELECT 1');
+    });
+
+    it('preserves semicolons inside dollar-quoted blocks', () => {
+      const sql = `CREATE OR REPLACE FUNCTION f() RETURNS void AS $$
+BEGIN
+  RAISE NOTICE 'a;b;c';
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT 1;`;
+      const out = splitSqlStatements(sql);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toContain('CREATE OR REPLACE FUNCTION');
+      expect(out[0]).toContain("RAISE NOTICE 'a;b;c'");
+      expect(out[1]).toBe('SELECT 1');
+    });
+
+    it('handles tagged dollar quotes ($tag$ ... $tag$)', () => {
+      const sql = "DO $body$ BEGIN PERFORM 1; END $body$; SELECT 2;";
+      const out = splitSqlStatements(sql);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toBe('DO $body$ BEGIN PERFORM 1; END $body$');
+      expect(out[1]).toBe('SELECT 2');
+    });
+
+    it('strips line comments but preserves the statements following them', () => {
+      const sql = `-- header comment with a; semicolon
+CREATE INDEX CONCURRENTLY IF NOT EXISTS foo_idx ON t (a);
+-- another comment
+CREATE INDEX CONCURRENTLY IF NOT EXISTS bar_idx ON t (b);`;
+      const out = splitSqlStatements(sql);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toContain('foo_idx');
+      expect(out[1]).toContain('bar_idx');
     });
   });
 });

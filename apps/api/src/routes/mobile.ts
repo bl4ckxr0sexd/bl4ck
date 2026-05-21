@@ -47,6 +47,30 @@ function getPagination(query: { page?: string; limit?: string }) {
   return { page, limit, offset: (page - 1) * limit };
 }
 
+// Keyset cursor: opaque base64url JSON {ts,id}. Optional and additive — when
+// not supplied, page/limit semantics are unchanged. When supplied, paginates
+// past the (timestamp,id) pair on the ordering column.
+// Exported for unit testing.
+export type CursorTuple = { ts: Date; id: string };
+export function encodeCursor(ts: Date | string | null | undefined, id: string): string | null {
+  if (!ts || !id) return null;
+  const iso = ts instanceof Date ? ts.toISOString() : ts;
+  return Buffer.from(JSON.stringify({ ts: iso, id }), 'utf8').toString('base64url');
+}
+export function decodeCursor(raw: string | undefined): CursorTuple | null {
+  if (!raw) return null;
+  try {
+    const json = Buffer.from(raw, 'base64url').toString('utf8');
+    const parsed = JSON.parse(json) as { ts?: unknown; id?: unknown };
+    if (typeof parsed.ts !== 'string' || typeof parsed.id !== 'string') return null;
+    const ts = new Date(parsed.ts);
+    if (Number.isNaN(ts.getTime())) return null;
+    return { ts, id: parsed.id };
+  } catch {
+    return null;
+  }
+}
+
 function derivePushDeviceId(userId: string, platform: 'ios' | 'android', token: string) {
   const tokenHash = createHash('sha256')
     .update(`${userId}:${platform}:${token}`)
@@ -184,6 +208,7 @@ const updateDeviceSettingsSchema = z.object({
 const inboxQuerySchema = z.object({
   page: z.string().optional(),
   limit: z.string().optional(),
+  cursor: z.string().optional(),
   status: z.enum(['active', 'acknowledged', 'resolved', 'suppressed']).optional(),
   orgId: z.string().uuid().optional()
 });
@@ -195,6 +220,7 @@ const resolveAlertSchema = z.object({
 const listDevicesSchema = z.object({
   page: z.string().optional(),
   limit: z.string().optional(),
+  cursor: z.string().optional(),
   orgId: z.string().uuid().optional(),
   status: z.enum(['online', 'offline', 'maintenance', 'decommissioned']).optional(),
   search: z.string().optional()
@@ -503,6 +529,12 @@ mobileRoutes.delete(
 );
 
 // GET /alerts/inbox - Get alert inbox with status filter
+//
+// Pagination is dual-mode (additive):
+//   - Legacy: page+limit; response carries `total` so callers can show "N of M".
+//   - Cursor: opaque `cursor` from a prior response's `nextCursor`; keyset on
+//     (triggered_at DESC, id DESC). Stable under concurrent inserts and cheap
+//     on deep pages. When `cursor` is supplied, `page` is ignored.
 mobileRoutes.get(
   '/alerts/inbox',
   requireScope('organization', 'partner', 'system'),
@@ -512,6 +544,7 @@ mobileRoutes.get(
     const auth = c.get('auth');
     const query = c.req.valid('query');
     const { page, limit, offset } = getPagination(query);
+    const cursor = decodeCursor(query.cursor);
 
     const orgCheck = await getOrgIdsForAuth(auth, query.orgId);
     if (orgCheck.error) {
@@ -521,13 +554,19 @@ mobileRoutes.get(
     const conditions: ReturnType<typeof eq>[] = [];
     if (orgCheck.orgIds !== null) {
       if (orgCheck.orgIds.length === 0) {
-        return c.json({ data: [], pagination: { page, limit, total: 0 } });
+        return c.json({ data: [], pagination: { page, limit, total: 0, nextCursor: null } });
       }
       conditions.push(inArray(alerts.orgId, orgCheck.orgIds));
     }
 
     if (query.status) {
       conditions.push(eq(alerts.status, query.status));
+    }
+
+    if (cursor) {
+      conditions.push(
+        sql`(${alerts.triggeredAt} < ${cursor.ts.toISOString()} OR (${alerts.triggeredAt} = ${cursor.ts.toISOString()} AND ${alerts.id} < ${cursor.id}))`
+      );
     }
 
     const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
@@ -538,6 +577,7 @@ mobileRoutes.get(
       .where(whereCondition);
     const total = Number(countResult[0]?.count ?? 0);
 
+    const fetchLimit = cursor ? limit + 1 : limit;
     const alertRows = await db
       .select({
         id: alerts.id,
@@ -557,11 +597,22 @@ mobileRoutes.get(
       .from(alerts)
       .leftJoin(devices, eq(alerts.deviceId, devices.id))
       .where(whereCondition)
-      .orderBy(desc(alerts.triggeredAt))
-      .limit(limit)
-      .offset(offset);
+      .orderBy(desc(alerts.triggeredAt), desc(alerts.id))
+      .limit(fetchLimit)
+      .offset(cursor ? 0 : offset);
 
-    const data = alertRows.map(alert => ({
+    let trimmedRows = alertRows;
+    let nextCursor: string | null = null;
+    if (cursor) {
+      const hasMore = alertRows.length > limit;
+      trimmedRows = hasMore ? alertRows.slice(0, limit) : alertRows;
+      const last = trimmedRows[trimmedRows.length - 1];
+      if (hasMore && last) {
+        nextCursor = encodeCursor(last.triggeredAt, last.id);
+      }
+    }
+
+    const data = trimmedRows.map(alert => ({
       id: alert.id,
       orgId: alert.orgId,
       status: alert.status,
@@ -581,7 +632,7 @@ mobileRoutes.get(
 
     return c.json({
       data,
-      pagination: { page, limit, total }
+      pagination: { page, limit, total, nextCursor }
     });
   }
 );
@@ -735,6 +786,12 @@ mobileRoutes.post(
 );
 
 // GET /devices - Get simplified device list for mobile
+//
+// Pagination is dual-mode (additive):
+//   - Legacy: page+limit; response carries `total` so callers can show "N of M".
+//   - Cursor: opaque `cursor` from a prior response's `nextCursor`; keyset on
+//     (last_seen_at DESC, id DESC). Stable under concurrent inserts and cheap
+//     on deep pages. When `cursor` is supplied, `page` is ignored.
 mobileRoutes.get(
   '/devices',
   requireScope('organization', 'partner', 'system'),
@@ -744,6 +801,7 @@ mobileRoutes.get(
     const auth = c.get('auth');
     const query = c.req.valid('query');
     const { page, limit, offset } = getPagination(query);
+    const cursor = decodeCursor(query.cursor);
 
     const orgCheck = await getOrgIdsForAuth(auth, query.orgId);
     if (orgCheck.error) {
@@ -753,7 +811,7 @@ mobileRoutes.get(
     const conditions: ReturnType<typeof eq>[] = [];
     if (orgCheck.orgIds !== null) {
       if (orgCheck.orgIds.length === 0) {
-        return c.json({ data: [], pagination: { page, limit, total: 0 } });
+        return c.json({ data: [], pagination: { page, limit, total: 0, nextCursor: null } });
       }
       conditions.push(inArray(devices.orgId, orgCheck.orgIds));
     }
@@ -770,6 +828,12 @@ mobileRoutes.get(
       conditions.push(sql`${devices.status} != 'decommissioned'`);
     }
 
+    if (cursor) {
+      conditions.push(
+        sql`(${devices.lastSeenAt} < ${cursor.ts.toISOString()} OR (${devices.lastSeenAt} = ${cursor.ts.toISOString()} AND ${devices.id} < ${cursor.id}))`
+      );
+    }
+
     const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
 
     const countResult = await db
@@ -778,6 +842,7 @@ mobileRoutes.get(
       .where(whereCondition);
     const total = Number(countResult[0]?.count ?? 0);
 
+    const fetchLimit = cursor ? limit + 1 : limit;
     const deviceRows = await db
       .select({
         id: devices.id,
@@ -791,13 +856,24 @@ mobileRoutes.get(
       })
       .from(devices)
       .where(whereCondition)
-      .orderBy(desc(devices.lastSeenAt))
-      .limit(limit)
-      .offset(offset);
+      .orderBy(desc(devices.lastSeenAt), desc(devices.id))
+      .limit(fetchLimit)
+      .offset(cursor ? 0 : offset);
+
+    let items = deviceRows;
+    let nextCursor: string | null = null;
+    if (cursor) {
+      const hasMore = deviceRows.length > limit;
+      items = hasMore ? deviceRows.slice(0, limit) : deviceRows;
+      const last = items[items.length - 1];
+      if (hasMore && last) {
+        nextCursor = encodeCursor(last.lastSeenAt, last.id);
+      }
+    }
 
     return c.json({
-      data: deviceRows,
-      pagination: { page, limit, total }
+      data: items,
+      pagination: { page, limit, total, nextCursor }
     });
   }
 );

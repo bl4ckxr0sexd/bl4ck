@@ -18,6 +18,128 @@ export function hashSql(content: string): string {
 }
 
 /**
+ * True if a migration file opts out of the default transactional apply.
+ *
+ * Detection: the directive `-- @no-transaction` must appear at the start
+ * of a line (leading whitespace permitted) anywhere in the file. The
+ * marker is a plain SQL comment so the file remains executable through
+ * stock psql tooling. Statements like `CREATE INDEX CONCURRENTLY`,
+ * `REINDEX CONCURRENTLY`, and `VACUUM` are forbidden inside a tx by
+ * Postgres and require this opt-out.
+ *
+ * Exported for unit testing.
+ */
+export function hasNoTransactionDirective(content: string): boolean {
+  return /^\s*--\s*@no-transaction\b/m.test(content);
+}
+
+/**
+ * Split a SQL file into individual statements for no-transaction execution.
+ *
+ * Postgres's simple-query protocol wraps multi-statement single queries
+ * in an implicit transaction — fatal for `CREATE INDEX CONCURRENTLY`,
+ * which Postgres refuses to run inside any transaction (CI proved this
+ * the first time we tried). The fix is to send each statement as its
+ * own command on the wire.
+ *
+ * This is a small targeted splitter, not a full SQL lexer. It handles
+ * the shapes used by no-transaction migrations in this repo:
+ *   - Line comments (`-- ...`) — stripped before splitting.
+ *   - Single- and double-quoted literals — `;` inside is preserved.
+ *   - Dollar-quoted blocks (`$$ ... $$`, `$tag$ ... $tag$`) — `;` inside is preserved.
+ *
+ * Returns the statements in original order with surrounding whitespace
+ * stripped and empty fragments removed.
+ *
+ * Exported for unit testing.
+ */
+export function splitSqlStatements(content: string): string[] {
+  // 1. Strip line comments — they can carry stray semicolons.
+  const stripped = content.replace(/--[^\n]*$/gm, '');
+
+  const out: string[] = [];
+  let buf = '';
+  let i = 0;
+  while (i < stripped.length) {
+    const ch = stripped[i]!;
+
+    // Single-quoted string literal: 'foo''bar'
+    if (ch === "'") {
+      buf += ch;
+      i++;
+      while (i < stripped.length) {
+        const c = stripped[i]!;
+        buf += c;
+        i++;
+        if (c === "'") {
+          if (stripped[i] === "'") {
+            buf += stripped[i]!;
+            i++;
+          } else {
+            break;
+          }
+        }
+      }
+      continue;
+    }
+
+    // Double-quoted identifier: "foo""bar"
+    if (ch === '"') {
+      buf += ch;
+      i++;
+      while (i < stripped.length) {
+        const c = stripped[i]!;
+        buf += c;
+        i++;
+        if (c === '"') {
+          if (stripped[i] === '"') {
+            buf += stripped[i]!;
+            i++;
+          } else {
+            break;
+          }
+        }
+      }
+      continue;
+    }
+
+    // Dollar-quoted: $$...$$ or $tag$...$tag$
+    if (ch === '$') {
+      const tagMatch = stripped.slice(i).match(/^\$([A-Za-z_][A-Za-z0-9_]*)?\$/);
+      if (tagMatch) {
+        const close = tagMatch[0];
+        buf += close;
+        i += close.length;
+        const end = stripped.indexOf(close, i);
+        if (end === -1) {
+          buf += stripped.slice(i);
+          i = stripped.length;
+        } else {
+          buf += stripped.slice(i, end + close.length);
+          i = end + close.length;
+        }
+        continue;
+      }
+    }
+
+    if (ch === ';') {
+      const trimmed = buf.trim();
+      if (trimmed.length > 0) out.push(trimmed);
+      buf = '';
+      i++;
+      continue;
+    }
+
+    buf += ch;
+    i++;
+  }
+
+  const tail = buf.trim();
+  if (tail.length > 0) out.push(tail);
+  return out;
+}
+
+/**
  * Build a connection string for the unprivileged `breeze_app` role by taking
  * an admin DATABASE_URL and swapping in the app user+password. Returns null
  * if no password is available or the admin URL can't be parsed — callers
@@ -252,14 +374,50 @@ export async function autoMigrate(): Promise<void> {
       const content = await readFile(sqlPath, 'utf8');
       const checksum = hashSql(content);
 
-      console.log(`[auto-migrate] Applying: ${filename}`);
-      await client.begin(async (tx) => {
-        await tx.unsafe(content);
-        await tx.unsafe(
+      // Migrations marked with `-- @no-transaction` at the top run OUTSIDE
+      // a transaction. Required for statements Postgres forbids inside a
+      // tx — most notably `CREATE INDEX CONCURRENTLY`, which is the
+      // non-blocking variant we need on hot multi-million-row tables
+      // (devices, audit_logs, agent_logs) where a normal CREATE INDEX
+      // takes a SHARE lock and stalls every agent heartbeat / log ship /
+      // audit write for the duration of the build (#753 P0).
+      //
+      // Idempotency contract: a no-transaction migration MUST be safe to
+      // re-apply on partial failure — every statement should use
+      // `IF NOT EXISTS` / `IF EXISTS` / `CREATE OR REPLACE`. If the SQL
+      // succeeds but the breeze_migrations INSERT fails, the next run
+      // will re-apply the file; that's why `CREATE INDEX CONCURRENTLY IF
+      // NOT EXISTS` is the canonical pattern here. Recovery from a
+      // failed CONCURRENTLY (which leaves an invalid index) requires an
+      // operator to `DROP INDEX <name>` before the next deploy.
+      const isNoTransaction = hasNoTransactionDirective(content);
+      console.log(
+        `[auto-migrate] Applying: ${filename}${isNoTransaction ? ' (no-transaction)' : ''}`,
+      );
+      if (isNoTransaction) {
+        // Send statements one at a time so each command leaves the
+        // driver as its own simple-query exchange. Sending the whole
+        // file via `client.unsafe(content)` would group the statements
+        // and Postgres treats a multi-statement simple query as an
+        // implicit transaction — which `CREATE INDEX CONCURRENTLY`
+        // refuses to run inside.
+        const statements = splitSqlStatements(content);
+        for (const stmt of statements) {
+          await client.unsafe(stmt);
+        }
+        await client.unsafe(
           `INSERT INTO ${MIGRATION_TABLE} (filename, checksum) VALUES ($1, $2)`,
           [filename, checksum],
         );
-      });
+      } else {
+        await client.begin(async (tx) => {
+          await tx.unsafe(content);
+          await tx.unsafe(
+            `INSERT INTO ${MIGRATION_TABLE} (filename, checksum) VALUES ($1, $2)`,
+            [filename, checksum],
+          );
+        });
+      }
       appliedCount++;
     }
 

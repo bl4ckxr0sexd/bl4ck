@@ -20,7 +20,24 @@ import { recordBackupCommandTimeout, recordRestoreTimeout } from '../services/ba
 
 const QUEUE_NAME = 'stale-command-reaper';
 const REAP_INTERVAL_MS = 2 * 60 * 1000; // every 2 minutes
-const MAX_REAP_PER_RUN = 200;
+// Per-run cap (env-tunable). Was a hardcoded 200 which silently truncated the
+// reaper above ~200 stale items per type — see scaling audit 2026-05-17. The
+// per-row update logic still runs sequentially inside JS to preserve metrics
+// and propagation side-effects; this just lets us cover more rows per cycle.
+//
+// `STALE_REAPER_MAX_PER_RUN=0` means UNLIMITED (matches the convention
+// `alertWorker` + `offlineDetector` adopt in this PR). Passing `.limit(0)`
+// to drizzle disables the limit clause is NOT a Postgres semantic —
+// `.limit(0)` returns zero rows, which would silently disable the
+// reaper. Normalize to `Number.MAX_SAFE_INTEGER` so the consistent
+// "cap=0 == unlimited" knob actually behaves that way here.
+const RAW_MAX_REAP = Number(process.env.STALE_REAPER_MAX_PER_RUN ?? '5000');
+const MAX_REAP_PER_RUN =
+  Number.isFinite(RAW_MAX_REAP) && RAW_MAX_REAP > 0
+    ? RAW_MAX_REAP
+    : RAW_MAX_REAP === 0
+      ? Number.MAX_SAFE_INTEGER
+      : 5000; // negative / NaN fall back to default rather than disabling the reaper
 const SHORTEST_TIMEOUT_MS = 5 * 60 * 1000; // conservative SQL pre-filter
 
 // Backup-related command types — used to guard backup-specific Prometheus metrics
