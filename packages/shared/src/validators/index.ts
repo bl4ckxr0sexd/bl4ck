@@ -144,6 +144,18 @@ export const deviceQuerySchema = paginationSchema.extend({
 // Script Validators
 // ============================================
 
+// Feature #3 (severity-by-exit-code): exit code → AlertSeverity (or null = no alert).
+// Keys must be non-negative integer strings (e.g. "0", "1", "2"). Negative or
+// fractional codes are runtime-only (SIGKILL = -9 on Unix); the schema only
+// accepts the canonical wire-format representation.
+//
+// Lives here so route handlers, UI forms, and tests all import the same shape.
+export const alertSeverityValueSchema = z.enum(['critical', 'high', 'medium', 'low', 'info']);
+export const exitCodeSeverityMappingSchema = z.record(
+  z.string().regex(/^\d+$/, 'Exit codes must be non-negative integer strings'),
+  alertSeverityValueSchema.nullable()
+);
+
 export const createScriptSchema = z.object({
   name: z.string().min(1).max(255),
   description: z.string().max(2000).optional(),
