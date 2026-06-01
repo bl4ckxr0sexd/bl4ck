@@ -24,6 +24,8 @@ import type { AiTool } from './aiTools';
 import { CommandTypes, queueCommandForExecution } from './commandQueue';
 import { createManualBackupJobIfIdle } from './backupJobCreation';
 import { enqueueBackupDispatch } from '../jobs/backupEnqueue';
+import { deviceSiteDenied, resolveSiteAllowedDeviceIds } from './aiToolsSiteScope';
+import { inArray } from 'drizzle-orm';
 
 type BackupHandler = (input: Record<string, unknown>, auth: AuthContext) => Promise<string>;
 
@@ -188,6 +190,21 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
         if (typeof input.deviceId === 'string') conditions.push(eq(backupJobs.deviceId, input.deviceId as string));
         if (typeof input.configId === 'string') conditions.push(eq(backupJobs.configId, input.configId as string));
 
+        // Site axis (app-layer only; RLS does NOT enforce it). backupJobs are
+        // device-keyed; a site-restricted caller may only see jobs for devices
+        // in their allowed sites. Narrow to that set (query_vaults pattern).
+        const orgId = getOrgId(auth);
+        if (auth.allowedSiteIds && orgId) {
+          const allowed = await resolveSiteAllowedDeviceIds(orgId, auth);
+          if (!allowed || allowed.length === 0) {
+            return JSON.stringify({ jobs: [], showing: 0 });
+          }
+          if (typeof input.deviceId === 'string' && !allowed.includes(input.deviceId)) {
+            return JSON.stringify({ jobs: [], showing: 0 });
+          }
+          conditions.push(inArray(backupJobs.deviceId, allowed));
+        }
+
         const rows = await db.select({
           id: backupJobs.id,
           configId: backupJobs.configId,
@@ -278,9 +295,11 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
         const deviceConditions: SQL[] = [eq(devices.id, deviceId)];
         const dc = orgWhere(auth, devices.orgId);
         if (dc) deviceConditions.push(dc);
-        const [device] = await db.select({ id: devices.id }).from(devices)
+        const [device] = await db.select({ id: devices.id, siteId: devices.siteId }).from(devices)
           .where(and(...deviceConditions)).limit(1);
         if (!device) return JSON.stringify({ error: 'Device not found or access denied' });
+        // Site axis (app-layer only; RLS does NOT enforce it).
+        if (deviceSiteDenied(auth, device.siteId)) return JSON.stringify({ error: 'Device not found or access denied' });
 
         // Latest backup job for device
         const jobOrgCond = orgWhere(auth, backupJobs.orgId);
@@ -404,11 +423,12 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
       const deviceConditions: SQL[] = [eq(devices.id, deviceId)];
       const dc = orgWhere(auth, devices.orgId);
       if (dc) deviceConditions.push(dc);
-      const [device] = await db.select({ id: devices.id, hostname: devices.hostname })
+      const [device] = await db.select({ id: devices.id, hostname: devices.hostname, siteId: devices.siteId })
         .from(devices)
         .where(and(...deviceConditions))
         .limit(1);
       if (!device) return JSON.stringify({ error: 'Device not found or access denied' });
+      if (deviceSiteDenied(auth, device.siteId)) return JSON.stringify({ error: 'Device not found or access denied' });
 
       const limit = Math.min(Math.max(1, Number(input.limit) || 25), 100);
       const snapshotOrgCond = orgWhere(auth, backupSnapshots.orgId);
@@ -474,9 +494,10 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
       const deviceConditions: SQL[] = [eq(devices.id, deviceId)];
       const dc = orgWhere(auth, devices.orgId);
       if (dc) deviceConditions.push(dc);
-      const [device] = await db.select({ id: devices.id, status: devices.status }).from(devices)
+      const [device] = await db.select({ id: devices.id, status: devices.status, siteId: devices.siteId }).from(devices)
         .where(and(...deviceConditions)).limit(1);
       if (!device) return JSON.stringify({ error: 'Device not found or access denied' });
+      if (deviceSiteDenied(auth, device.siteId)) return JSON.stringify({ error: 'Device not found or access denied' });
       if (device.status !== 'online') {
         return JSON.stringify({ error: `Device is ${device.status}, cannot execute backup` });
       }
@@ -570,9 +591,10 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
       const deviceConditions: SQL[] = [eq(devices.id, deviceId)];
       const dc = orgWhere(auth, devices.orgId);
       if (dc) deviceConditions.push(dc);
-      const [device] = await db.select({ id: devices.id }).from(devices)
+      const [device] = await db.select({ id: devices.id, siteId: devices.siteId }).from(devices)
         .where(and(...deviceConditions)).limit(1);
       if (!device) return JSON.stringify({ error: 'Device not found or access denied' });
+      if (deviceSiteDenied(auth, device.siteId)) return JSON.stringify({ error: 'Device not found or access denied' });
 
       // Verify snapshot exists and belongs to org (via orgId on snapshots table)
       const snapshotConditions: SQL[] = [eq(backupSnapshots.id, snapshotId)];
