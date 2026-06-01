@@ -302,6 +302,59 @@ describe('analyzeRouteSource — dead permissions-sourced site gate detector', (
   });
 });
 
+describe('analyzeRouteSource — non-user-session auth guard detection', () => {
+  it('flags a file mounting a non-user auth guard (helperAuth)', () => {
+    const src = [
+      `helperRoutes.use('*', helperAuth);`,
+      `helperRoutes.get('/chat/sessions', async (c) => c.json([]));`,
+    ].join('\n');
+    const route = analyzeRouteSource('routes/helper/index.ts', src, DEVICE_TABLES)[0]!;
+    expect(route.referencesNonUserAuthGuard).toBe(true);
+  });
+
+  it('does NOT flag a file guarded only by the user authMiddleware', () => {
+    const src = [
+      `mobileRoutes.use('*', authMiddleware);`,
+      `mobileRoutes.post('/devices', async (c) => c.json({}));`,
+    ].join('\n');
+    const route = analyzeRouteSource('routes/mobile.ts', src, DEVICE_TABLES)[0]!;
+    expect(route.referencesNonUserAuthGuard).toBe(false);
+  });
+
+  it('treats the routes/agents/ tree as non-user auth (mounted at agents/index.ts)', () => {
+    // Sub-files rely on the parent agentAuthMiddleware mount and reference no
+    // guard token themselves.
+    const src = `changesRoutes.put('/:id/changes', async (c) => c.json({}));`;
+    const route = analyzeRouteSource('routes/agents/changes.ts', src, DEVICE_TABLES)[0]!;
+    expect(route.referencesNonUserAuthGuard).toBe(true);
+  });
+
+  it('flags agent-role, viewer-token, portal, and platform-admin guards', () => {
+    for (const guard of ['requireAgentRole', 'requireViewerToken', "c.get('portalAuth')", 'platformAdminMiddleware']) {
+      const src = `${guard}\nr.get('/x', async (c) => c.json([]));`;
+      const route = analyzeRouteSource('routes/x.ts', src, DEVICE_TABLES)[0]!;
+      expect(route.referencesNonUserAuthGuard, guard).toBe(true);
+    }
+  });
+
+  it('treats the routes/admin/ tree as non-user auth (platformAdminMiddleware at admin/index.ts)', () => {
+    const src = `abuseRoutes.post('/partners/:id/suspend-for-abuse', async (c) => c.json({}));`;
+    const route = analyzeRouteSource('routes/admin/abuse.ts', src, DEVICE_TABLES)[0]!;
+    expect(route.referencesNonUserAuthGuard).toBe(true);
+  });
+
+  it('does NOT flag on a bare users.isPlatformAdmin column reference outside routes/admin/', () => {
+    // The column/context field is not an auth guard — a user-session route that
+    // merely reads it must not pass the re-verification (regression guard).
+    const src = [
+      `mcpRoutes.use('*', apiKeyAuthMiddleware);`,
+      `mcpRoutes.get('/x', async (c) => { const a = users.isPlatformAdmin; return c.json([]); });`,
+    ].join('\n');
+    const route = analyzeRouteSource('routes/mcpServer.ts', src, DEVICE_TABLES)[0]!;
+    expect(route.referencesNonUserAuthGuard).toBe(false);
+  });
+});
+
 describe('findDeviceScopedTables — schema-derived table set', () => {
   it('includes known device/site-scoped tables', async () => {
     const tables = await findDeviceScopedTables();

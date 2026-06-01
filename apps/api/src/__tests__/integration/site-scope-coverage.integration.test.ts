@@ -130,6 +130,66 @@ describe('site-scope coverage', () => {
 // carry a one-line justification. (Empty for now — the initial rollout uses the
 // baseline ratchet below rather than pre-vetting all 93 pre-existing hits.)
 const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
+  // ---- Agent / helper / viewer-token paths: authenticated by an AGENT or
+  // helper/viewer token, NOT a user session, so there is no `permissions`
+  // context and `allowedSiteIds` never applies. (Codex triage 2026-05-31.)
+  'routes/agents/bootPerformance.ts:POST /:id/boot-performance',
+  'routes/agents/changes.ts:PUT /:id/changes',
+  'routes/agents/commands.ts:POST /:id/commands/:commandId/result',
+  'routes/agents/connections.ts:PUT /:id/connections',
+  'routes/agents/elevationRequests.ts:POST /:id/elevation-requests',
+  'routes/agents/enrollment.ts:POST /enroll',
+  'routes/agents/inventory.ts:PUT /:id/disks',
+  'routes/agents/inventory.ts:PUT /:id/hardware',
+  'routes/agents/inventory.ts:PUT /:id/network',
+  'routes/agents/inventory.ts:PUT /:id/software',
+  'routes/agents/inventory.ts:PUT /:id/warranty-info',
+  'routes/agents/patches.ts:PUT /:id/patches',
+  'routes/agents/sessions.ts:PUT /:id/sessions',
+  'routes/agents/state.ts:PUT /:id/config-state',
+  'routes/agents/state.ts:PUT /:id/registry-state',
+  'routes/desktopWs.ts:POST /connect/exchange',
+  'routes/helper/index.ts:DELETE /chat/sessions/:id',
+  'routes/helper/index.ts:GET /chat/sessions',
+  'routes/helper/index.ts:GET /chat/sessions/:id/messages',
+  'routes/helper/index.ts:POST /chat/sessions/:id/approve/:executionId',
+  'routes/helper/index.ts:POST /chat/sessions/:id/flag',
+  'routes/tunnels.ts:GET /desktop-access',
+  'routes/tunnels.ts:POST /downgrade-to-vnc',
+  'routes/tunnels.ts:POST /upgrade-to-webrtc',
+  // ---- Not the bug class: platform-admin-only, portal-session auth, or a
+  // mobile/OAuth device row (not an RMM device with a site).
+  'routes/admin/abuse.ts:POST /partners/:id/suspend-for-abuse',
+  'routes/lifecycle.ts:GET /admin/users/:userId/mobile-devices',
+  'routes/lifecycle.ts:GET /me/mobile-devices',
+  'routes/mobile.ts:POST /devices',
+  'routes/mobile.ts:POST /notifications/register',
+  'routes/portal/assets.ts:GET /assets',
+  'routes/portal/assets.ts:POST /assets/:id/checkin',
+  'routes/portal/assets.ts:POST /assets/:id/checkout',
+  // ---- Genuinely site-gated via the cross-file `getDeviceWithOrgCheck`
+  // helper (routes/remote/helpers.ts), which the file-local scanner can't see.
+  'routes/remote/sessions.ts:POST /sessions',
+  'routes/remote/transfers.ts:POST /transfers',
+]);
+
+// SITE_SCOPE_INPUT_EXEMPT entries that ARE reached via the user `authMiddleware`
+// (so they DO carry a `permissions` context) but are exempt for a reason other
+// than "non-user auth": the `deviceId` is a mobile/OAuth device row (not an RMM
+// device with a site), or the route is genuinely site-gated through a cross-file
+// helper the file-local scanner can't see. Every other exempt MUST be backed by
+// a non-user-session auth guard in its file (see the re-verification test) — this
+// set enumerates the deliberate user-session exceptions so they can't hide a
+// future regression where a non-user-auth file is migrated to plain user auth.
+const SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK: ReadonlySet<string> = new Set<string>([
+  // Mobile/OAuth device rows keyed on the user — not RMM devices with a site.
+  'routes/mobile.ts:POST /devices',
+  'routes/mobile.ts:POST /notifications/register',
+  'routes/lifecycle.ts:GET /admin/users/:userId/mobile-devices',
+  'routes/lifecycle.ts:GET /me/mobile-devices',
+  // Site-gated via the cross-file getDeviceWithOrgCheck resolver (remote/helpers.ts).
+  'routes/remote/sessions.ts:POST /sessions',
+  'routes/remote/transfers.ts:POST /transfers',
 ]);
 
 // BASELINE RATCHET — pre-existing handlers flagged at the time this detector
@@ -147,22 +207,6 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
 // the ratchet one-directional — a fixed handler's baseline entry must be removed.
 // Full plan + triage guidance: docs/superpowers/plans/2026-05-31-site-scope-input-scanner.md
 const SITE_SCOPE_INPUT_BASELINE: ReadonlySet<string> = new Set<string>([
-  'routes/admin/abuse.ts:POST /partners/:id/suspend-for-abuse',
-  'routes/agents/bootPerformance.ts:POST /:id/boot-performance',
-  'routes/agents/changes.ts:PUT /:id/changes',
-  'routes/agents/commands.ts:POST /:id/commands/:commandId/result',
-  'routes/agents/connections.ts:PUT /:id/connections',
-  'routes/agents/elevationRequests.ts:POST /:id/elevation-requests',
-  'routes/agents/enrollment.ts:POST /enroll',
-  'routes/agents/inventory.ts:PUT /:id/disks',
-  'routes/agents/inventory.ts:PUT /:id/hardware',
-  'routes/agents/inventory.ts:PUT /:id/network',
-  'routes/agents/inventory.ts:PUT /:id/software',
-  'routes/agents/inventory.ts:PUT /:id/warranty-info',
-  'routes/agents/patches.ts:PUT /:id/patches',
-  'routes/agents/sessions.ts:PUT /:id/sessions',
-  'routes/agents/state.ts:PUT /:id/config-state',
-  'routes/agents/state.ts:PUT /:id/registry-state',
   'routes/alerts/alerts.ts:GET /',
   'routes/auditLogs.ts:GET /logs/:id',
   'routes/backup/bmr.ts:GET /bmr/tokens',
@@ -177,68 +221,42 @@ const SITE_SCOPE_INPUT_BASELINE: ReadonlySet<string> = new Set<string>([
   'routes/cisHardening.ts:GET /compliance',
   'routes/cisHardening.ts:GET /remediations',
   'routes/deployments.ts:GET /:id/devices',
-  'routes/desktopWs.ts:POST /connect/exchange',
-  'routes/devices/provision.ts:POST /provision',
-  'routes/discovery.ts:DELETE /assets/:id',
   'routes/discovery.ts:GET /assets',
-  'routes/discovery.ts:POST /assets/:id/link',
   'routes/groups.ts:GET /',
   'routes/groups.ts:GET /:id/devices',
   'routes/groups.ts:GET /:id/membership-log',
-  'routes/helper/index.ts:DELETE /chat/sessions/:id',
-  'routes/helper/index.ts:GET /chat/sessions',
-  'routes/helper/index.ts:GET /chat/sessions/:id/messages',
-  'routes/helper/index.ts:POST /chat/sessions/:id/approve/:executionId',
-  'routes/helper/index.ts:POST /chat/sessions/:id/flag',
   'routes/huntress.ts:GET /status',
-  'routes/lifecycle.ts:GET /admin/users/:userId/mobile-devices',
-  'routes/lifecycle.ts:GET /me/mobile-devices',
   'routes/metrics.ts:GET /',
   'routes/metrics.ts:GET /trends',
   'routes/mobile.ts:GET /alerts/inbox',
   'routes/mobile.ts:GET /devices',
   'routes/mobile.ts:GET /search',
-  'routes/mobile.ts:POST /devices',
-  'routes/mobile.ts:POST /notifications/register',
   'routes/monitoring.ts:GET /assets',
   'routes/monitoring.ts:GET /assets/:id',
   'routes/monitoring.ts:GET /results',
   'routes/networkBaselines.ts:GET /',
-  'routes/networkBaselines.ts:POST /',
   'routes/networkChanges.ts:GET /',
   'routes/patches/compliance.ts:GET /compliance',
   'routes/playbooks.ts:GET /executions',
   'routes/playbooks.ts:GET /executions/:id',
   'routes/policyManagement/compliance.ts:GET /:id/compliance',
-  'routes/portal/assets.ts:GET /assets',
-  'routes/portal/assets.ts:POST /assets/:id/checkin',
-  'routes/portal/assets.ts:POST /assets/:id/checkout',
   'routes/psa.ts:GET /connections/:id/tickets',
   'routes/psa.ts:GET /tickets',
-  'routes/remote/sessions.ts:DELETE /sessions/stale',
   'routes/remote/sessions.ts:GET /sessions',
   'routes/remote/sessions.ts:GET /sessions/history',
-  'routes/remote/sessions.ts:POST /sessions',
-  'routes/remote/sessions.ts:POST /sessions/:id/offer',
   'routes/remote/transfers.ts:GET /transfers',
-  'routes/remote/transfers.ts:POST /transfers',
   'routes/reports/data.ts:GET /data/compliance',
   'routes/reports/data.ts:GET /data/device-inventory',
   'routes/reports/data.ts:GET /data/metrics',
   'routes/reports/data.ts:GET /data/software-inventory',
   'routes/reports/generate.ts:POST /generate',
-  'routes/scripts.ts:POST /executions/:id/cancel',
   'routes/sentinelOne.ts:GET /status',
   'routes/snmp.ts:GET /dashboard',
   'routes/softwareInventory.ts:GET /',
   'routes/softwareInventory.ts:GET /:name/devices',
   'routes/softwarePolicies.ts:GET /compliance/overview',
   'routes/softwarePolicies.ts:GET /violations',
-  'routes/softwarePolicies.ts:POST /:id/remediate',
   'routes/tunnels.ts:GET /allowlist',
-  'routes/tunnels.ts:GET /desktop-access',
-  'routes/tunnels.ts:POST /downgrade-to-vnc',
-  'routes/tunnels.ts:POST /upgrade-to-webrtc',
   'routes/updateRings.ts:GET /:id/compliance',
 ]);
 
@@ -267,6 +285,39 @@ describe('site-scope coverage — input-sourced / list-style', () => {
           `shrinks.`;
 
     expect(offenders, message).toEqual([]);
+  });
+
+  it('every input-exempt entry stays backed by a non-user-session auth guard', async () => {
+    // Re-verification: the SITE_SCOPE_INPUT_EXEMPT entries are justified by the
+    // route having no user `permissions` context (agent/helper/portal/viewer/
+    // admin token auth). If such a file is later migrated to the plain user
+    // `authMiddleware`, it WOULD carry a `permissions` context and become a real
+    // site-scope gap, but the exempt entry would silently keep it green. Catch
+    // that drift: each exempt must either reference a non-user auth guard in its
+    // file, or be an explicitly-listed user-session exception.
+    const routes = await findRoutesTouchingDeviceData();
+    const byId = new Map(routes.map((r) => [r.id, r] as const));
+    const unjustified: string[] = [];
+    for (const id of SITE_SCOPE_INPUT_EXEMPT) {
+      const route = byId.get(id);
+      // A missing id is a stale entry — owned by the shrink-only test below.
+      if (!route) continue;
+      if (route.referencesNonUserAuthGuard) continue;
+      if (SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK.has(id)) continue;
+      unjustified.push(id);
+    }
+    const message =
+      unjustified.length === 0
+        ? ''
+        : `\nSITE_SCOPE_INPUT_EXEMPT entries reached via the user authMiddleware ` +
+          `(they carry a \`permissions\` context) but no longer backed by a ` +
+          `non-user-session auth guard in their file:\n` +
+          unjustified.map((s) => `  - ${s}`).join('\n') +
+          `\n\nThis exemption assumed no user permissions context. Either restore ` +
+          `the non-user guard, fix the handler to site-scope, or — if it is a ` +
+          `genuine user-session exception (mobile/OAuth device row, cross-file ` +
+          `gate) — add it to SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK with a reason.`;
+    expect(unjustified, message).toEqual([]);
   });
 
   it('the baseline/allowlist shrink-only (no stale entries)', async () => {
@@ -331,16 +382,26 @@ const DEAD_PERMS_GATE_EXEMPT: ReadonlySet<string> = new Set<string>([
 // a live perms source (and drops out of the flagged set), its line MUST be
 // removed.
 //
-// EMPTY: when this detector was first written (against the pre-merge scanner
-// base) it flagged 5 dead gates — dnsSecurity GET /events+/stats, huntress GET
-// /incidents, peripheralControl GET /activity, sentinelOne GET /threats — the
-// 2026-05 sweep (commit b6da267a) had added their `allowedSiteIds` narrowing
-// but not the `requirePermission` that populates `c.get('permissions')`. All 5
-// were independently fixed in #1036's final revision (now in main: each route
-// carries `requirePermission(DEVICES_READ)`), so the detector finds zero
-// offenders here. It ships with no residual debt; any future offender fails the
-// test above and must be fixed.
+// History: the detector first flagged 5 dead gates (dnsSecurity GET /events+
+// /stats, huntress GET /incidents, peripheralControl GET /activity, sentinelOne
+// GET /threats) — all independently fixed in #1036's final revision (now in
+// main), so they are NOT listed here.
+//
+// The 4 below were INTRODUCED by this PR (#1041): its mutation-gating added the
+// fail-open `if (perms?.allowedSiteIds && …)` idiom reading `c.get('permissions')`
+// but did NOT add the `requirePermission` that populates it — so on these routes
+// the new site narrowing never runs (no regression: they had no site-scope
+// before either). `remote/sessions.ts` has no `requirePermission` anywhere, so
+// the correct gate is a router-level decision for the #1041 author. Tracked as
+// FOLLOW-UP: add the appropriate `requirePermission(...)` to each chain (and
+// de-mask the new tests, which populate `permissions` via the auth-middleware
+// mock rather than a requirePermission mock). The detector keeps them visible
+// and blocks any NEW offender.
 const DEAD_PERMS_GATE_BASELINE: ReadonlySet<string> = new Set<string>([
+  'routes/networkBaselines.ts:GET /:id',
+  'routes/networkBaselines.ts:GET /:id/changes',
+  'routes/remote/sessions.ts:DELETE /sessions/stale',
+  'routes/remote/sessions.ts:POST /sessions/:id/offer',
 ]);
 
 describe('site-scope coverage — dead permissions-sourced gate', () => {
