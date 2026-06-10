@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 
-const { serviceMocks, dbSelectMock, dbGroupByMock, authRef, lastWhereArgs } = vi.hoisted(() => {
+const { serviceMocks, dbSelectMock, dbGroupByMock, authRef, lastWhereArgs, writeRouteAuditMock } = vi.hoisted(() => {
   const lastWhereArgs: { conditions: unknown[] }[] = [];
   return {
     serviceMocks: {
@@ -11,9 +11,11 @@ const { serviceMocks, dbSelectMock, dbGroupByMock, authRef, lastWhereArgs } = vi
       addTicketComment: vi.fn(),
       linkAlertToTicket: vi.fn(),
       unlinkAlertFromTicket: vi.fn(),
+      updateTicketFields: vi.fn(),
     },
     dbSelectMock: vi.fn(),
     dbGroupByMock: vi.fn(),
+    writeRouteAuditMock: vi.fn(),
     lastWhereArgs,
     /** Mutable ref so individual tests can override the injected auth context. */
     authRef: {
@@ -29,6 +31,10 @@ const { serviceMocks, dbSelectMock, dbGroupByMock, authRef, lastWhereArgs } = vi
     }
   };
 });
+
+vi.mock('../../services/auditEvents', () => ({
+  writeRouteAudit: writeRouteAuditMock
+}));
 
 vi.mock('../../services/ticketService', async () => {
   const actual = await vi.importActual<typeof import('../../services/ticketService')>('../../services/ticketService');
@@ -120,6 +126,9 @@ vi.mock('../../db/schema', () => ({
 // Import the hub router (./index), not ./tickets directly — the hub is what
 // apps/api/src/index.ts mounts and is where authMiddleware is applied.
 import { ticketsRoutes } from './index';
+// Real class (the service mock spreads importActual), so handleServiceError's
+// instanceof check in the route works against errors thrown by the mocks.
+import { TicketServiceError } from '../../services/ticketService';
 
 const TICKET_ID = '3f2f1d8e-1111-4222-8333-444455556666';
 const ORG_ID    = '3f2f1d8e-1111-4222-8333-444455556666';
@@ -572,17 +581,11 @@ describe('DELETE /tickets/:id/alerts/:alertId', () => {
   });
 });
 
-describe('PATCH /tickets/:id — scoped update', () => {
+describe('PATCH /tickets/:id — delegates to updateTicketFields', () => {
   beforeEach(() => { vi.clearAllMocks(); resetAuth(); });
 
-  it('returns 404 when the scoped UPDATE returns no rows (ticket out of scope)', async () => {
-    // PATCH goes directly to db.update(); returning empty array = out-of-scope / missing
-    const { db } = await import('../../db');
-    (db.update as any).mockReturnValue({
-      set: vi.fn(() => ({
-        where: vi.fn(() => ({ returning: vi.fn(() => Promise.resolve([])) }))
-      }))
-    });
+  it('returns 404 when the scoped pre-check finds no ticket (out of scope) and never calls the service', async () => {
+    dbSelectMock.mockResolvedValueOnce([]); // getScopedTicketOr404: no row
 
     const res = await makeApp().request(`/tickets/${TICKET_ID}`, {
       method: 'PATCH',
@@ -592,16 +595,12 @@ describe('PATCH /tickets/:id — scoped update', () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body).toHaveProperty('error', 'Ticket not found');
+    expect(serviceMocks.updateTicketFields).not.toHaveBeenCalled();
   });
 
-  it('returns the updated ticket when it is in scope', async () => {
-    const updatedTicket = { ...STUB_TICKET, subject: 'Updated subject' };
-    const { db } = await import('../../db');
-    (db.update as any).mockReturnValue({
-      set: vi.fn(() => ({
-        where: vi.fn(() => ({ returning: vi.fn(() => Promise.resolve([updatedTicket])) }))
-      }))
-    });
+  it('returns the updated ticket from the service when it is in scope', async () => {
+    dbSelectMock.mockResolvedValueOnce([STUB_TICKET]); // scoped pre-check
+    serviceMocks.updateTicketFields.mockResolvedValue({ ...STUB_TICKET, subject: 'Updated subject' });
 
     const res = await makeApp().request(`/tickets/${TICKET_ID}`, {
       method: 'PATCH',
@@ -611,16 +610,34 @@ describe('PATCH /tickets/:id — scoped update', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data).toMatchObject({ subject: 'Updated subject' });
+
+    expect(serviceMocks.updateTicketFields).toHaveBeenCalledWith(
+      TICKET_ID,
+      expect.objectContaining({ subject: 'Updated subject' }),
+      expect.objectContaining({ userId: 'u-1' })
+    );
   });
 
-  describe('deviceId reassignment cross-org guard', () => {
+  it('400s on an empty body without calling the service', async () => {
+    const res = await makeApp().request(`/tickets/${TICKET_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body).toHaveProperty('error', 'No fields to update');
+    expect(serviceMocks.updateTicketFields).not.toHaveBeenCalled();
+  });
+
+  describe('deviceId reassignment cross-org guard (enforced by the service)', () => {
     const DEVICE_ID = '9a8b7c6d-1111-4222-8333-444455556666';
 
     it('400s when the new deviceId belongs to a different org', async () => {
-      // selects in order: scoped ticket lookup, device lookup
-      dbSelectMock
-        .mockResolvedValueOnce([{ ...STUB_TICKET, orgId: 'org-1' }])
-        .mockResolvedValueOnce([{ id: DEVICE_ID, orgId: 'org-OTHER' }]);
+      dbSelectMock.mockResolvedValueOnce([{ ...STUB_TICKET, orgId: 'org-1' }]); // scoped pre-check
+      serviceMocks.updateTicketFields.mockRejectedValue(
+        new TicketServiceError('Device must belong to the same organization as the ticket', 400)
+      );
 
       const res = await makeApp().request(`/tickets/${TICKET_ID}`, {
         method: 'PATCH',
@@ -633,9 +650,8 @@ describe('PATCH /tickets/:id — scoped update', () => {
     });
 
     it('404s when the new deviceId does not exist', async () => {
-      dbSelectMock
-        .mockResolvedValueOnce([{ ...STUB_TICKET, orgId: 'org-1' }])
-        .mockResolvedValueOnce([]); // device lookup: no row
+      dbSelectMock.mockResolvedValueOnce([{ ...STUB_TICKET, orgId: 'org-1' }]);
+      serviceMocks.updateTicketFields.mockRejectedValue(new TicketServiceError('Device not found', 404));
 
       const res = await makeApp().request(`/tickets/${TICKET_ID}`, {
         method: 'PATCH',
@@ -658,19 +674,12 @@ describe('PATCH /tickets/:id — scoped update', () => {
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body).toHaveProperty('error', 'Ticket not found');
+      expect(serviceMocks.updateTicketFields).not.toHaveBeenCalled();
     });
 
     it('updates when the new deviceId belongs to the ticket org', async () => {
-      dbSelectMock
-        .mockResolvedValueOnce([{ ...STUB_TICKET, orgId: 'org-1' }])
-        .mockResolvedValueOnce([{ id: DEVICE_ID, orgId: 'org-1' }]);
-      const updatedTicket = { ...STUB_TICKET, deviceId: DEVICE_ID };
-      const { db } = await import('../../db');
-      (db.update as any).mockReturnValue({
-        set: vi.fn(() => ({
-          where: vi.fn(() => ({ returning: vi.fn(() => Promise.resolve([updatedTicket])) }))
-        }))
-      });
+      dbSelectMock.mockResolvedValueOnce([{ ...STUB_TICKET, orgId: 'org-1' }]);
+      serviceMocks.updateTicketFields.mockResolvedValue({ ...STUB_TICKET, deviceId: DEVICE_ID });
 
       const res = await makeApp().request(`/tickets/${TICKET_ID}`, {
         method: 'PATCH',
@@ -680,16 +689,16 @@ describe('PATCH /tickets/:id — scoped update', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.data).toMatchObject({ deviceId: DEVICE_ID });
+      expect(serviceMocks.updateTicketFields).toHaveBeenCalledWith(
+        TICKET_ID,
+        expect.objectContaining({ deviceId: DEVICE_ID }),
+        expect.objectContaining({ userId: 'u-1' })
+      );
     });
 
-    it('clearing deviceId (null) skips the device lookup and updates directly', async () => {
-      const updatedTicket = { ...STUB_TICKET, deviceId: null };
-      const { db } = await import('../../db');
-      (db.update as any).mockReturnValue({
-        set: vi.fn(() => ({
-          where: vi.fn(() => ({ returning: vi.fn(() => Promise.resolve([updatedTicket])) }))
-        }))
-      });
+    it('clearing deviceId (null) passes the null through to the service', async () => {
+      dbSelectMock.mockResolvedValueOnce([STUB_TICKET]);
+      serviceMocks.updateTicketFields.mockResolvedValue({ ...STUB_TICKET, deviceId: null });
 
       const res = await makeApp().request(`/tickets/${TICKET_ID}`, {
         method: 'PATCH',
@@ -697,9 +706,114 @@ describe('PATCH /tickets/:id — scoped update', () => {
         body: JSON.stringify({ deviceId: null })
       });
       expect(res.status).toBe(200);
-      // No scoped-ticket/device selects were consumed
-      expect(dbSelectMock).not.toHaveBeenCalled();
+      expect(serviceMocks.updateTicketFields).toHaveBeenCalledWith(
+        TICKET_ID,
+        expect.objectContaining({ deviceId: null }),
+        expect.objectContaining({ userId: 'u-1' })
+      );
     });
+  });
+});
+
+describe('POST /tickets/bulk', () => {
+  beforeEach(() => { vi.clearAllMocks(); resetAuth(); });
+
+  const T1 = 'aaaaaaaa-1111-4222-8333-444455556666';
+  const T2 = 'bbbbbbbb-1111-4222-8333-444455556666';
+  const ASSIGNEE_ID = '5a6b7c8d-1234-4321-abcd-000011112222';
+
+  const post = (body: unknown) =>
+    makeApp().request('/tickets/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+  it('bulk assign: scope-checks each id, calls assignTicket per ticket, aggregates and audits', async () => {
+    dbSelectMock.mockResolvedValue([STUB_TICKET]); // every scoped lookup resolves
+    serviceMocks.assignTicket.mockResolvedValue({ ...STUB_TICKET, assignedTo: ASSIGNEE_ID });
+
+    const res = await post({ ticketIds: [T1, T2], action: 'assign', assigneeId: ASSIGNEE_ID });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual({ updated: 2, skipped: 0, failed: 0, total: 2 });
+
+    expect(serviceMocks.assignTicket).toHaveBeenCalledTimes(2);
+    expect(serviceMocks.assignTicket).toHaveBeenCalledWith(T1, ASSIGNEE_ID, expect.objectContaining({ userId: 'u-1' }));
+    expect(serviceMocks.assignTicket).toHaveBeenCalledWith(T2, ASSIGNEE_ID, expect.objectContaining({ userId: 'u-1' }));
+
+    // One bulk-level audit entry (mirrors alerts bulk), on top of per-ticket service audits.
+    expect(writeRouteAuditMock).toHaveBeenCalledTimes(1);
+    expect(writeRouteAuditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'ticket.bulk_assign',
+        resourceType: 'ticket',
+        details: expect.objectContaining({ ticketIds: [T1, T2], updated: 2, skipped: 0 })
+      })
+    );
+  });
+
+  it('bulk assign with null assigneeId (unassign) passes null to the service', async () => {
+    dbSelectMock.mockResolvedValue([STUB_TICKET]);
+    serviceMocks.assignTicket.mockResolvedValue({ ...STUB_TICKET, assignedTo: null });
+
+    const res = await post({ ticketIds: [T1], action: 'assign', assigneeId: null });
+    expect(res.status).toBe(200);
+    expect(serviceMocks.assignTicket).toHaveBeenCalledWith(T1, null, expect.objectContaining({ userId: 'u-1' }));
+  });
+
+  it('bulk status: an FSM-invalid transition counts as skipped, not failed, and does not abort the loop', async () => {
+    dbSelectMock.mockResolvedValue([STUB_TICKET]);
+    serviceMocks.changeTicketStatus
+      .mockResolvedValueOnce({ ...STUB_TICKET, status: 'pending' })
+      .mockRejectedValueOnce(new TicketServiceError('Cannot transition ticket from closed to pending', 409));
+
+    const res = await post({ ticketIds: [T1, T2], action: 'status', status: 'pending' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual({ updated: 1, skipped: 1, failed: 0, total: 2 });
+    expect(serviceMocks.changeTicketStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('unexpected per-id errors count as failed without aborting the loop', async () => {
+    dbSelectMock.mockResolvedValue([STUB_TICKET]);
+    serviceMocks.changeTicketStatus
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce({ ...STUB_TICKET, status: 'closed' });
+
+    const res = await post({ ticketIds: [T1, T2], action: 'status', status: 'closed' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual({ updated: 1, skipped: 0, failed: 1, total: 2 });
+  });
+
+  it('rejects status=resolved with 400 (resolution note is per-ticket) without calling the service', async () => {
+    const res = await post({ ticketIds: [T1], action: 'status', status: 'resolved' });
+    expect(res.status).toBe(400);
+    expect(serviceMocks.changeTicketStatus).not.toHaveBeenCalled();
+  });
+
+  it('out-of-scope ids count as skipped and never reach the service or the audit log', async () => {
+    dbSelectMock.mockResolvedValue([]); // scoped lookup finds nothing
+    const res = await post({ ticketIds: [T1], action: 'assign', assigneeId: ASSIGNEE_ID });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual({ updated: 0, skipped: 1, failed: 0, total: 1 });
+    expect(serviceMocks.assignTicket).not.toHaveBeenCalled();
+    expect(writeRouteAuditMock).not.toHaveBeenCalled();
+  });
+
+  it('400s on an empty ticketIds array', async () => {
+    const res = await post({ ticketIds: [], action: 'assign', assigneeId: ASSIGNEE_ID });
+    expect(res.status).toBe(400);
+    expect(serviceMocks.assignTicket).not.toHaveBeenCalled();
+  });
+
+  it('400s when action=assign omits assigneeId (refine)', async () => {
+    const res = await post({ ticketIds: [T1], action: 'assign' });
+    expect(res.status).toBe(400);
+    expect(serviceMocks.assignTicket).not.toHaveBeenCalled();
   });
 });
 
