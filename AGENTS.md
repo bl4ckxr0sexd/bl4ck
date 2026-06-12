@@ -21,6 +21,33 @@ Breeze is a fast, modern Remote Monitoring and Management (RMM) platform for MSP
 Partner (MSP) → Organization (Customer) → Site (Location) → Device Group → Device
 ```
 
+### Tenant Isolation / RLS (READ BEFORE ADDING TABLES)
+API connects to Postgres as unprivileged `breeze_app`. Every tenant-scoped table MUST have RLS enabled + forced + policies — no app-layer-only fallback. Contract test: `apps/api/src/__tests__/integration/rls-coverage.integration.test.ts`.
+
+**Six tenancy shapes:**
+
+| # | Shape | Policy helper | Allowlist |
+|---|---|---|---|
+| 1 | Direct `org_id` column | `breeze_has_org_access(org_id)` | auto-discovered |
+| 2 | Id-keyed (`organizations`) | `breeze_has_org_access(id)` | `ORG_ID_KEYED_TENANT_TABLES` |
+| 3 | Partner-axis | `breeze_has_partner_access(partner_id)` (flat, never tree traversal) | `PARTNER_TENANT_TABLES` |
+| 4 | Dual-axis (`users`) | partner OR org OR `breeze_current_user_id()`; enforced by composite FK `(org_id, partner_id) → organizations(id, partner_id)` | — |
+| 5 | Device-id scoped | hot agent-write tables denormalize `org_id` (Phase 1-4); cold tables use `EXISTS` join policy (Phase 5) | `DEVICE_ID_JOIN_POLICY_TABLES` |
+| 6 | User-id scoped | `breeze_current_user_id()` | `USER_ID_SCOPED_TABLES` |
+
+**DB context helpers** (`apps/api/src/db/index.ts`): `withDbAccessContext` (request path), `withSystemDbAccessContext` (background/seeds — call `runOutsideDbContext` first if inside a request), bare pool is forbidden in request code.
+
+**Intentionally system-scoped:** `device_commands` (agent WS path). Anything else flagged `INTENTIONAL_UNSCOPED` in a plan doc.
+
+**Workflow for a new tenant-scoped table:**
+1. Pick a shape; add policies in the same migration that creates the table — never defer.
+2. Migration must be idempotent (`IF NOT EXISTS` / `DO $$`). Never edit a shipped migration.
+3. Add to the relevant allowlist in `rls-coverage.integration.test.ts` in the same PR (shapes 2-6).
+4. Run the contract test locally (needs real DB).
+5. Verify as `breeze_app`: `docker exec -it breeze-postgres psql -U breeze_app -d breeze` and forge a cross-tenant insert — must fail with `new row violates row-level security policy`.
+
+For production backfills of `org_id` on hot tables (>1M rows), batch via `UPDATE ... WHERE ctid IN (... LIMIT N)` loops before `SET NOT NULL`. Full narrative and rationale: `docs/superpowers/plans/2026-04-11-rls-coverage-gaps.md`.
+
 ### Database Schema Location
 - `apps/api/src/db/schema/` - All Drizzle schema definitions
 - Key tables: devices, users, organizations, sites, alerts, scripts, automations
@@ -41,10 +68,32 @@ Partner (MSP) → Organization (Customer) → Site (Location) → Device Group �
 - Use subagents for: codebase searches, file reading/analysis, PR reviews, build log inspection, and any work that produces large output.
 - Keep the main context for: decision-making, coordinating work, and user interaction.
 
+### URL State in Components
+- Use `window.location.hash` (`#value`) for client-side UI state like selected tabs, selected items in lists, etc. See `DeviceDetails.tsx` and `OrganizationsPage.tsx` for examples.
+- Do **not** use query params (`?key=value`) for transient UI state — keep the pattern consistent.
+
+### No Internal Infrastructure Details in Public Code
+- **Never commit** IP addresses, server hostnames, datacenter regions, droplet IPs, or internal domain mappings to the public repo.
+- Region-specific values belong in `.env` files (gitignored), not in code or config templates.
+- `.env.example` files should use generic placeholders (`host`, `password`, `your-domain.example.com`), not real values.
+- The `internal/` directory is gitignored and safe for strategy docs, internal notes, and infra-specific details.
+
 ### Shared Code
 - `packages/shared/src/types/` - TypeScript interfaces
 - `packages/shared/src/validators/` - Zod schemas
 - `packages/shared/src/utils/` - Utility functions
+
+### Web Mutation Handlers — `runAction`
+
+**Mutation handlers must surface outcome via `runAction`.** Web action handlers that POST/PUT/PATCH/DELETE should wrap the request in `runAction` (`apps/web/src/lib/runAction.ts`) so success/failure is always shown to the user. `runAction` also treats HTTP-200 `{success:false}` / `{testResult:{success:false}}` response bodies as failures (not silent no-ops).
+
+Catch pattern for callers:
+```ts
+if (err instanceof ActionError && err.status === 401) return; // let auth redirect handle it
+if (!(err instanceof ActionError)) showToast({ type: 'error', ... }); // non-401 ActionError already toasted by runAction
+```
+
+The `no-silent-mutations` test (`apps/web/src/lib/__tests__/no-silent-mutations.test.ts`) guards the adopted set. Legitimate exceptions (typed service layers, aggregate/partial-success handlers with inline error UI) are recorded in `apps/web/src/lib/runActionAllowlist.ts`. Spec: `docs/superpowers/specs/2026-05-15-ws-a-action-feedback-design.md`.
 
 ---
 
@@ -208,10 +257,13 @@ cd agent && make run
 
 ### Schema Migration Workflow
 1. Edit schema files in `apps/api/src/db/schema/`
-2. Write a hand-written SQL migration in `apps/api/migrations/NNNN-<slug>.sql`
-   - Use the next available 4-digit number (check existing files)
-   - Must be fully idempotent: `IF NOT EXISTS`, `IF EXISTS`, `DO $$ BEGIN ... EXCEPTION`
-   - Never edit a shipped migration — fix forward with a new migration
+2. Write a hand-written SQL migration in `apps/api/migrations/`. The runner accepts any filename matching `^\d{4}-.*\.sql$` and applies them in `localeCompare` (lexicographic) order, so the prefix has to sort correctly.
+   - **Naming:** use `YYYY-MM-DD-<slug>.sql` (the current convention). The legacy `NNNN-<slug>.sql` 4-digit form is still accepted but only for files predating the date-prefix switch — don't introduce new ones.
+   - **Same-day ordering:** if two migrations on the same date depend on each other (e.g. one creates a table, the other adds constraints or policies on it), insert an explicit `-a-`/`-b-` infix between the date and the slug: `2026-04-19-a-installer-bootstrap-tokens.sql`, `2026-04-19-b-installer-bootstrap-tokens-constraints.sql`. Don't rely on the slug to sort the files for you — `-` (0x2D) < `.` (0x2E), so `foo-bar.sql` sorts *after* `foo-bar-extra.sql`, which has bitten us before (issue #506). The `apps/api/src/db/autoMigrate.test.ts` regression test will catch most ordering bugs.
+   - **Idempotent:** `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS` then re-add, `DO $$ BEGIN ... EXCEPTION`, `pg_policies` existence checks for policies. Re-applying must be a no-op.
+   - **No inner `BEGIN;`/`COMMIT;`:** `autoMigrate` wraps each file in `client.begin(...)`. Adding your own transaction blocks emits `NOTICE: there is already a transaction in progress` and serves no purpose.
+   - **Cleanup statements must report row counts:** a migration that UPDATEs/DELETEs suspect rows (e.g. before adding a constraint) should wrap the statement in `DO $$ ... GET DIAGNOSTICS n = ROW_COUNT; IF n > 0 THEN RAISE WARNING 'cleaned % <what>', n; END IF; END $$;` so the count lands in Postgres logs. Silently fixing bad data destroys the forensic trail — if those rows could evidence a tenant-isolation breach, you want a recorded count even when it's 0 (lesson from `2026-06-10-c`).
+   - **Never edit a shipped migration** — fix forward with a new migration. (Renaming is also editing for tracking purposes: `breeze_migrations` keys on filename, so a rename causes already-migrated DBs to re-apply under the new name. Only acceptable when the file is fully idempotent and re-application is a true no-op.)
 3. Run `pnpm db:check-drift` to verify schema matches migrations
 4. Commit the migration file
 
@@ -241,12 +293,41 @@ docker compose -f docker-compose.yml -f docker-compose.override.yml.local-build 
 
 # Do not create a root docker-compose.override.yml for shared commits;
 # Docker Compose auto-loads that filename and can weaken production defaults.
+#
+# For local-only use, symlink whichever mode you want as default, but do not commit it:
+# ln -sf docker-compose.override.yml.dev docker-compose.override.yml
+# docker compose up --build -d
 ```
 
 ### PR Merge Process
 - Branch protection requires status checks, but the repo owner uses `--admin` to bypass when CI is green
 - Use `gh pr merge --squash --admin` (merge commits are disabled on this repo)
 - This is the normal workflow — do not wait for branch protection rules to be satisfied
+
+### Production Deploy
+
+Production hosts pull from `/opt/breeze` and use mutable image tags driven by `BREEZE_VERSION` in `/opt/breeze/.env`. Keep hostnames, regions, and internal mappings out of tracked files; use placeholders in docs and examples.
+
+```bash
+ssh root@<host> "cd /opt/breeze && \
+  cp .env .env.bak-pre-<new-version> && \
+  sed -i 's/^BREEZE_VERSION=.*/BREEZE_VERSION=<new-version>/' .env && \
+  docker compose pull api web && \
+  docker compose up -d binaries-init api web"
+```
+
+Then verify health with `curl -sf https://<host-or-domain>/health` (200 = healthy).
+
+**Required env vars added by v0.65+ — production hosts without these refuse to start:**
+
+- `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` — base64 SPKI of the Ed25519 release manifest signing key. Source: `internal/release-keys/release-manifest.ed25519.pub` (the base64 between `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----`, single line). The API config validator refuses to boot in production without it when `BINARY_SOURCE=github`.
+- `IS_HOSTED` — must be explicitly set to `true` (hosted SaaS) or `false` (self-hosted) in production. Without this, a misconfigured deploy (e.g. `.env` value not mapped through compose) silently drops new partners straight to `status='active'`, bypassing the email-verification gate in `/auth/register-partner` (issue #570).
+
+When introducing a new required env var: add it to `/opt/breeze/.env` AND map it explicitly in the `api`/`web` service `environment:` block of `/opt/breeze/docker-compose.yml`. Compose interpolation only happens for vars listed there — having a value in `.env` is necessary but not sufficient.
+
+**Watchtower policy (#603):** repo-tracked compose files never include Watchtower (enforced by `check-supply-chain-hardening.sh`). On production hosts, Watchtower is acceptable for sidecars (caddy, redis, postgres-exporter, cloudflared) but **must not** auto-update `breeze-api` or `breeze-web`. Concretely, the `com.centurylinklabs.watchtower.enable: "true"` label is forbidden on those two services. The hardening check additionally rejects that label string in any tracked compose file as defense-in-depth.
+
+**Known drift:** the deployed `/opt/breeze/docker-compose.yml` may use Watchtower + mutable tags, while `deploy/docker-compose.prod.yml` in the repo uses digest-pinning + no Watchtower. The `check-supply-chain-hardening.sh` rule scans repo files only, so host drift isn't fully enforced. Reconciling this is tracked separately.
 
 ## Current Status
 
