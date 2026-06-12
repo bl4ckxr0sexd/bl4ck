@@ -7,7 +7,7 @@
  */
 
 import { db } from '../db';
-import { aiSessions, aiMessages, aiToolExecutions, delegantM365Connections } from '../db/schema';
+import { aiSessions, aiMessages, aiToolExecutions, delegantM365Connections, devices } from '../db/schema';
 import { eq, and, desc, sql, type SQL } from 'drizzle-orm';
 import type { AuthContext } from '../middleware/auth';
 import type { AiPageContext, AiApprovalMode } from '@breeze/shared/types/ai';
@@ -30,9 +30,34 @@ export async function createSession(
     title?: string;
     orgId?: string;
     delegantM365ConnectionId?: string;
+    deviceId?: string;
+    approvalMode?: AiApprovalMode;
   }
 ): Promise<{ id: string; orgId: string; delegantM365ConnectionId: string | null }> {
-  const orgId = options.orgId ?? auth.orgId ?? auth.accessibleOrgIds?.[0] ?? null;
+  // A device-scoped task ("Fix with AI") anchors the session to the device's
+  // org. Resolve the device up front so its org can drive org selection for
+  // partner / multi-org callers who have no home orgId — otherwise the session
+  // would bind to accessibleOrgIds[0] (an unrelated org) and the cross-org
+  // check below would reject every dispatch with a 500.
+  let deviceRow: { id: string; orgId: string; siteId: string | null } | null = null;
+  if (options.deviceId) {
+    const rows = await db
+      .select({ id: devices.id, orgId: devices.orgId, siteId: devices.siteId })
+      .from(devices)
+      .where(eq(devices.id, options.deviceId))
+      .limit(1);
+    deviceRow = rows[0] ?? null;
+  }
+
+  const orgId =
+    options.orgId ??
+    // Anchor to the device's org when the caller can reach it; otherwise fall
+    // through so the opaque device check below rejects without leaking the
+    // device's existence to callers outside its org.
+    (deviceRow && auth.canAccessOrg(deviceRow.orgId) ? deviceRow.orgId : undefined) ??
+    auth.orgId ??
+    auth.accessibleOrgIds?.[0] ??
+    null;
   if (!orgId) throw new Error('Organization context required');
   if (orgId !== auth.orgId && !auth.canAccessOrg(orgId)) {
     throw new Error('Access denied to this organization');
@@ -58,6 +83,25 @@ export async function createSession(
     delegantM365ConnectionId = conn.id;
   }
 
+  // Cross-org validation (SECURITY-CRITICAL): a session may only be bound to a
+  // device that belongs to the session's org. This is what makes a dispatched
+  // "task on this computer" scoped — the device id is recorded on the session
+  // and surfaced in the system prompt/context for the agent and in the UI for
+  // the approving technician.
+  let deviceId: string | null = null;
+  if (options.deviceId) {
+    if (!deviceRow || deviceRow.orgId !== orgId) {
+      throw new Error('Invalid device');
+    }
+    // Site-axis (SECURITY-CRITICAL, conforms to #1047): a site-restricted caller
+    // must not bind a session to a device outside their accessible sites, even
+    // within an org they can access. Opaque error mirrors the cross-org case.
+    if (auth.canAccessSite && !auth.canAccessSite(deviceRow.siteId)) {
+      throw new Error('Invalid device');
+    }
+    deviceId = deviceRow.id;
+  }
+
   const [session] = await db
     .insert(aiSessions)
     .values({
@@ -67,6 +111,8 @@ export async function createSession(
       title: options.title ?? null,
       contextSnapshot: options.pageContext ?? null,
       delegantM365ConnectionId,
+      deviceId,
+      ...(options.approvalMode ? { approvalMode: options.approvalMode } : {}),
       systemPrompt: await buildSystemPrompt(auth, options.pageContext)
     })
     .returning();

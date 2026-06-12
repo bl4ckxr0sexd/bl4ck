@@ -118,6 +118,8 @@ import { sensitiveDataRoutes } from './routes/sensitiveData';
 import { peripheralControlRoutes } from './routes/peripheralControl';
 import { browserSecurityRoutes } from './routes/browserSecurity';
 import { c2cRoutes, m365CallbackRoute } from './routes/c2c';
+import { googleRoutes } from './routes/google';
+import { m365Routes } from './routes/m365';
 import { drRoutes } from './routes/dr';
 import { adminRoutes } from './routes/admin';
 import { bootstrapPlatformAdmins } from './services/platformAdminBootstrap';
@@ -813,6 +815,8 @@ api.route('/peripherals', peripheralControlRoutes);
 api.route('/browser-security', browserSecurityRoutes);
 api.route('/', m365CallbackRoute); // Public callback (no auth) — must precede c2c group
 api.route('/c2c', c2cRoutes);
+api.route('/google', googleRoutes);
+api.route('/m365', m365Routes);
 api.route('/dr', drRoutes);
 api.route('/admin', adminRoutes);
 api.route('/admin', accountDeletionAdminRoutes);

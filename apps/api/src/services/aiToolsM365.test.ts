@@ -5,9 +5,15 @@ vi.mock('./m365Helpers', async (orig) => {
   const actual = await (orig as any)();
   return { ...actual, loadSession: vi.fn(), loadConnection: vi.fn() };
 });
+// Direct backend off by default so the existing tests exercise the Delegant path.
+vi.mock('./m365DirectGraph', () => ({
+  hasDirectM365Connection: vi.fn().mockResolvedValue(false),
+  invokeDirect: vi.fn(),
+}));
 
 import { invokeDelegantTool } from './delegantClient';
 import { loadSession, loadConnection } from './m365Helpers';
+import { hasDirectM365Connection, invokeDirect } from './m365DirectGraph';
 import {
   m365LookupUserHandler, m365RecentSigninsHandler, m365ListGroupMembershipsHandler,
   m365DisableUserHandler, m365ResetPasswordHandler, m365ToolTiers,
@@ -124,6 +130,28 @@ describe('m365_disable_user', () => {
   });
 });
 
+describe('m365 user resolution surfaces real failures (not a phantom "user not found")', () => {
+  beforeEach(() => {
+    (loadSession as any).mockResolvedValue({ id: 'sess-1', orgId: 'org-A', delegantM365ConnectionId: 'c1' });
+    (loadConnection as any).mockResolvedValue(activeConn);
+  });
+
+  it('surfaces an auth failure on get_user as itself, not as "user not found"', async () => {
+    (invokeDelegantTool as any).mockResolvedValue({ kind: 'error', code: 'auth_failed', message: 'token expired' });
+    // UPN (with @) forces a get_user resolution, which fails on auth.
+    const out = await m365DisableUserHandler({ userIdentifier: 'jane@x.com', reason: 'offboarding' }, auth, 'sess-1');
+    const parsed = JSON.parse(out);
+    expect(parsed.error).toBe('auth_failed');
+    expect(parsed.error).not.toBe('user_not_found');
+  });
+
+  it('reports a genuinely-absent user (404) as user_not_found', async () => {
+    (invokeDelegantTool as any).mockResolvedValue({ kind: 'error', code: 'not_found', message: 'no such user' });
+    const out = await m365DisableUserHandler({ userIdentifier: 'ghost@x.com', reason: 'offboarding' }, auth, 'sess-1');
+    expect(JSON.parse(out).error).toBe('user_not_found');
+  });
+});
+
 describe('m365_list_group_memberships', () => {
   it('lists groups without needing a user identifier', async () => {
     (loadSession as any).mockResolvedValue({ id: 'sess-1', orgId: 'org-A', delegantM365ConnectionId: 'c1' });
@@ -142,5 +170,31 @@ describe('tool tiers', () => {
     expect(m365ToolTiers['m365_list_group_memberships']).toBe(1);
     expect(m365ToolTiers['m365_disable_user']).toBe(3);
     expect(m365ToolTiers['m365_reset_password']).toBe(3);
+  });
+});
+
+describe('direct Graph backend (no Delegant)', () => {
+  it('routes to the direct backend when the org has an m365 connection, not Delegant', async () => {
+    (hasDirectM365Connection as any).mockResolvedValue(true);
+    (loadSession as any).mockResolvedValue({ id: 'sess-1', orgId: 'org-A', delegantM365ConnectionId: null });
+    (invokeDirect as any).mockResolvedValue({ kind: 'ok', data: { id: 'u1', displayName: 'Jane' } });
+    const out = await m365LookupUserHandler({ userIdentifier: 'jane@x.com' }, auth, 'sess-1');
+    expect(invokeDirect as any).toHaveBeenCalledWith('org-A', 'get_user', { userId: 'jane@x.com' });
+    expect(invokeDelegantTool as any).not.toHaveBeenCalled();
+    expect(out).toContain('Jane');
+  });
+
+  it('reset_password via direct backend requires a reason and dispatches reset_user_password', async () => {
+    (hasDirectM365Connection as any).mockResolvedValue(true);
+    (loadSession as any).mockResolvedValue({ id: 'sess-1', orgId: 'org-A', delegantM365ConnectionId: null });
+    const missing = await m365ResetPasswordHandler({ userIdentifier: 'jane@x.com' }, auth, 'sess-1');
+    expect(JSON.parse(missing).error).toBe('missing_reason');
+
+    (invokeDirect as any).mockResolvedValue({ kind: 'ok', data: { ok: true, temporaryPassword: 'Tmp!1234' } });
+    const out = await m365ResetPasswordHandler({ userIdentifier: 'jane@x.com', reason: 'lockout' }, auth, 'sess-1');
+    const names = (invokeDirect as any).mock.calls.map((c: any[]) => c[1]);
+    expect(names).toContain('reset_user_password');
+    expect(invokeDelegantTool as any).not.toHaveBeenCalled();
+    expect(out).toBeTruthy();
   });
 });

@@ -22,6 +22,18 @@ import {
   m365LookupUserHandler, m365RecentSigninsHandler, m365ListGroupMembershipsHandler,
   m365DisableUserHandler, m365ResetPasswordHandler,
 } from './aiToolsM365';
+import {
+  googleLookupUserHandler, googleResetPasswordHandler, googleSuspendUserHandler,
+  googleRestoreUserHandler, googleSignOutHandler, googleSetForwardingHandler,
+  googleDisableForwardingHandler,
+  googleSetVacationHandler, googleUpdateUserHandler, googleShareCalendarHandler,
+  googleOffboardUserHandler, googleWipeMobileDeviceHandler,
+  googleSecurityDriftHandler, googleEmailReportHandler,
+  googleListUserGroupsHandler, googleAddToGroupHandler, googleRemoveFromGroupHandler,
+  googleMoveOuHandler, googleRenameUserHandler,
+  googleResetTwoSvHandler, googleAddMailDelegateHandler, googleRemoveMailDelegateHandler,
+  googleListLicensesHandler, googleAssignLicenseHandler, googleRemoveLicenseHandler,
+} from './aiToolsGoogle';
 
 /**
  * Callback invoked before tool execution to enforce guardrails, RBAC,
@@ -143,6 +155,32 @@ export const TOOL_TIERS = {
   m365_list_group_memberships: 1,
   m365_disable_user: 3,
   m365_reset_password: 3,
+  // Google Workspace helpdesk tools (DWD service-account-backed)
+  google_lookup_user: 1,
+  google_reset_password: 3,
+  google_suspend_user: 3,
+  google_restore_user: 3,
+  google_signout: 3,
+  google_set_forwarding: 3,
+  google_disable_forwarding: 3,
+  google_set_vacation: 3,
+  google_update_user: 3,
+  google_share_calendar: 3,
+  google_offboard_user: 3,
+  google_wipe_mobile_device: 3,
+  google_security_drift: 1,
+  google_email_report: 1,
+  google_list_user_groups: 1,
+  google_add_to_group: 3,
+  google_remove_from_group: 3,
+  google_move_ou: 3,
+  google_rename_user: 3,
+  google_reset_2sv: 3,
+  google_add_mail_delegate: 3,
+  google_remove_mail_delegate: 3,
+  google_list_licenses: 1,
+  google_assign_license: 3,
+  google_remove_license: 3,
 } as const satisfies Readonly<Record<string, AiToolTier>> as Readonly<Record<string, AiToolTier>>;
 
 // All tool names, prefixed for SDK MCP format
@@ -472,12 +510,14 @@ export const __test__ = { makeSessionAwareHandler };
 // ============================================
 
 /**
- * The Microsoft 365 helpdesk tool definitions, gated on the Delegant
- * integration being configured. Returns [] (so the tools are NOT advertised to
- * the model) on instances where DELEGANT_BASE_URL is unset/blank — without a
- * configured Delegant endpoint + a seeded customer connection the tools can
- * only ever no-op with `no_customer_selected`, so there's no reason to surface
- * them. Read from process.env at call time so it tracks runtime config.
+ * The Microsoft 365 helpdesk tool definitions, gated on EITHER backend being
+ * usable: the direct app-only Graph path (M365_ENABLED + a per-org
+ * m365_connections row) OR the Delegant broker (DELEGANT_BASE_URL). Returns []
+ * (so the tools are NOT advertised to the model) only when neither is
+ * configured — gating on DELEGANT_BASE_URL alone left the direct path dead in
+ * production (M365_ENABLED instances with a saved connection but no broker).
+ * Read from process.env at call time so it tracks runtime config (mirrors
+ * googleToolDefinitions).
  */
 export function m365ToolDefinitions(
   getAuth: () => AuthContext,
@@ -485,7 +525,10 @@ export function m365ToolDefinitions(
   onPreToolUse?: PreToolUseCallback,
   onPostToolUse?: PostToolUseCallback,
 ) {
-  if (!(process.env.DELEGANT_BASE_URL ?? '').trim()) return [];
+  const m365Flag = (process.env.M365_ENABLED ?? '').trim().toLowerCase();
+  const m365Enabled = ['1', 'true', 'yes', 'on'].includes(m365Flag);
+  const delegantConfigured = !!(process.env.DELEGANT_BASE_URL ?? '').trim();
+  if (!m365Enabled && !delegantConfigured) return [];
   return [
     tool(
       'm365_lookup_user',
@@ -516,6 +559,200 @@ export function m365ToolDefinitions(
       'Reset the password for a Microsoft 365 user on the customer tenant selected for this session. Returns a temporary password the user must change at next sign-in. Requires approval.',
       { userIdentifier: z.string(), reason: z.string() },
       makeSessionAwareHandler('m365_reset_password', getAuth, getActiveSession, m365ResetPasswordHandler, onPreToolUse, onPostToolUse)
+    ),
+  ];
+}
+
+/**
+ * The Google Workspace helpdesk tool definitions, gated on
+ * GOOGLE_WORKSPACE_ENABLED. Returns [] (tools NOT advertised to the model) when
+ * the flag is off — without the flag + a per-org google_workspace_connections
+ * row the tools can only no-op with `no_google_connection`. Read from
+ * process.env at call time so it tracks runtime config (mirrors
+ * m365ToolDefinitions).
+ */
+export function googleToolDefinitions(
+  getAuth: () => AuthContext,
+  getActiveSession: (() => ActiveSession | undefined) | undefined,
+  onPreToolUse?: PreToolUseCallback,
+  onPostToolUse?: PostToolUseCallback,
+) {
+  const flag = (process.env.GOOGLE_WORKSPACE_ENABLED ?? '').trim().toLowerCase();
+  if (!['1', 'true', 'yes', 'on'].includes(flag)) return [];
+  return [
+    tool(
+      'google_lookup_user',
+      "Look up a Google Workspace user (profile, suspended/admin status, 2-step enrollment, last login, OU, aliases) for this organization's connected Workspace domain.",
+      { userEmail: z.string() },
+      makeSessionAwareHandler('google_lookup_user', getAuth, getActiveSession, googleLookupUserHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_reset_password',
+      'Reset a Google Workspace user\'s password (forces change at next sign-in). Returns a temporary password. Requires approval.',
+      { userEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_reset_password', getAuth, getActiveSession, googleResetPasswordHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_suspend_user',
+      'Suspend (block sign-in for) a Google Workspace user. Requires approval.',
+      { userEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_suspend_user', getAuth, getActiveSession, googleSuspendUserHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_restore_user',
+      'Restore (un-suspend) a Google Workspace user. Requires approval.',
+      { userEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_restore_user', getAuth, getActiveSession, googleRestoreUserHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_signout',
+      'Sign a Google Workspace user out of all sessions (the supported substitute for "turn off login challenge", which has no API). Useful for lockout/offboarding. Requires approval.',
+      { userEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_signout', getAuth, getActiveSession, googleSignOutHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_list_user_groups',
+      "List the Google Workspace groups a user belongs to (email, name, id) in this organization's connected domain.",
+      { userEmail: z.string() },
+      makeSessionAwareHandler('google_list_user_groups', getAuth, getActiveSession, googleListUserGroupsHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_add_to_group',
+      'Add a Google Workspace user to a group. role is one of MEMBER, MANAGER, OWNER (default MEMBER). Requires approval.',
+      { userEmail: z.string(), groupEmail: z.string(), role: z.enum(['MEMBER', 'MANAGER', 'OWNER']).optional(), reason: z.string() },
+      makeSessionAwareHandler('google_add_to_group', getAuth, getActiveSession, googleAddToGroupHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_remove_from_group',
+      'Remove a Google Workspace user from a group. Requires approval.',
+      { userEmail: z.string(), groupEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_remove_from_group', getAuth, getActiveSession, googleRemoveFromGroupHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_move_ou',
+      'Move a Google Workspace user into a different organizational unit (orgUnitPath, e.g. "/Sales" or "/"). Requires approval.',
+      { userEmail: z.string(), orgUnitPath: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_move_ou', getAuth, getActiveSession, googleMoveOuHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_rename_user',
+      'Rename a Google Workspace user by changing their primary email (the old address is retained as an alias). Requires approval.',
+      { userEmail: z.string(), newPrimaryEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_rename_user', getAuth, getActiveSession, googleRenameUserHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_list_licenses',
+      'List Google Workspace license assignments for a product (e.g. productId "Google-Apps") in this organization. Returns who holds which SKU.',
+      { productId: z.string() },
+      makeSessionAwareHandler('google_list_licenses', getAuth, getActiveSession, googleListLicensesHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_assign_license',
+      'Assign a Google Workspace license (productId + skuId) to a user. Requires approval.',
+      { userEmail: z.string(), productId: z.string(), skuId: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_assign_license', getAuth, getActiveSession, googleAssignLicenseHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_remove_license',
+      'Remove a Google Workspace license (productId + skuId) from a user. Requires approval.',
+      { userEmail: z.string(), productId: z.string(), skuId: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_remove_license', getAuth, getActiveSession, googleRemoveLicenseHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_reset_2sv',
+      'Turn off 2-step verification for a Google Workspace user so they can re-enroll (use when a user lost their second factor / is locked out). Requires approval.',
+      { userEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_reset_2sv', getAuth, getActiveSession, googleResetTwoSvHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_add_mail_delegate',
+      "Grant another user delegated access to a Google Workspace mailbox (read/send/manage). Requires approval.",
+      { userEmail: z.string(), delegateEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_add_mail_delegate', getAuth, getActiveSession, googleAddMailDelegateHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_remove_mail_delegate',
+      'Remove a delegate from a Google Workspace mailbox. Requires approval.',
+      { userEmail: z.string(), delegateEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_remove_mail_delegate', getAuth, getActiveSession, googleRemoveMailDelegateHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_set_forwarding',
+      'Enable Gmail forwarding from one user to another, optionally keeping a copy in the original mailbox. Requires approval.',
+      { userEmail: z.string(), forwardTo: z.string(), keepCopy: z.boolean().optional(), reason: z.string() },
+      makeSessionAwareHandler('google_set_forwarding', getAuth, getActiveSession, googleSetForwardingHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_disable_forwarding',
+      "Turn OFF Gmail auto-forwarding for a user's mailbox. Optionally also remove the forwarding address (pass removeAddress=true and the forwardTo address). Requires approval.",
+      { userEmail: z.string(), forwardTo: z.string().optional(), removeAddress: z.boolean().optional(), reason: z.string() },
+      makeSessionAwareHandler('google_disable_forwarding', getAuth, getActiveSession, googleDisableForwardingHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_set_vacation',
+      'Set or clear a Google Workspace user\'s out-of-office / vacation responder. Requires approval.',
+      { userEmail: z.string(), enable: z.boolean().optional(), subject: z.string().optional(), message: z.string().optional(), reason: z.string() },
+      makeSessionAwareHandler('google_set_vacation', getAuth, getActiveSession, googleSetVacationHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_update_user',
+      'Update a Google Workspace user\'s profile (given/family name, recovery email/phone) and/or add or remove an email alias. Requires approval.',
+      {
+        userEmail: z.string(),
+        givenName: z.string().optional(),
+        familyName: z.string().optional(),
+        recoveryEmail: z.string().optional(),
+        recoveryPhone: z.string().optional(),
+        addAlias: z.string().optional(),
+        removeAlias: z.string().optional(),
+        reason: z.string(),
+      },
+      makeSessionAwareHandler('google_update_user', getAuth, getActiveSession, googleUpdateUserHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_share_calendar',
+      "Share a Google Workspace user's calendar with another user. Inserts an ACL rule on the owner's calendar (default: their primary calendar). role is one of freeBusyReader, reader, writer, owner (default reader). Requires approval.",
+      {
+        ownerEmail: z.string(),
+        shareWithEmail: z.string(),
+        calendarId: z.string().optional(),
+        role: z.enum(['freeBusyReader', 'reader', 'writer', 'owner']).optional(),
+        reason: z.string(),
+      },
+      makeSessionAwareHandler('google_share_calendar', getAuth, getActiveSession, googleShareCalendarHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_offboard_user',
+      'Guided offboard of a departing Google Workspace user: best-effort sequence of optional out-of-office, mail forwarding to a manager (no copy kept), OAuth-token revoke, remove-from-all-groups, a SELECTIVE mobile account wipe (corporate data only, BYOD-safe — never a full device wipe), sign-out, then suspend. Each step is independent and reported. Requires approval.',
+      {
+        userEmail: z.string(),
+        forwardTo: z.string().optional(),
+        oooMessage: z.string().optional(),
+        accountWipeMobile: z.boolean().optional(),
+        removeFromGroups: z.boolean().optional(),
+        revokeTokens: z.boolean().optional(),
+        suspend: z.boolean().optional(),
+        reason: z.string(),
+      },
+      makeSessionAwareHandler('google_offboard_user', getAuth, getActiveSession, googleOffboardUserHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_wipe_mobile_device',
+      'STOLEN/LOST DEVICE ONLY: issue a FULL factory reset (admin_remote_wipe) to every mobile device enrolled to a user. This erases the ENTIRE device, not just corporate data. This is NOT for offboarding — offboard uses a selective account wipe. Requires approval.',
+      { userEmail: z.string(), reason: z.string() },
+      makeSessionAwareHandler('google_wipe_mobile_device', getAuth, getActiveSession, googleWipeMobileDeviceHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_security_drift',
+      'Read-only Google Workspace security posture for the connected domain: counts and lists of users with no 2-step verification, super-admins, suspended accounts, never-logged-in accounts, and accounts stale beyond staleDays (default 90). No changes are made.',
+      { staleDays: z.number().int().min(1).max(3650).optional() },
+      makeSessionAwareHandler('google_security_drift', getAuth, getActiveSession, googleSecurityDriftHandler, onPreToolUse, onPostToolUse)
+    ),
+    tool(
+      'google_email_report',
+      "Run the Google Workspace security-drift report and email it to the connection's own admin address (recipient is fixed to the admin, not arbitrary). Use when asked to email a Workspace report. staleDays optional (default 90).",
+      { staleDays: z.number().int().min(1).max(3650).optional() },
+      makeSessionAwareHandler('google_email_report', getAuth, getActiveSession, googleEmailReportHandler, onPreToolUse, onPostToolUse)
     ),
   ];
 }
@@ -1624,6 +1861,9 @@ export function createBreezeMcpServer(
     // approval) and onPostToolUse (ai_tool_executions persistence +
     // delegant_tool_call_id correlation).
     ...m365ToolDefinitions(getAuth, getActiveSession, onPreToolUse, onPostToolUse),
+    // Google Workspace helpdesk tools (gated on GOOGLE_WORKSPACE_ENABLED + a
+    // per-org connection). Same enforcement path as every other tool.
+    ...googleToolDefinitions(getAuth, getActiveSession, onPreToolUse, onPostToolUse),
   ];
 
   return createSdkMcpServer({
