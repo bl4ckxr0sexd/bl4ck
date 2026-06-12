@@ -3,7 +3,7 @@ import { eq, desc, inArray, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { db } from '../../db';
-import { patches, devicePatches, deviceCommands, users } from '../../db/schema';
+import { patches, devicePatches, patchApprovals, deviceCommands, users } from '../../db/schema';
 import { authMiddleware, requireMfa, requireScope, requirePermission } from '../../middleware/auth';
 import { PERMISSIONS } from '../../services/permissions';
 import { getDeviceWithOrgAndSiteCheck, SITE_ACCESS_DENIED } from './helpers';
@@ -98,6 +98,37 @@ function safeParsePatchResult(result: unknown): unknown {
   }
 
   return raw;
+}
+
+/**
+ * Resolve which of the given patch IDs carry an explicit org-wide manual-approval
+ * record (`patchApprovals.status = 'approved'`) for the org.
+ *
+ * This is intentionally only the org-wide manual-approval gate. It does NOT consider
+ * the device's effective patch ring or category/auto-approve rules — for the full
+ * ring + category-aware evaluation see `resolveApprovedPatchesForDevice` in
+ * `services/patchApprovalEvaluator.ts`.
+ *
+ * Known limitation: because this gate is org-wide and ring-agnostic, a patch that is
+ * approved for ring A passes this gate for a device in ring B. Wiring the install
+ * endpoint through the full evaluator (`resolveApprovedPatchesForDevice`) is a tracked
+ * follow-up.
+ */
+async function getApprovedPatchIdsForOrg(orgId: string, patchIds: string[]): Promise<Set<string>> {
+  if (patchIds.length === 0) return new Set();
+
+  const approvals = await db
+    .select({ patchId: patchApprovals.patchId })
+    .from(patchApprovals)
+    .where(
+      and(
+        eq(patchApprovals.orgId, orgId),
+        inArray(patchApprovals.patchId, patchIds),
+        eq(patchApprovals.status, 'approved')
+      )
+    );
+
+  return new Set(approvals.map((approval) => approval.patchId));
 }
 
 // GET /devices/:id/patches/history - Get patch operation history for a device
@@ -213,6 +244,9 @@ patchesRoutes.get(
       .where(eq(devicePatches.deviceId, deviceId))
       .orderBy(desc(devicePatches.lastCheckedAt));
 
+    const patchIds = [...new Set(devicePatchList.map((patch) => patch.patchId))];
+    const approvedPatchIds = await getApprovedPatchIdsForOrg(device.orgId, patchIds);
+
     // Separate actionable pending updates from stale missing records.
     const pending = devicePatchList
       .filter(p => p.status === 'pending')
@@ -227,7 +261,8 @@ patchesRoutes.get(
         releaseDate: p.releaseDate,
         category: p.category,
         source: p.source,
-        requiresReboot: p.requiresReboot
+        requiresReboot: p.requiresReboot,
+        approvalStatus: approvedPatchIds.has(p.patchId) ? 'approved' : 'pending'
       }));
 
     const missing = devicePatchList
@@ -243,7 +278,8 @@ patchesRoutes.get(
         releaseDate: p.releaseDate,
         category: p.category,
         source: p.source,
-        requiresReboot: p.requiresReboot
+        requiresReboot: p.requiresReboot,
+        approvalStatus: approvedPatchIds.has(p.patchId) ? 'approved' : 'pending'
       }));
 
     const installed = devicePatchList
@@ -258,7 +294,8 @@ patchesRoutes.get(
         status: p.status,
         installedAt: p.installedAt,
         category: p.category,
-        source: p.source
+        source: p.source,
+        approvalStatus: approvedPatchIds.has(p.patchId) ? 'approved' : 'pending'
       }));
 
     const failed = devicePatchList
@@ -296,7 +333,8 @@ patchesRoutes.get(
           severity: p.severity,
           status: p.status,
           releaseDate: p.releaseDate,
-          installedAt: p.installedAt
+          installedAt: p.installedAt,
+          approvalStatus: approvedPatchIds.has(p.patchId) ? 'approved' : 'pending'
         }))
       }
     });
@@ -335,6 +373,23 @@ patchesRoutes.post(
 
     if (patchRefs.length === 0) {
       return c.json({ error: 'No matching patches found' }, 404);
+    }
+    const foundPatchIds = new Set(patchRefs.map((patch) => patch.id));
+    const missingPatchIds = data.patchIds.filter((patchId) => !foundPatchIds.has(patchId));
+    if (missingPatchIds.length > 0) {
+      return c.json({
+        error: 'Some patches were not found',
+        missingPatchIds
+      }, 404);
+    }
+
+    const approvedPatchIds = await getApprovedPatchIdsForOrg(device.orgId, data.patchIds);
+    const unapprovedPatchIds = data.patchIds.filter((patchId) => !approvedPatchIds.has(patchId));
+    if (unapprovedPatchIds.length > 0) {
+      return c.json({
+        error: 'Only approved patches can be installed',
+        unapprovedPatchIds
+      }, 409);
     }
 
     const queued = await queueCommandForExecution(
