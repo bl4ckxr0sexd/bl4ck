@@ -19,6 +19,7 @@ export * from './safeRelativePath';
 export * from './authenticator';
 export * from './catalog';
 export * from './invoices';
+export * from './contracts';
 
 // ============================================
 // Device Roles

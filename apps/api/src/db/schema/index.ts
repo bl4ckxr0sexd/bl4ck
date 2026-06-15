@@ -86,4 +86,5 @@ export * from './catalog';
 export * from './timeTracking';
 export * from './invoices';
 export * from './invoiceDocuments';
+export * from './contracts';
 export * from './clientAi';
