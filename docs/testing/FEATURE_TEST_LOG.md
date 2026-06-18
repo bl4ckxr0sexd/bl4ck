@@ -2154,6 +2154,30 @@ Loaded the branch into the local dev Docker stack (rebuilt `api` from the worktr
 - **Dev DB test data seeded:** 2 billable time entries (1 unapproved) + 1 ticket part on "Default Organization"; re-activated 2 archived catalog items; set org + partner billing settings; created `INV-2026-0001` (number burned). All on the dev DB (5432).
 - **Stack state:** the dev stack is currently running the **`feat/invoice-engine`** code (swapped from `main`). To restore: `docker compose down` from the worktree, `docker compose up -d` from `/Users/toddhebebrand/breeze`, and remove the worktree `.env` symlink.
 
+## Quotes/Proposals Phase 2 — 2026-06-17
+
+**Branch:** `feat/quotes-proposals-phase2` (PR #1468)
+**Commit:** a4c2b719
+**Tested by:** Claude (ultracode)
+**Result:** PASS (logic + UI render), with the public Accept *button click* verified via API rather than the dev browser (env-blocked — see Notes)
+
+### What was tested
+- [x] API (real running branch on :3009): login → create quote → add lines → **send (quotes:send)** → status=sent, number assigned, emailed=true; **public GET (unauth)** → sent→viewed; **public accept (unauth typed signature)** → converted; **single-use token** → reuse 401. DB verified: converted invoice total $500.00 = one-time line ONLY ($80 monthly excluded), acceptance row has signer + 64-char content hash + jti.
+- [x] UI dashboard (Playwright, interactive): quotes list shows Phase 2 statuses + a Converted quote; opened a draft; Detail tab shows the real **"Send proposal"** button (not "coming soon"); clicked it → number Q-2026-0002 assigned, status→Sent, button correctly hidden (gated on status==='draft'). Editor offers the **Image** block.
+- [x] UI public page (Playwright, SSR): /quote/<token> renders branded proposal + intro + heading block + pricing table with **only the customer-visible line** (a customerVisible:false line was correctly filtered out) + typed-signature accept form.
+- [x] UI public **Accept button click** (verified on a PRODUCTION build, :4334 via `astro build` + node adapter): the React island hydrated, the typed-signature Accept fired, and the page transitioned to "Thank you — your acceptance has been recorded." DB confirmed quote→converted, invoice total $640.00 (one-time), acceptance "Casey Customer" + 64-char hash + jti.
+
+### Evidence
+- Converted invoice: status=draft, total=500.00 (one-time only); invoice_lines = ["Onboarding setup" $500.00].
+- quote_acceptances: signer "Pat Prospect", quote_sha256 len 64, jti present, ip_address empty (no proxy header on localhost — the C1-safe path).
+- Dashboard: heading "Draft quote" → "Q-2026-0002", status badge Draft → Sent after clicking Send.
+
+### Issues found
+- None in the feature. The public Accept button does not work under `astro dev` (dev-only): the portal's hardened CSP `script-src 'self'` blocks astro's dev-mode *un-hashed* inline hydration scripts, so the React island never hydrates. RESOLVED by testing a PRODUCTION build (`astro build`), where Astro emits **hashed** inline scripts (`script-src 'self' 'sha256-…'`) → the island hydrates and the Accept button works end-to-end (confirmed above). The accept fetch additionally needs the API origin in `connect-src` — production's `connect-src … https:` (apps/portal/astro.config.mjs:21) covers any HTTPS API; the only reason it failed locally is the test API was HTTP (`http://localhost:3009`). Verified by temporarily adding the local origin to connect-src (reverted after).
+
+### Notes
+- `apps/portal` is not deployed in prod (no compose service / caddy upstream) — pre-existing gap; the portal/public pages are dormant until a serving layer is added.
+
 ## ANTHROPIC_BASE_URL self-hosted AI backend (#1412) — 2026-06-17
 
 **Branch:** `fix/1412-anthropic-base-url`
