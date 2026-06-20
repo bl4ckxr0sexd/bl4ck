@@ -3,6 +3,8 @@ import { Hono } from 'hono';
 import { softwareRoutes, computeSoftwareDeploymentAggregateStatus } from './software';
 import { db } from '../db';
 import { uploadBinary, isS3Configured } from '../services/s3Storage';
+import { captureException } from '../services/sentry';
+import { parseStreamingMultipart } from '../services/streamingUpload';
 import { createHash } from 'node:crypto';
 
 vi.mock('../services', () => ({}));
@@ -91,6 +93,20 @@ vi.mock('./agentWs', () => ({
   sendCommandToAgent: vi.fn(() => true)
 }));
 
+vi.mock('../services/sentry', () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn()
+}));
+
+// Keep the real streaming parser by default; individual tests can override
+// `parseStreamingMultipart` (e.g. to simulate a disk failure).
+vi.mock('../services/streamingUpload', async () => {
+  const actual = await vi.importActual<typeof import('../services/streamingUpload')>(
+    '../services/streamingUpload'
+  );
+  return { ...actual, parseStreamingMultipart: vi.fn(actual.parseStreamingMultipart) };
+});
+
 describe('software routes', () => {
   let app: Hono;
 
@@ -169,6 +185,68 @@ describe('software routes', () => {
       const call = vi.mocked(uploadBinary).mock.calls[0]!;
       expect(call[2]).toBe(expectedChecksum); // checksum from the streamed hash
       expect(typeof call[0]).toBe('string');  // temp file path, not an in-memory buffer
+    });
+
+    it('rejects a disallowed file extension during streaming (400)', async () => {
+      vi.mocked(isS3Configured).mockReturnValueOnce(true);
+      vi.mocked(db.select).mockReturnValueOnce(
+        selectResult([{ id: catalogId, orgId: 'org-123', name: 'Acme Tool' }])
+      );
+
+      const fd = new FormData();
+      fd.append('version', '1.0.0');
+      fd.append('file', new File(['payload'], 'evil.sh', { type: 'application/octet-stream' }));
+
+      const res = await app.request(`/software/catalog/${catalogId}/versions/upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' },
+        body: fd,
+      });
+
+      expect(res.status).toBe(400);
+      expect(uploadBinary).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when no file part is sent', async () => {
+      vi.mocked(isS3Configured).mockReturnValueOnce(true);
+      vi.mocked(db.select).mockReturnValueOnce(
+        selectResult([{ id: catalogId, orgId: 'org-123', name: 'Acme Tool' }])
+      );
+
+      const fd = new FormData();
+      fd.append('version', '1.0.0');
+
+      const res = await app.request(`/software/catalog/${catalogId}/versions/upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' },
+        body: fd,
+      });
+
+      expect(res.status).toBe(400);
+      expect(uploadBinary).not.toHaveBeenCalled();
+    });
+
+    it('maps a non-MultipartError parse failure to a 500 (not a blank crash)', async () => {
+      vi.mocked(isS3Configured).mockReturnValueOnce(true);
+      vi.mocked(db.select).mockReturnValueOnce(
+        selectResult([{ id: catalogId, orgId: 'org-123', name: 'Acme Tool' }])
+      );
+      // Simulate an infrastructure failure (e.g. disk full) inside the parser.
+      vi.mocked(parseStreamingMultipart).mockRejectedValueOnce(new Error('ENOSPC: no space left'));
+
+      const fd = new FormData();
+      fd.append('version', '1.0.0');
+      fd.append('file', new File(['payload'], 'pkg.msi'));
+
+      const res = await app.request(`/software/catalog/${catalogId}/versions/upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' },
+        body: fd,
+      });
+
+      expect(res.status).toBe(500);
+      expect(captureException).toHaveBeenCalledTimes(1);
+      expect(uploadBinary).not.toHaveBeenCalled();
     });
   });
 
