@@ -16,7 +16,7 @@
 
 - **Node:** prefix every pnpm/vitest command with `PATH=$HOME/.nvm/versions/node/v22.20.0/bin:$PATH` (default node 23 breaks pnpm engine-strict).
 - **Migrations:** filename `YYYY-MM-DD-<slug>.sql` in `apps/api/migrations/`; idempotent (`IF NOT EXISTS`, `pg_policies` checks, `DO $$ ... EXCEPTION`); **no inner `BEGIN;`/`COMMIT;`** (autoMigrate wraps each file); never edit a shipped migration.
-- **RLS is mandatory.** Tenant-scoped tables (`org_id`) get ENABLE+FORCE+policies in the creating migration. Global tables get ENABLE+FORCE with **no policies** (system-context access only) and must be allowlisted in the rls-coverage contract test.
+- **RLS is mandatory.** Tenant-scoped tables (`org_id`) get ENABLE+FORCE+policies in the creating migration. Global tables get ENABLE+FORCE with a **system-only policy** (`current_setting('breeze.scope',true)='system'`, like `manifest_signing_keys`) — NOT zero policies (a no-policy forced table denies even system context, since `breeze_app` is non-BYPASSRLS) — and must be allowlisted in the rls-coverage contract test.
 - **DB context:** global-table reads/writes use `withSystemDbAccessContext`; tenant reads use the request `db`. Bare pool is forbidden in request code.
 - **Integration tests** (real DB) live in `apps/api/src/__tests__/integration/*.integration.test.ts` and run via `--config vitest.integration.config.ts` (test DB on :5433, `breeze_app` role). The plain unit job has no DATABASE_URL — real-DB cases skip there.
 - **API prefix:** routes mount under `/api/v1` (see `apps/api/src/index.ts`).
@@ -28,7 +28,7 @@
 |---|---|
 | `apps/api/src/db/schema/vulnerabilityManagement.ts` (create) | Drizzle defs: `vulnerabilitySources`, `vulnerabilities`, `softwareProducts`, `softwareVulnerabilities`, `deviceVulnerabilities` |
 | `apps/api/src/db/schema/index.ts` (modify) | `export * from './vulnerabilityManagement'` |
-| `apps/api/migrations/2026-06-22-vulnerability-management.sql` (create) | Tables + indexes + RLS (global: force-no-policy; device: org-axis policies) |
+| `apps/api/migrations/2026-06-22-vulnerability-management.sql` (create) | Tables + indexes + RLS (global: force + system-only policy; device: org-axis policies) |
 | `apps/api/src/__tests__/integration/rls-coverage.integration.test.ts` (modify) | Add 4 global tables to `INTENTIONAL_UNSCOPED` |
 | `apps/api/src/services/tenantCascade.ts` (modify) | Add `device_vulnerabilities` to `ORG_CASCADE_DELETE_ORDER` |
 | `apps/api/src/routes/devices/core.ts` (modify) | Add `device_vulnerabilities` to `DEVICE_ORG_DENORMALIZED_TABLES` |
@@ -68,7 +68,11 @@ In `apps/api/src/db/schema/index.ts` add: `export * from './vulnerabilityManagem
 Create `apps/api/migrations/2026-06-22-vulnerability-management.sql`. `CREATE TABLE IF NOT EXISTS` for all five tables (columns/types matching the Drizzle defs — the `software_vulnerabilities` CREATE must include all four range columns `version_start_including`, `version_start_excluding`, `version_end_excluding`, `version_end_including` so Phase 2's NVD `startExcluding` bound has a column), `CREATE INDEX IF NOT EXISTS` for every index in the defs, then RLS:
 
 ```sql
--- Global tables: force RLS, no policies (system-context only)
+-- Global tables: force RLS + a system-only policy (system context only; all
+-- tenants denied). A forced table with NO policy denies EVERYONE including the
+-- system context, because the API connects as the non-BYPASSRLS `breeze_app`
+-- role — so use the same system-only policy as `manifest_signing_keys`, NOT
+-- zero policies. (Caught by the Task 2 forge test during the build.)
 DO $$
 DECLARE t text;
 BEGIN
@@ -76,6 +80,11 @@ BEGIN
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_system_only', t);
+    EXECUTE format(
+      $f$CREATE POLICY %I ON %I USING (current_setting('breeze.scope', true) = 'system') WITH CHECK (current_setting('breeze.scope', true) = 'system')$f$,
+      t || '_system_only', t
+    );
   END LOOP;
 END $$;
 
