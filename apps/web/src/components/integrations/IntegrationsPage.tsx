@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Activity,
   Boxes,
+  DollarSign,
   MessageSquare,
   Plug,
   Shield,
@@ -19,9 +20,10 @@ import M365Integration from './M365Integration';
 import Pax8Integration from './Pax8Integration';
 import TdSynnexCatalogPanel from '../settings/TdSynnexCatalogPanel';
 import TdSynnexEcExpressPanel from '../settings/TdSynnexEcExpressPanel';
+import QuickbooksIntegration from './QuickbooksIntegration';
 import { getJwtClaims } from '../../lib/authScope';
 
-type TabId = 'webhooks' | 'notifications' | 'psa' | 'security' | 'monitoring' | 'identity' | 'distributors';
+type TabId = 'webhooks' | 'notifications' | 'psa' | 'security' | 'monitoring' | 'identity' | 'distributors' | 'accounting';
 type SecuritySubTab = 'sentinelone' | 'huntress';
 type IdentitySubTab = 'google' | 'm365';
 type DistributorSubTab = 'pax8' | 'tdsynnex' | 'tdsynnex-ec';
@@ -34,6 +36,7 @@ const tabs: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: 'monitoring', label: 'Monitoring', icon: Activity },
   { id: 'identity', label: 'Identity', icon: Users },
   { id: 'distributors', label: 'Distributors', icon: Boxes },
+  { id: 'accounting', label: 'Accounting', icon: DollarSign },
 ];
 
 const securitySubTabs: { id: SecuritySubTab; label: string }[] = [
@@ -215,6 +218,15 @@ export default function IntegrationsPage({ initialTab = 'webhooks' }: Integratio
       {activeTab === 'distributors' && !isOrgScoped && distributorSubTab === 'pax8' && <Pax8Integration />}
       {activeTab === 'distributors' && !isOrgScoped && distributorSubTab === 'tdsynnex' && <TdSynnexCatalogPanel />}
       {activeTab === 'distributors' && !isOrgScoped && distributorSubTab === 'tdsynnex-ec' && <TdSynnexEcExpressPanel />}
+      {activeTab === 'accounting' && isOrgScoped && (
+        <p
+          className="py-12 text-center text-sm text-muted-foreground"
+          data-testid="accounting-org-scope"
+        >
+          Accounting integrations are available to partner accounts only.
+        </p>
+      )}
+      {activeTab === 'accounting' && !isOrgScoped && <QuickbooksIntegration />}
     </div>
   );
 }
