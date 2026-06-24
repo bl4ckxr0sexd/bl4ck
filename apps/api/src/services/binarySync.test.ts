@@ -27,6 +27,19 @@ vi.mock("../db", () => ({
   },
 }));
 
+// Capture eq/and so a test can inspect the WHERE built for the per-component
+// isLatest demote (#1802). Preserve every other drizzle-orm export so the real
+// schema (pgTable/varchar/...) still loads.
+const drizzleSpies = vi.hoisted(() => ({
+  eq: vi.fn((column: unknown, value: unknown) => ({ __op: "eq", column, value })),
+  and: vi.fn((...clauses: unknown[]) => ({ __op: "and", clauses })),
+}));
+
+vi.mock("drizzle-orm", async (importActual) => {
+  const actual = await importActual<typeof import("drizzle-orm")>();
+  return { ...actual, eq: drizzleSpies.eq, and: drizzleSpies.and };
+});
+
 const fsMocks = vi.hoisted(() => ({
   readdir: vi.fn(),
   readFile: vi.fn(),
@@ -259,6 +272,116 @@ describe("binarySync", () => {
       expect(set.manifestSignature).toBe("test-signature-base64");
       expect(set.signingKeyId).toBe("deploy-test-aaaaaaaa");
     }
+  });
+
+  // #1802: the local-binary path historically registered ONLY the agent
+  // component, so self-hosters on BINARY_SOURCE=local never got watchdog
+  // auto-update. It now also scans + registers breeze-watchdog-* siblings.
+  describe("local-binary watchdog registration (#1802)", () => {
+    function setLocalEnv() {
+      process.env.BINARY_SOURCE = "local";
+      process.env.AGENT_BINARY_DIR = "/fake/agent/bin";
+      process.env.BINARY_VERSION_FILE = "/fake/version";
+      delete process.env.BREEZE_VERSION;
+      fsMocks.stat.mockResolvedValue({ isFile: () => true, size: 4096 } as any);
+      fsMocks.readFile.mockResolvedValue("0.65.9" as any);
+    }
+
+    it("registers a component=watchdog row alongside the agent when the binary is present", async () => {
+      setLocalEnv();
+      fsMocks.readdir.mockResolvedValue([
+        "breeze-agent-linux-amd64",
+        "breeze-watchdog-linux-amd64",
+      ] as any);
+
+      await syncBinaries();
+
+      const insertCalls = dbMocks.insertValues.mock.calls.map(
+        (call: any[]) => call[0] as Record<string, unknown>,
+      );
+      // Agent still registered (regression guard for the refactor).
+      expect(insertCalls.some((v) => v.component === "agent")).toBe(true);
+
+      const watchdogInsert = insertCalls.find((v) => v.component === "watchdog");
+      expect(watchdogInsert).toBeDefined();
+      expect(watchdogInsert).toMatchObject({
+        version: "0.65.9",
+        platform: "linux",
+        architecture: "amd64",
+        component: "watchdog",
+        isLatest: true,
+      });
+      // Must resolve to the dedicated watchdog download route, not the agent one.
+      expect(watchdogInsert!.downloadUrl).toContain(
+        "/agents/download/watchdog/linux/amd64",
+      );
+      const manifest = JSON.parse(watchdogInsert!.releaseManifest as string);
+      expect(manifest).toMatchObject({
+        version: "0.65.9",
+        component: "watchdog",
+        platform: "linux",
+        arch: "amd64",
+      });
+    });
+
+    it("scopes the isLatest demote per-component so registering watchdog never clobbers the agent", async () => {
+      // The whole reason registerLocalBinaries exists: its demote
+      // (UPDATE ... SET isLatest=false WHERE ... component=?) MUST be
+      // component-scoped, or registering the watchdog would clear the agent's
+      // isLatest row for the same platform/arch and break agent auto-update
+      // fleet-wide. Assert each component's demote carries its own component eq.
+      setLocalEnv();
+      fsMocks.readdir.mockResolvedValue([
+        "breeze-agent-linux-amd64",
+        "breeze-watchdog-linux-amd64",
+      ] as any);
+
+      await syncBinaries();
+
+      // Bind the assertion to the DEMOTE specifically: each demote is
+      // `UPDATE ... SET isLatest=false WHERE and(eq(platform), eq(arch),
+      // eq(component), eq(isLatest=true))`. Each and() call captures one demote
+      // WHERE's eq clauses. Keep only the wheres scoped by isLatest=true (the
+      // demotes) and read their component eq — so a stray eq(component, ...)
+      // elsewhere can't mask a dropped filter, and removing the component eq
+      // from the demote fails this test.
+      type EqClause = { __op: string; column: unknown; value: unknown };
+      const scopedComponents = (
+        drizzleSpies.and.mock.calls as unknown as EqClause[][]
+      )
+        .filter((clauses) =>
+          clauses.some((c) => c?.__op === "eq" && c.value === true),
+        )
+        .map(
+          (clauses) =>
+            clauses.find((c) => c?.value === "agent" || c?.value === "watchdog")
+              ?.value,
+        )
+        .filter(Boolean);
+
+      expect(scopedComponents).toContain("agent");
+      expect(scopedComponents).toContain("watchdog");
+    });
+
+    it("warns and skips watchdog registration when no watchdog binary is present", async () => {
+      setLocalEnv();
+      fsMocks.readdir.mockResolvedValue(["breeze-agent-linux-amd64"] as any);
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await syncBinaries();
+
+      const insertCalls = dbMocks.insertValues.mock.calls.map(
+        (call: any[]) => call[0] as Record<string, unknown>,
+      );
+      expect(insertCalls.some((v) => v.component === "agent")).toBe(true);
+      expect(insertCalls.some((v) => v.component === "watchdog")).toBe(false);
+      expect(
+        warnSpy.mock.calls.some((a) =>
+          String(a[0] ?? "").includes("No local watchdog binaries found"),
+        ),
+      ).toBe(true);
+      warnSpy.mockRestore();
+    });
   });
 
   it("logs at console.error (not warn) when stale-volume detection + GitHub fallback both fail (#644)", async () => {
