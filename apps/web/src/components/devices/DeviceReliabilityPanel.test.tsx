@@ -384,4 +384,183 @@ describe('DeviceReliabilityPanel', () => {
     fireEvent.click(atRiskHelp.querySelector('button')!);
     expect(await screen.findByText(/Biggest drag: Crashes/)).toBeInTheDocument();
   });
+
+  const baseSnapshot = (overrides: Record<string, unknown> = {}) => ({
+    deviceId: 'dev-1',
+    reliabilityScore: 30,
+    trendDirection: 'degrading',
+    trendConfidence: 0.8,
+    uptime30d: 94.2,
+    crashCount30d: 0,
+    hangCount30d: 0,
+    serviceFailureCount30d: 0,
+    hardwareErrorCount30d: 0,
+    mtbfHours: 72,
+    topIssues: [],
+    drivers: [],
+    computedAt: '2026-06-18T12:00:00.000Z',
+    ...overrides,
+  });
+
+  it('caps alarming counts in the summary tiles (issue #1907)', async () => {
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({
+        snapshot: baseSnapshot({
+          serviceFailureCount30d: 1228,
+          drivers: [
+            {
+              factor: 'serviceFailures',
+              label: 'Service failures',
+              score: 0,
+              weight: 25,
+              lostPoints: 25,
+              evidence: { serviceFailure30d: 1228 },
+            },
+          ],
+        }),
+        history: [],
+      }),
+    );
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    await screen.findByText('Service failures');
+    // The raw 1,228 is capped to 999+ in the tile; the exact value moves to the title attr.
+    expect(screen.getByText('999+')).toBeInTheDocument();
+    expect(screen.queryByText('1,228')).toBeNull();
+  });
+
+  it('relabels fixed windows to observed age on a young device (issue #1907)', async () => {
+    const enrolledAt = new Date(Date.now() - 13 * 24 * 60 * 60 * 1000).toISOString();
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ snapshot: baseSnapshot({ enrolledAt }), history: [] }),
+    );
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    const windowLabel = await screen.findByTestId('reliability-uptime-window');
+    expect(windowLabel.textContent).toContain('since enroll · 13d');
+  });
+
+  it('keeps the full window label when the device is older than the window', async () => {
+    const enrolledAt = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ snapshot: baseSnapshot({ enrolledAt }), history: [] }),
+    );
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    const windowLabel = await screen.findByTestId('reliability-uptime-window');
+    expect(windowLabel.textContent).toBe('30d uptime');
+  });
+
+  it('does not show the offenders drill-down when there are no offending events', async () => {
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ snapshot: baseSnapshot(), history: [] }),
+    );
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    await screen.findByText('Reliability');
+    expect(screen.queryByTestId('reliability-offenders-toggle')).toBeNull();
+  });
+
+  it('lazily loads and renders top offenders when the drill-down is expanded (issue #1907)', async () => {
+    fetchWithAuthMock
+      .mockResolvedValueOnce(
+        makeJsonResponse({ snapshot: baseSnapshot({ serviceFailureCount30d: 3 }), history: [] }),
+      )
+      .mockResolvedValueOnce(
+        makeJsonResponse({
+          deviceId: 'dev-1',
+          days: 30,
+          offenders: {
+            services: [
+              { key: 'Spooler', label: 'Spooler', count: 3, lastOccurrence: '2026-06-17T10:00:00.000Z', detail: '1/3 recovered' },
+            ],
+            hardware: [],
+            hangs: [],
+          },
+        }),
+      );
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    // Offenders are NOT fetched on mount — only the snapshot request fires.
+    await screen.findByText('Reliability');
+    expect(fetchWithAuthMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(await screen.findByTestId('reliability-offenders-toggle'));
+
+    expect(await screen.findByText('Spooler')).toBeInTheDocument();
+    expect(screen.getByText('1/3 recovered')).toBeInTheDocument();
+    expect(fetchWithAuthMock).toHaveBeenCalledWith('/reliability/dev-1/offenders');
+
+    // Caching contract: collapsing and re-expanding must NOT refetch.
+    fireEvent.click(screen.getByTestId('reliability-offenders-toggle'));
+    fireEvent.click(screen.getByTestId('reliability-offenders-toggle'));
+    expect(await screen.findByText('Spooler')).toBeInTheDocument();
+    expect(fetchWithAuthMock).toHaveBeenCalledTimes(2); // snapshot + one offenders fetch
+  });
+
+  it('surfaces an offenders load failure with a working Retry (issue #1907)', async () => {
+    fetchWithAuthMock
+      .mockResolvedValueOnce(
+        makeJsonResponse({ snapshot: baseSnapshot({ serviceFailureCount30d: 3 }), history: [] }),
+      )
+      .mockResolvedValueOnce(makeJsonResponse({ error: 'boom' }, false, 500))
+      .mockResolvedValueOnce(
+        makeJsonResponse({
+          deviceId: 'dev-1',
+          days: 30,
+          offenders: {
+            services: [{ key: 'Spooler', label: 'Spooler', count: 3, lastOccurrence: '2026-06-17T10:00:00.000Z' }],
+            hardware: [],
+            hangs: [],
+          },
+        }),
+      );
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    fireEvent.click(await screen.findByTestId('reliability-offenders-toggle'));
+
+    // Failure is surfaced, not swallowed into a blank panel.
+    expect(await screen.findByText('Failed to load reliability detail')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+
+    // Retry refetches (the fetched-once guard was reset) and renders the data.
+    expect(await screen.findByText('Spooler')).toBeInTheDocument();
+  });
+
+  it('treats a 200 with a malformed offenders body as a failure, not a blank panel (issue #1907)', async () => {
+    fetchWithAuthMock
+      .mockResolvedValueOnce(
+        makeJsonResponse({ snapshot: baseSnapshot({ serviceFailureCount30d: 3 }), history: [] }),
+      )
+      .mockResolvedValueOnce(makeJsonResponse({ deviceId: 'dev-1', days: 30 })); // no `offenders` field
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    fireEvent.click(await screen.findByTestId('reliability-offenders-toggle'));
+
+    expect(await screen.findByText('Reliability detail response was malformed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it('shows the empty state when the drill-down returns no offenders (issue #1907)', async () => {
+    fetchWithAuthMock
+      .mockResolvedValueOnce(
+        makeJsonResponse({ snapshot: baseSnapshot({ serviceFailureCount30d: 3 }), history: [] }),
+      )
+      .mockResolvedValueOnce(
+        makeJsonResponse({ deviceId: 'dev-1', days: 30, offenders: { services: [], hardware: [], hangs: [] } }),
+      );
+
+    render(<DeviceReliabilityPanel deviceId="dev-1" />);
+
+    fireEvent.click(await screen.findByTestId('reliability-offenders-toggle'));
+
+    expect(await screen.findByText(/No offending services or components recorded/)).toBeInTheDocument();
+  });
 });

@@ -866,3 +866,127 @@ describe('computeReliabilityEvaluationSummary', () => {
     expect(summary.precision).toBe(1);
   });
 });
+
+describe('aggregateReliabilityOffenders', () => {
+  const { aggregateReliabilityOffenders } = reliabilityScoringInternals;
+
+  it('groups distinct events by offender and ranks by count', () => {
+    const rows = [
+      makeHistoryRow({
+        serviceFailures: [
+          { serviceName: 'Spooler', timestamp: '2026-02-20T10:01:00.000Z', recovered: true },
+          { serviceName: 'Spooler', timestamp: '2026-02-20T11:01:00.000Z', recovered: false },
+          { serviceName: 'WinDefend', timestamp: '2026-02-20T12:01:00.000Z', recovered: false },
+        ],
+        hardwareErrors: [
+          { type: 'disk', severity: 'warning', source: 'disk0', timestamp: '2026-02-20T10:05:00.000Z' },
+          { type: 'disk', severity: 'critical', source: 'disk0', timestamp: '2026-02-20T13:05:00.000Z' },
+        ],
+        appHangs: [
+          { processName: 'chrome.exe', timestamp: '2026-02-20T10:09:00.000Z', duration: 5, resolved: false },
+        ],
+      }),
+    ];
+
+    const result = aggregateReliabilityOffenders(rows);
+
+    expect(result.services).toEqual([
+      { key: 'Spooler', label: 'Spooler', count: 2, lastOccurrence: '2026-02-20T11:01:00.000Z', detail: '1/2 recovered' },
+      { key: 'WinDefend', label: 'WinDefend', count: 1, lastOccurrence: '2026-02-20T12:01:00.000Z' },
+    ]);
+    // Worst severity wins for the detail; the latest timestamp is retained.
+    expect(result.hardware).toEqual([
+      { key: 'disk0', label: 'disk0', count: 2, lastOccurrence: '2026-02-20T13:05:00.000Z', detail: 'critical' },
+    ]);
+    expect(result.hangs).toEqual([
+      { key: 'chrome.exe', label: 'chrome.exe', count: 1, lastOccurrence: '2026-02-20T10:09:00.000Z', detail: '1 unresolved' },
+    ]);
+  });
+
+  it('de-duplicates the same event re-reported across overlapping rows (issue #1905 parity)', () => {
+    const dup = { serviceName: 'Spooler', timestamp: '2026-02-20T10:01:00.000Z', errorCode: '7', recovered: false };
+    const rows = [
+      makeHistoryRow({ serviceFailures: [dup] }),
+      makeHistoryRow({ collectedAt: new Date('2026-02-20T12:00:00.000Z'), serviceFailures: [dup, { ...dup }] }),
+    ];
+
+    const result = aggregateReliabilityOffenders(rows);
+
+    expect(result.services).toEqual([
+      { key: 'Spooler', label: 'Spooler', count: 1, lastOccurrence: '2026-02-20T10:01:00.000Z' },
+    ]);
+  });
+
+  it('honors the top-N limit and labels nameless offenders with a placeholder', () => {
+    const rows = [
+      makeHistoryRow({
+        serviceFailures: [
+          { serviceName: 'A', timestamp: '2026-02-20T10:01:00.000Z', recovered: false },
+          { serviceName: 'B', timestamp: '2026-02-20T10:02:00.000Z', recovered: false },
+          { serviceName: '', timestamp: '2026-02-20T10:03:00.000Z', recovered: false },
+        ],
+      }),
+    ];
+
+    const result = aggregateReliabilityOffenders(rows, 2);
+
+    expect(result.services).toHaveLength(2);
+    expect(result.services.map((offender) => offender.label)).not.toContain('');
+  });
+
+  it('keeps the worst hardware severity even when a lower one is reported later', () => {
+    const rows = [
+      makeHistoryRow({
+        hardwareErrors: [
+          { type: 'disk', severity: 'critical', source: 'disk0', timestamp: '2026-02-20T10:00:00.000Z' },
+          { type: 'disk', severity: 'warning', source: 'disk0', timestamp: '2026-02-20T11:00:00.000Z' },
+          { type: 'disk', severity: 'bogus' as never, source: 'disk0', timestamp: '2026-02-20T12:00:00.000Z' },
+        ],
+      }),
+    ];
+
+    const result = aggregateReliabilityOffenders(rows);
+
+    // critical reported first must not be downgraded by a later warning / unknown severity.
+    expect(result.hardware[0]).toMatchObject({ key: 'disk0', count: 3, detail: 'critical' });
+  });
+
+  it('breaks count ties by most-recent occurrence', () => {
+    const rows = [
+      makeHistoryRow({
+        serviceFailures: [
+          { serviceName: 'Older', timestamp: '2026-02-20T08:00:00.000Z', recovered: false },
+          { serviceName: 'Newer', timestamp: '2026-02-20T20:00:00.000Z', recovered: false },
+        ],
+      }),
+    ];
+
+    const result = aggregateReliabilityOffenders(rows, 1);
+
+    // Equal counts (1 each) → the more recent offender ranks first and survives the top-1 slice.
+    expect(result.services).toEqual([
+      { key: 'Newer', label: 'Newer', count: 1, lastOccurrence: '2026-02-20T20:00:00.000Z' },
+    ]);
+  });
+
+  it('excludes events whose day falls outside the supplied window', () => {
+    const rows = [
+      makeHistoryRow({
+        collectedAt: new Date('2026-02-20T10:00:00.000Z'),
+        serviceFailures: [
+          { serviceName: 'InWindow', timestamp: '2026-02-19T10:00:00.000Z', recovered: false },
+          // Re-reported in a recent row but its own day is well before the window start.
+          { serviceName: 'OldReReport', timestamp: '2026-01-01T10:00:00.000Z', recovered: false },
+        ],
+      }),
+    ];
+    const window = { sinceKey: '2026-02-13', todayKey: '2026-02-20' };
+
+    const filtered = aggregateReliabilityOffenders(rows, 5, window);
+    expect(filtered.services.map((offender) => offender.label)).toEqual(['InWindow']);
+
+    // Without a window the old re-report is still counted (pure aggregation).
+    const unfiltered = aggregateReliabilityOffenders(rows);
+    expect(unfiltered.services.map((offender) => offender.label).sort()).toEqual(['InWindow', 'OldReReport']);
+  });
+});
