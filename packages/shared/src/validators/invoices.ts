@@ -2,6 +2,7 @@ import { z } from 'zod';
 // Spread the readonly SSOT tuples into z.enum (keep it a direct spread of the
 // const — a `string[]` intermediate would widen the schema to z.enum(string)).
 import { INVOICE_STATUSES, PAYMENT_METHODS } from '../types/billing-enums';
+import { BULK_ID_LIMIT } from '../constants';
 
 const money = z.number().nonnegative().multipleOf(0.01);
 const positiveQty = z.number().positive().multipleOf(0.01);
@@ -106,6 +107,14 @@ export const orgBillingSettingsSchema = z.object({
   billingAddressRegion: z.string().max(120).nullable().optional(),
   billingAddressPostalCode: z.string().max(40).nullable().optional(),
   billingAddressCountry: z.string().length(2).nullable().optional()
+});
+
+export const bulkInvoiceIdsSchema = z.object({
+  // capped at BULK_ID_LIMIT: each item runs sequentially in its own short transaction (conn-pool safety)
+  ids: z.array(z.string().guid()).min(1).max(BULK_ID_LIMIT),
+});
+export const bulkVoidInvoicesSchema = bulkInvoiceIdsSchema.extend({
+  reason: z.string().trim().min(1).max(500),
 });
 
 export type AssembleFromOrgInput = z.infer<typeof assembleFromOrgSchema>;

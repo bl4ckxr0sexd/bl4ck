@@ -4,7 +4,11 @@ import { navigateTo } from '@/lib/navigation';
 import { runAction, handleActionError, ActionError } from '../../../lib/runAction';
 import { usePermissions } from '../../../lib/permissions';
 import { Dialog } from '../../shared/Dialog';
+import { ConfirmDialog } from '../../shared/ConfirmDialog';
 import { listQuotes, createQuote } from '../../../lib/api/quotes';
+import { showToast } from '../../shared/Toast';
+import { useBulkSelection } from '../bulk/useBulkSelection';
+import { BulkActionBar } from '../bulk/BulkActionBar';
 import {
   type Quote,
   type QuoteStatus,
@@ -13,6 +17,7 @@ import {
   formatDate,
   formatMoney,
 } from './quoteTypes';
+import { BULK_ID_LIMIT } from '@breeze/shared';
 
 interface Organization {
   id: string;
@@ -67,9 +72,10 @@ const UNAUTHORIZED = () => void navigateTo('/login', { replace: true });
 const num = (s: string | null | undefined) => { const n = Number(s); return Number.isFinite(n) ? n : 0; };
 const ts = (d: string | null) => (d ? new Date(d.length === 10 ? `${d}T00:00:00` : d).getTime() : null);
 
-export default function QuotesPage() {
+export function QuotesPage() {
   const { can } = usePermissions();
   const canWrite = can('quotes', 'write');
+  const bulk = useBulkSelection();
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +83,9 @@ export default function QuotesPage() {
   const [filters, setFilters] = useState<Filters>(() => readFilters());
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<Sort | null>(null);
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   // New-quote dialog state
   const [createOpen, setCreateOpen] = useState(false);
@@ -123,6 +132,12 @@ export default function QuotesPage() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  // Clear bulk selection whenever the server-side filters or client-side search
+  // change so stale invisible rows are never acted on.
+  useEffect(() => {
+    bulk.clear();
+  }, [filters.orgId, filters.status, search, bulk.clear]);
 
   const applyFilter = useCallback((patch: Partial<Filters>) => {
     setFilters((prev) => {
@@ -197,6 +212,38 @@ export default function QuotesPage() {
     }
     return out;
   }, [quotes, search, sort, orgName]);
+
+  const runBulkQuotes = useCallback(
+    async (path: string, verb: string) => {
+      const ids = Array.from(bulk.selectedIds);
+      if (ids.length === 0) return;
+      if (ids.length > BULK_ID_LIMIT) {
+        showToast({ type: 'warning', message: `Select up to ${BULK_ID_LIMIT} at a time.` });
+        return;
+      }
+      setBulkBusy(true);
+      try {
+        const result = await runAction<{ data: { succeeded: number; skipped: number; failed: number; skippedReasons?: Record<string, number> } }>({
+          request: () => fetchWithAuth(path, { method: 'POST', body: JSON.stringify({ ids }) }),
+          errorFallback: `Bulk ${verb} failed. Retry.`,
+          onUnauthorized: UNAUTHORIZED,
+        });
+        const { succeeded, skipped, failed } = result.data;
+        showToast(
+          skipped + failed > 0
+            ? { type: 'warning', message: `${succeeded} ${verb}, ${skipped} skipped${failed ? `, ${failed} failed` : ''}` }
+            : { type: 'success', message: `${succeeded} ${verb}` }
+        );
+        bulk.clear();
+        void loadQuotes(filters);
+      } catch (err) {
+        handleActionError(err, `Bulk ${verb} failed. Retry.`);
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [bulk, loadQuotes, filters],
+  );
 
   const SortHeader = ({ label, sortKey }: { label: string; sortKey: SortKey }) => (
     <th className="px-3 py-3 text-right font-medium">
@@ -316,50 +363,89 @@ export default function QuotesPage() {
             No quotes match these filters.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="quotes-table">
-              <thead>
-                <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-3 py-3 font-medium">Number</th>
-                  <th className="px-3 py-3 font-medium">Organization</th>
-                  <th className="px-3 py-3 font-medium">Status</th>
-                  <SortHeader label="Total" sortKey="total" />
-                  <SortHeaderLeft label="Created" sortKey="created" sort={sort} onSort={toggleSort} />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((qt) => (
-                  <tr
-                    key={qt.id}
-                    onClick={() => void navigateTo(`/billing/quotes/${qt.id}`)}
-                    data-testid={`quotes-row-${qt.id}`}
-                    className="cursor-pointer border-t transition hover:bg-muted/40"
-                  >
-                    <td className="px-3 py-3 font-medium">
-                      {qt.quoteNumber ?? (
-                        <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Draft
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">{orgName(qt.orgId)}</td>
-                    <td className="px-3 py-3">
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[qt.status]}`}
-                        data-testid={`quotes-status-${qt.id}`}
-                      >
-                        {statusLabel(qt)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums">{formatMoney(qt.total, qt.currencyCode)}</td>
-                    <td className="px-3 py-3 text-muted-foreground">{formatDate(qt.createdAt)}</td>
+          <div className="relative">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="quotes-table">
+                <thead>
+                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="w-8 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all quotes"
+                        data-testid="quotes-select-all"
+                        checked={rows.length > 0 && rows.every((r) => bulk.has(r.id))}
+                        onChange={(e) => (e.target.checked ? bulk.selectAll(rows.map((r) => r.id)) : bulk.clear())}
+                      />
+                    </th>
+                    <th className="px-3 py-3 font-medium">Number</th>
+                    <th className="px-3 py-3 font-medium">Organization</th>
+                    <th className="px-3 py-3 font-medium">Status</th>
+                    <SortHeader label="Total" sortKey="total" />
+                    <SortHeaderLeft label="Created" sortKey="created" sort={sort} onSort={toggleSort} />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((qt) => (
+                    <tr
+                      key={qt.id}
+                      onClick={() => void navigateTo(`/billing/quotes/${qt.id}`)}
+                      data-testid={`quotes-row-${qt.id}`}
+                      className="cursor-pointer border-t transition hover:bg-muted/40"
+                    >
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select quote ${qt.quoteNumber ?? qt.id}`}
+                          data-testid={`quotes-select-${qt.id}`}
+                          checked={bulk.has(qt.id)}
+                          onChange={() => bulk.toggle(qt.id)}
+                        />
+                      </td>
+                      <td className="px-3 py-3 font-medium">
+                        {qt.quoteNumber ?? (
+                          <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                            Draft
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">{orgName(qt.orgId)}</td>
+                      <td className="px-3 py-3">
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[qt.status]}`}
+                          data-testid={`quotes-status-${qt.id}`}
+                        >
+                          {statusLabel(qt)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right tabular-nums">{formatMoney(qt.total, qt.currencyCode)}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{formatDate(qt.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <BulkActionBar
+              count={bulk.size}
+              onClear={bulk.clear}
+              testIdPrefix="quotes"
+              actions={[
+                ...(can('quotes', 'send') ? [{ key: 'send', label: 'Send', disabled: bulkBusy, onClick: () => void runBulkQuotes('/quotes/bulk-send', 'sent') }] : []),
+                ...(can('quotes', 'write') ? [{ key: 'delete', label: 'Delete drafts', variant: 'destructive' as const, disabled: bulkBusy, onClick: () => setDeleteOpen(true) }] : []),
+              ]}
+            />
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={() => { setDeleteOpen(false); void runBulkQuotes('/quotes/bulk-delete', 'deleted'); }}
+        title="Delete draft quotes"
+        message={`Delete ${bulk.size} selected quote(s)? Only DRAFT quotes will be deleted; this cannot be undone.`}
+        confirmLabel="Delete drafts"
+        confirmTestId="quotes-bulk-delete-confirm"
+      />
 
       {/* New-quote dialog */}
       <Dialog
@@ -453,3 +539,5 @@ function SortHeaderLeft({
 
 // re-exported for tests that need the error type
 export { ActionError };
+
+export default QuotesPage;
