@@ -35,6 +35,7 @@ import { eventLogInlineSettingsSchema, monitoringInlineSettingsSchema } from '@b
 import type { AuthContext } from '../middleware/auth';
 import { normalizePatchInlineSettings, tryNormalizePatchInlineSettings } from './configPolicyPatching';
 import { resolvePartnerIdForOrg } from '../routes/patches/helpers';
+import { getPolicyBaselineDefaults } from './policyBaselineDefaults';
 
 // ============================================
 // Inline settings schemas
@@ -67,7 +68,13 @@ export const pamInlineSettingsSchema = z
 // Types
 // ============================================
 
-type ConfigFeatureType = 'patch' | 'alert_rule' | 'backup' | 'security' | 'monitoring' | 'maintenance' | 'compliance' | 'automation' | 'event_log' | 'software_policy' | 'sensitive_data' | 'peripheral_control' | 'warranty' | 'helper' | 'remote_access' | 'pam' | 'onedrive_helper';
+// CONFIG_FEATURE_TYPES / ConfigFeatureType live in a leaf module to avoid a
+// configurationPolicy ⇄ policyBaselineDefaults import cycle (and to keep route/
+// helper test suites from transitively crash-loading this service). Re-exported
+// here so existing importers that read them from configurationPolicy still work.
+import { CONFIG_FEATURE_TYPES, type ConfigFeatureType } from './configFeatureTypes';
+export { CONFIG_FEATURE_TYPES };
+export type { ConfigFeatureType };
 export type ConfigAssignmentLevel = 'partner' | 'organization' | 'site' | 'device_group' | 'device';
 
 const LEVEL_PRIORITY: Record<ConfigAssignmentLevel, number> = {
@@ -78,11 +85,13 @@ const LEVEL_PRIORITY: Record<ConfigAssignmentLevel, number> = {
   partner: 1,
 };
 
+const BREEZE_DEFAULTS_SENTINEL = 'breeze-defaults';
+
 interface ResolvedFeature {
   featureType: ConfigFeatureType;
   featurePolicyId: string | null;
   inlineSettings: unknown;
-  sourceLevel: ConfigAssignmentLevel;
+  sourceLevel: ConfigAssignmentLevel | 'default';
   sourceTargetId: string;
   sourcePolicyId: string;
   sourcePolicyName: string;
@@ -95,7 +104,7 @@ export interface EffectiveConfiguration {
   deviceId: string;
   features: Record<string, ResolvedFeature>;
   inheritanceChain: Array<{
-    level: ConfigAssignmentLevel;
+    level: ConfigAssignmentLevel | 'default';
     targetId: string;
     policyId: string;
     policyName: string;
@@ -1192,7 +1201,8 @@ export async function listAssignmentsForTarget(level: ConfigAssignmentLevel, tar
 async function resolveEffectiveConfigWithExecutor(
   executor: DbExecutor,
   deviceId: string,
-  auth: AuthContext
+  auth: AuthContext,
+  opts?: { includeBaseline?: boolean }
 ): Promise<EffectiveConfiguration | null> {
   // 1. Load device
   const deviceConditions: SQL[] = [eq(devices.id, deviceId)];
@@ -1340,16 +1350,52 @@ async function resolveEffectiveConfigWithExecutor(
     }
   }
 
-  const inheritanceChain = Array.from(chainMap.values()).map((entry) => ({
+  const inheritanceChain: EffectiveConfiguration['inheritanceChain'] = Array.from(chainMap.values()).map((entry) => ({
     ...entry,
     featureTypes: Array.from(entry.featureTypes),
   }));
 
+  // Synthesizes the virtual bottom-of-hierarchy "Breeze Defaults" layer for every
+  // feature type with no real winner. The BREEZE_DEFAULTS_SENTINEL ids, priority 0,
+  // and sourceLevel:'default' are sentinels the UI keys off to exclude this node from
+  // assigned-policy counts. Opt-in so existing callers are unaffected.
+  if (opts?.includeBaseline) {
+    const synthesized: ConfigFeatureType[] = [];
+    for (const entry of getPolicyBaselineDefaults()) {
+      if (features[entry.featureType]) continue;
+      features[entry.featureType] = {
+        featureType: entry.featureType,
+        featurePolicyId: null,
+        inlineSettings: entry.inlineSettings,
+        sourceLevel: 'default',
+        sourceTargetId: BREEZE_DEFAULTS_SENTINEL,
+        sourcePolicyId: BREEZE_DEFAULTS_SENTINEL,
+        sourcePolicyName: 'Breeze Defaults',
+        sourcePriority: 0,
+      };
+      synthesized.push(entry.featureType);
+    }
+    if (synthesized.length > 0) {
+      inheritanceChain.push({
+        level: 'default',
+        targetId: BREEZE_DEFAULTS_SENTINEL,
+        policyId: BREEZE_DEFAULTS_SENTINEL,
+        policyName: 'Breeze Defaults',
+        priority: 0,
+        featureTypes: synthesized,
+      });
+    }
+  }
+
   return { deviceId, features, inheritanceChain };
 }
 
-export async function resolveEffectiveConfig(deviceId: string, auth: AuthContext): Promise<EffectiveConfiguration | null> {
-  return resolveEffectiveConfigWithExecutor(db, deviceId, auth);
+export async function resolveEffectiveConfig(
+  deviceId: string,
+  auth: AuthContext,
+  opts?: { includeBaseline?: boolean }
+): Promise<EffectiveConfiguration | null> {
+  return resolveEffectiveConfigWithExecutor(db, deviceId, auth, opts);
 }
 
 // ============================================
