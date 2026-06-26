@@ -13,7 +13,9 @@ import {
   quoteImageUrl,
 } from '../../../lib/api/quotes';
 import { listCatalog, createCatalogItem, type CatalogItem } from '../../../lib/api/catalog';
+import { ecExpressStatus, ecExpressImport, type EcProduct, type EcStatus } from '../../../lib/api/distributors';
 import CatalogItemPicker from '../../catalog/CatalogItemPicker';
+import DistributorLookup from './DistributorLookup';
 import {
   type QuoteDetail as QuoteDetailData,
   type QuoteBlock,
@@ -57,8 +59,10 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
 
   const [busy, setBusy] = useState(false);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [ecActive, setEcActive] = useState(false);
   const [terms, setTerms] = useState(quote.termsAndConditions ?? '');
   const [termsDirty, setTermsDirty] = useState(false);
+  const canCatalogWrite = can('catalog', 'write');
 
   // ---- add-block form ------------------------------------------------------
   const [addType, setAddType] = useState<AddableBlockType>('heading');
@@ -103,6 +107,16 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
   }, []);
 
   useEffect(() => { void loadCatalog(); }, [loadCatalog]);
+
+  const loadEcStatus = useCallback(async () => {
+    if (!canCatalogWrite) { setEcActive(false); return; }
+    const res = await ecExpressStatus();
+    if (!res.ok) return; // optional context; never block the editor
+    const body = (await res.json().catch(() => null)) as { data?: EcStatus } | null;
+    setEcActive(Boolean(body?.data?.configured && body?.data?.enabled));
+  }, [canCatalogWrite]);
+
+  useEffect(() => { void loadEcStatus(); }, [loadEcStatus]);
 
   const sortedBlocks = useMemo(
     () => [...blocks].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -211,23 +225,73 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
   }, [busy, quote.id, refresh]);
 
   // ---- line mutations (scoped to a line_items block) ----------------------
+  const doAddCatalog = useCallback(async (blockId: string, item: CatalogItem) => {
+    await runAction({
+      request: () => addCatalogLine(quote.id, { catalogItemId: item.id, quantity: 1, blockId }),
+      errorFallback: 'Could not add the catalog item.',
+      successMessage: 'Item added',
+      onUnauthorized: UNAUTHORIZED,
+    });
+    refresh();
+  }, [quote.id, refresh]);
+
   const addCatalog = useCallback(async (blockId: string, item: CatalogItem) => {
     if (busy) return;
     setBusy(true);
+    try { await doAddCatalog(blockId, item); }
+    catch (err) { handleActionError(err, 'Could not add the catalog item.'); }
+    finally { setBusy(false); }
+  }, [busy, doAddCatalog]);
+
+  const resolveCatalogBySku = useCallback(async (sku: string): Promise<CatalogItem | null> => {
+    const fromState = catalog.find((i) => i.sku === sku);
+    if (fromState) return fromState;
+    const res = await listCatalog({ search: sku, isActive: true, limit: 200 });
+    // A failed lookup must NOT be treated as "not in catalog" — that would
+    // re-import and could strand the line. Throw a plain Error so the caller's
+    // handleActionError surfaces it (a manual ActionError would be assumed
+    // already-toasted and swallowed).
+    if (!res.ok) throw new Error('catalog lookup failed');
+    const body = (await res.json().catch(() => null)) as { data?: CatalogItem[] } | null;
+    return (body?.data ?? []).find((i) => i.sku === sku) ?? null;
+  }, [catalog]);
+
+  const importAndAddDistributor = useCallback(async (blockId: string, product: EcProduct, sellPrice: number) => {
+    if (busy) return;
+    setBusy(true);
     try {
-      await runAction({
-        request: () => addCatalogLine(quote.id, { catalogItemId: item.id, quantity: 1, blockId }),
-        errorFallback: 'Could not add the catalog item.',
-        successMessage: 'Item added',
-        onUnauthorized: UNAUTHORIZED,
-      });
-      refresh();
+      // Check the catalog first: if this SKU is already imported, add the existing
+      // item directly. This avoids the duplicate-SKU error toast (runAction toasts
+      // the failure before throwing) firing on the common "already in catalog" path,
+      // which otherwise produced a red error flash immediately followed by green
+      // "Item added".
+      let item = await resolveCatalogBySku(product.synnexSku);
+      if (!item) {
+        item = await runAction<CatalogItem>({
+          request: () => ecExpressImport({
+            product,
+            item: {
+              name: product.name,
+              sku: product.synnexSku || product.mfgPartNo || null,
+              description: product.description ?? null,
+              unitPrice: sellPrice,
+              costBasis: product.cost != null && Number.isFinite(product.cost) ? Number(product.cost.toFixed(2)) : null,
+            },
+          }),
+          errorFallback: 'Could not import the distributor item.',
+          // no success toast here — the "Item added" toast from doAddCatalog is the meaningful one
+          onUnauthorized: UNAUTHORIZED,
+          parseSuccess: (d) => (d as { data: CatalogItem }).data,
+        });
+      }
+      await doAddCatalog(blockId, item);
+      void loadCatalog(); // surface a newly-imported item in the catalog picker too
     } catch (err) {
-      handleActionError(err, 'Could not add the catalog item.');
+      handleActionError(err, 'Could not add the distributor item.');
     } finally {
       setBusy(false);
     }
-  }, [busy, quote.id, refresh]);
+  }, [busy, doAddCatalog, resolveCatalogBySku, loadCatalog]);
 
   const addManual = useCallback(async (
     blockId: string,
@@ -321,7 +385,9 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
                 catalog={catalog}
                 busy={busy}
                 canWrite={canWrite}
+                ecActive={ecActive}
                 onAddCatalog={addCatalog}
+                onImportAddDistributor={importAndAddDistributor}
                 onAddManual={addManual}
                 onRemoveLine={deleteLine}
                 onRemoveBlock={removeBlock}
@@ -484,7 +550,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
 
 // ── A single block, with an inline line builder when it is a pricing table ──
 function BlockCard({
-  block, quoteId, lines, currency, catalog, busy, canWrite, onAddCatalog, onAddManual, onRemoveLine, onRemoveBlock,
+  block, quoteId, lines, currency, catalog, busy, canWrite, ecActive, onAddCatalog, onImportAddDistributor, onAddManual, onRemoveLine, onRemoveBlock,
 }: {
   block: QuoteBlock;
   quoteId: string;
@@ -493,7 +559,9 @@ function BlockCard({
   catalog: CatalogItem[];
   busy: boolean;
   canWrite: boolean;
+  ecActive: boolean;
   onAddCatalog: (blockId: string, item: CatalogItem) => void;
+  onImportAddDistributor: (blockId: string, product: EcProduct, sellPrice: number) => void;
   onAddManual: (
     blockId: string,
     form: { description: string; quantity: string; unitPrice: string; taxable: boolean; recurrence: QuoteLineRecurrence; saveToCatalog: boolean },
@@ -501,7 +569,7 @@ function BlockCard({
   onRemoveLine: (lineId: string) => void;
   onRemoveBlock: (block: QuoteBlock) => void;
 }) {
-  const [mode, setMode] = useState<'catalog' | 'manual'>('catalog');
+  const [mode, setMode] = useState<'catalog' | 'manual' | 'distributor'>('catalog');
   const [desc, setDesc] = useState('');
   const [qty, setQty] = useState('1');
   const [price, setPrice] = useState('0.00');
@@ -614,7 +682,7 @@ function BlockCard({
             {canWrite && (
             <div className="rounded-md border bg-background/40 p-3" data-testid={`quote-block-add-line-${block.id}`}>
               <div className="mb-2 flex gap-2">
-                {(['catalog', 'manual'] as const).map((m) => (
+                {(['catalog', 'manual', ...(ecActive ? ['distributor'] as const : [])] as const).map((m) => (
                   <button
                     key={m}
                     type="button"
@@ -624,12 +692,18 @@ function BlockCard({
                       mode === m ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-muted'
                     }`}
                   >
-                    {m === 'catalog' ? 'Catalog item' : 'Manual line'}
+                    {m === 'catalog' ? 'Catalog item' : m === 'manual' ? 'Manual line' : 'Search distributor'}
                   </button>
                 ))}
               </div>
 
-              {mode === 'catalog' ? (
+              {mode === 'distributor' ? (
+                <DistributorLookup
+                  blockId={block.id}
+                  busy={busy}
+                  onImportAdd={(product, sellPrice) => onImportAddDistributor(block.id, product, sellPrice)}
+                />
+              ) : mode === 'catalog' ? (
                 catalog.length === 0 ? (
                   <p className="text-xs text-muted-foreground" data-testid={`quote-catalog-empty-${block.id}`}>
                     No catalog items.{' '}
