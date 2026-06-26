@@ -6,8 +6,18 @@ import { uploadBinary, isS3Configured } from '../services/s3Storage';
 import { captureException } from '../services/sentry';
 import { parseStreamingMultipart } from '../services/streamingUpload';
 import { createHash } from 'node:crypto';
+import { authMiddleware } from '../middleware/auth';
+import { inArray, eq } from 'drizzle-orm';
 
 vi.mock('../services', () => ({}));
+
+// Wrap drizzle's condition builders in spies (behavior preserved) so tests can
+// assert the actual org-scoping WHERE condition, not just that a query ran.
+// `vi.clearAllMocks()` clears call records but keeps these implementations.
+vi.mock('drizzle-orm', async () => {
+  const actual = await vi.importActual<typeof import('drizzle-orm')>('drizzle-orm');
+  return { ...actual, inArray: vi.fn(actual.inArray), eq: vi.fn(actual.eq) };
+});
 
 // Chain-friendly mock builder for Drizzle query builder patterns
 function chainMock(terminalValue: any) {
@@ -128,6 +138,135 @@ describe('software routes', () => {
       expect(body).toHaveProperty('data');
       expect(body).toHaveProperty('pagination');
     });
+
+    it('lists catalog items across accessible orgs in partner All-Orgs scope', async () => {
+      vi.mocked(authMiddleware).mockImplementationOnce((c: any, next: any) => {
+        c.set('auth', {
+          user: { id: 'user-123', email: 'test@example.com', name: 'Test User' },
+          userId: 'user-123',
+          scope: 'partner',
+          orgId: null,
+          partnerId: 'partner-123',
+          accessibleOrgIds: ['org-a', 'org-b']
+        });
+        return next();
+      });
+
+      const res = await app.request('/software/catalog', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty('data');
+      expect(body).toHaveProperty('pagination');
+      expect(db.select).toHaveBeenCalledTimes(2);
+      // The catalog query must be org-scoped to the partner's accessible orgs via
+      // `inArray(softwareCatalog.orgId, accessibleOrgIds)`. (Schema is mocked so
+      // `softwareCatalog.orgId` is the literal column name 'org_id'.) A refactor
+      // that drops the inArray scoping — leaking every org's catalog — fails here.
+      expect(inArray).toHaveBeenCalledWith('org_id', ['org-a', 'org-b']);
+    });
+
+    it('denies explicit orgId outside partner accessible orgs', async () => {
+      vi.mocked(authMiddleware).mockImplementationOnce((c: any, next: any) => {
+        c.set('auth', {
+          user: { id: 'user-123', email: 'test@example.com', name: 'Test User' },
+          userId: 'user-123',
+          scope: 'partner',
+          orgId: null,
+          partnerId: 'partner-123',
+          accessibleOrgIds: ['11111111-1111-4111-8111-111111111111']
+        });
+        return next();
+      });
+
+      const res = await app.request('/software/catalog?orgId=22222222-2222-4222-8222-222222222222', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: 'Access to this organization denied' });
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('allows system scope to list a requested orgId', async () => {
+      vi.mocked(authMiddleware).mockImplementationOnce((c: any, next: any) => {
+        c.set('auth', {
+          user: { id: 'user-123', email: 'test@example.com', name: 'Test User' },
+          userId: 'user-123',
+          scope: 'system',
+          orgId: null,
+          partnerId: null,
+          accessibleOrgIds: null
+        });
+        return next();
+      });
+
+      const res = await app.request('/software/catalog?orgId=22222222-2222-4222-8222-222222222222', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty('data');
+      expect(body).toHaveProperty('pagination');
+      expect(db.select).toHaveBeenCalledTimes(2);
+    });
+
+    it('allows system scope to list the all-org catalog without orgId', async () => {
+      vi.mocked(authMiddleware).mockImplementationOnce((c: any, next: any) => {
+        c.set('auth', {
+          user: { id: 'user-123', email: 'test@example.com', name: 'Test User' },
+          userId: 'user-123',
+          scope: 'system',
+          orgId: null,
+          partnerId: null,
+          accessibleOrgIds: null
+        });
+        return next();
+      });
+
+      const res = await app.request('/software/catalog', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty('data');
+      expect(body).toHaveProperty('pagination');
+      expect(db.select).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns an empty page without querying when partner All-Orgs has no accessible orgs', async () => {
+      vi.mocked(authMiddleware).mockImplementationOnce((c: any, next: any) => {
+        c.set('auth', {
+          user: { id: 'user-123', email: 'test@example.com', name: 'Test User' },
+          userId: 'user-123',
+          scope: 'partner',
+          orgId: null,
+          partnerId: 'partner-123',
+          accessibleOrgIds: []
+        });
+        return next();
+      });
+
+      const res = await app.request('/software/catalog', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        data: [],
+        pagination: { page: 1, limit: 50, total: 0 }
+      });
+      expect(db.select).not.toHaveBeenCalled();
+    });
   });
 
   describe('GET /software/inventory', () => {
@@ -140,6 +279,48 @@ describe('software routes', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body).toHaveProperty('data');
+    });
+
+    it('lets system scope pass an explicit orgId and scopes inventory to it', async () => {
+      // Regression for the resolveScopedOrgId change: system scope used to 403 when
+      // passing an explicit orgId; it must now succeed and scope to that org.
+      const requestedOrgId = '33333333-3333-4333-8333-333333333333';
+      vi.mocked(authMiddleware).mockImplementationOnce((c: any, next: any) => {
+        c.set('auth', {
+          user: { id: 'user-123', email: 'test@example.com', name: 'Test User' },
+          userId: 'user-123',
+          scope: 'system',
+          orgId: null,
+          partnerId: null,
+          accessibleOrgIds: null
+        });
+        return next();
+      });
+
+      const res = await app.request(`/software/inventory?orgId=${requestedOrgId}`, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      // Must NOT 403 — and the device lookup must be scoped to the requested org
+      // (`eq(devices.orgId, requestedOrgId)`; devices.orgId mocks to 'org_id').
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty('data');
+      expect(eq).toHaveBeenCalledWith('org_id', requestedOrgId);
+    });
+
+    it('denies an org-scoped token requesting a different orgId', async () => {
+      // Negative analog: the default mock auth is org scope on org-123. Passing an
+      // arbitrary other orgId must 403 before any DB query runs.
+      const res = await app.request('/software/inventory?orgId=44444444-4444-4444-8444-444444444444', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: 'Access to this organization denied' });
+      expect(db.select).not.toHaveBeenCalled();
     });
   });
 
