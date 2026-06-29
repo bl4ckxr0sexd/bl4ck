@@ -6,7 +6,10 @@ import { getJwtClaims, loginPathWithNext } from '../../lib/authScope';
 import { usePermissions } from '../../lib/permissions';
 import { formatMoney } from '../../lib/timeFormat';
 import CatalogItemEditorDrawer from './CatalogItemEditorDrawer';
+import CatalogDistributorDrawer from './CatalogDistributorDrawer';
+import Pax8CatalogDrawer from './Pax8CatalogDrawer';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { ecExpressStatus, pax8Status } from '../../lib/api/distributors';
 import {
   listCatalog, getCatalogItem, getBundleEconomics, archiveCatalogItem, updateCatalogItem,
   computeMargin, formatMargin, marginTone,
@@ -38,6 +41,12 @@ export default function CatalogItemsTab({ reloadKey = 0 }: { reloadKey?: number 
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<Sort>({ key: 'name', dir: 'asc' });
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [distributorOpen, setDistributorOpen] = useState(false);
+  // TD SYNNEX EC Express import is only offered when the integration is set up;
+  // mirrors the quote editor's ecActive gate (configured && enabled).
+  const [ecActive, setEcActive] = useState(false);
+  const [pax8Open, setPax8Open] = useState(false);
+  const [pax8Active, setPax8Active] = useState(false);
   const [editItem, setEditItem] = useState<CatalogItem | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   // Archive is a soft-delete that pulls the item from active pickers — guard it
@@ -72,6 +81,33 @@ export default function CatalogItemsTab({ reloadKey = 0 }: { reloadKey?: number 
   }, []);
 
   useEffect(() => { void load(view); }, [load, view, reloadKey]);
+
+  // Surface the distributor-import entry only when EC Express is connected.
+  // Best-effort: any failure leaves it hidden (optional capability, not core).
+  useEffect(() => {
+    if (!canWrite) return;
+    void (async () => {
+      try {
+        const res = await ecExpressStatus();
+        if (!res.ok) return;
+        const body = (await res.json().catch(() => null)) as { data?: { configured?: boolean; enabled?: boolean } } | null;
+        setEcActive(Boolean(body?.data?.configured && body?.data?.enabled));
+      } catch { /* leave hidden */ }
+    })();
+  }, [canWrite]);
+
+  // Surface the Pax8 import entry only when the Pax8 integration is connected.
+  useEffect(() => {
+    if (!canWrite) return;
+    void (async () => {
+      try {
+        const res = await pax8Status();
+        if (!res.ok) return;
+        const body = (await res.json().catch(() => null)) as { data?: { configured?: boolean; enabled?: boolean } } | null;
+        setPax8Active(Boolean(body?.data?.configured && body?.data?.enabled));
+      } catch { /* leave hidden */ }
+    })();
+  }, [canWrite]);
 
   const openCreate = () => { setEditItem(null); setDrawerOpen(true); };
   const openEdit = (it: CatalogItem) => { setEditItem(it); setDrawerOpen(true); };
@@ -247,6 +283,28 @@ export default function CatalogItemsTab({ reloadKey = 0 }: { reloadKey?: number 
           ))}
         </div>
 
+        {canWrite && ecActive && (
+          <button
+            type="button"
+            onClick={() => setDistributorOpen(true)}
+            className="inline-flex h-9 items-center justify-center rounded-md border px-4 text-sm font-medium transition hover:bg-muted"
+            data-testid="catalog-import-distributor"
+          >
+            Import from TD SYNNEX
+          </button>
+        )}
+
+        {canWrite && pax8Active && (
+          <button
+            type="button"
+            onClick={() => setPax8Open(true)}
+            className="inline-flex h-9 items-center justify-center rounded-md border px-4 text-sm font-medium transition hover:bg-muted"
+            data-testid="catalog-import-pax8"
+          >
+            Import from Pax8
+          </button>
+        )}
+
         {canWrite && (
           <button
             type="button"
@@ -333,13 +391,22 @@ export default function CatalogItemsTab({ reloadKey = 0 }: { reloadKey?: number 
                   const isOpen = !!exp;
                   return (
                     <FragmentRow key={it.id}>
-                      <tr className="border-t transition hover:bg-muted/40" data-testid={`catalog-item-row-${it.id}`}>
+                      <tr
+                        className="cursor-pointer border-t transition hover:bg-muted/40"
+                        data-testid={`catalog-item-row-${it.id}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openEdit(it)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(it); }
+                        }}
+                      >
                         <td className="px-3 py-3 font-medium">
                           <span className="flex items-center gap-1.5">
                             {it.isBundle ? (
                               <button
                                 type="button"
-                                onClick={() => toggleExpand(it)}
+                                onClick={(e) => { e.stopPropagation(); toggleExpand(it); }}
                                 aria-expanded={isOpen}
                                 aria-label={isOpen ? 'Collapse bundle' : 'Expand bundle'}
                                 className="-ml-1 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -371,7 +438,7 @@ export default function CatalogItemsTab({ reloadKey = 0 }: { reloadKey?: number 
                         <td className={`px-3 py-3 text-right tabular-nums ${marginTone(margin)}`} data-testid={`catalog-margin-${it.id}`}>
                           {formatMargin(margin)}
                         </td>
-                        <td className="px-3 py-3 text-right">
+                        <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <RowActions
                             item={it}
                             view={view}
@@ -442,6 +509,18 @@ export default function CatalogItemsTab({ reloadKey = 0 }: { reloadKey?: number 
         allItems={items}
         onClose={() => setDrawerOpen(false)}
         onSaved={() => void load(view)}
+      />
+
+      <CatalogDistributorDrawer
+        open={distributorOpen}
+        onClose={() => setDistributorOpen(false)}
+        onImported={() => void load('active')}
+      />
+
+      <Pax8CatalogDrawer
+        open={pax8Open}
+        onClose={() => setPax8Open(false)}
+        onImported={() => void load('active')}
       />
 
       <ConfirmDialog

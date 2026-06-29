@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronUp, ChevronDown } from 'lucide-react';
+import { ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { navigateTo } from '@/lib/navigation';
 import { fetchWithAuth } from '../../../stores/auth';
 import { runAction, handleActionError } from '../../../lib/runAction';
@@ -18,14 +18,15 @@ import {
   quoteImageUrl,
 } from '../../../lib/api/quotes';
 import type { QuoteBlockInput } from '@breeze/shared';
-import { computeQuoteTotals, computeLineTotal, type QuoteLineForMath, type QuoteTotals } from '@breeze/shared';
+import { computeQuoteTotals, computeQuoteProfit, computeLineTotal, markupPct, priceFromMarkup, toCents, fromCents, type QuoteLineForMath, type QuoteProfit, type QuoteTotals } from '@breeze/shared';
 import { listCatalog, createCatalogItem, catalogItemImagePath, type CatalogItem } from '../../../lib/api/catalog';
-import { ecExpressStatus, ecExpressImport, type EcProduct, type EcStatus } from '../../../lib/api/distributors';
+import { ecExpressStatus, ecExpressImport, type EcProduct, type EcStatus, pax8Status, pax8Import, type Pax8Product, type Pax8PriceOption } from '../../../lib/api/distributors';
 import CatalogItemPicker from '../../catalog/CatalogItemPicker';
 import CatalogEnrichButton from '../../catalog/CatalogEnrichButton';
 import DistributorLookup from './DistributorLookup';
+import Pax8ProductLookup from './Pax8ProductLookup';
 import { ConfirmDialog } from '../../shared/ConfirmDialog';
-import { UnsavedBadge, RecurringBillingNote } from '../billingUi';
+import { UnsavedBadge, RecurringBillingNote, MarginPanel } from '../billingUi';
 import {
   type QuoteDetail as QuoteDetailData,
   type QuoteBlock,
@@ -35,6 +36,8 @@ import {
   formatRecurrence,
   pctFromFraction,
   lineTaxAmount,
+  lineTitle,
+  lineBlurb,
 } from './quoteTypes';
 
 const UNAUTHORIZED = () => void navigateTo('/login', { replace: true });
@@ -63,11 +66,15 @@ const BLOCK_TYPE_LABELS: Record<string, string> = {
 // updateQuoteLineSchema (description/quantity/unitPrice/taxable/recurrence) —
 // the only fields the inline editor exposes.
 type LineUpdate = Partial<{
-  description: string;
+  name: string | null;
+  description: string | null;
   quantity: number;
   unitPrice: number;
   taxable: boolean;
   recurrence: QuoteLineRecurrence;
+  unitCost: number | null;
+  sku: string | null;
+  partNumber: string | null;
 }>;
 
 interface Props {
@@ -75,10 +82,17 @@ interface Props {
   onChanged: () => void;
 }
 
-// A quiet, transient "Saved" cue for the right-rail blur-to-save fields (terms,
-// tax). BlockCard and EditableLineRow replicate this same pattern inline rather
-// than calling the hook. Returns the on-flag and a trigger; clears its timer on
-// unmount so a late fire can't setState a gone node.
+// Per-field blur-saves are confirmed by the amber dirty-ring clearing (sighted)
+// plus the SrSaved live region (screen readers) — NOT a toast. Toasts are
+// reserved for action-level events the user can't otherwise see (Line added,
+// Section removed, Proposal sent, Draft deleted), which fire their own
+// runAction successMessage. Per-field toasts were a storm during editing and
+// double-announced alongside SrSaved, so they were removed.
+
+// A transient "Saved" cue for the right-rail blur-to-save fields (terms, tax).
+// BlockCard and EditableLineRow replicate this same pattern inline rather than
+// calling the hook. Returns the on-flag (drives the SR live region) and a
+// trigger; clears its timer on unmount so a late fire can't setState a gone node.
 function useSavedFlash(): [boolean, () => void] {
   const [on, setOn] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -91,12 +105,22 @@ function useSavedFlash(): [boolean, () => void] {
   return [on, flash];
 }
 
-// Visually-hidden polite live region — announces a transient message (e.g.
-// "Saved") to screen readers without taking visual space. Pairs with the visible
-// cue so sighted and SR users get the same feedback.
-function SrSaved({ show, label = 'Saved' }: { show: boolean; label?: string }) {
+// Visually-hidden polite live region — announces a transient "Saved" to screen
+// readers without taking visual space, pairing with the dirty-ring clearing that
+// sighted users see. The single per-field announcer (no toast), so SR users hear
+// "Saved" once, not twice. testId lets tests assert the cue fired.
+function SrSaved({ show, label = 'Saved', testId }: { show: boolean; label?: string; testId?: string }) {
   // role="status" already implies aria-live="polite" — don't double it.
-  return <span role="status" className="sr-only">{show ? label : ''}</span>;
+  return <span role="status" className="sr-only" data-testid={testId}>{show ? label : ''}</span>;
+}
+
+// A field's save-state outline: amber while the edit is unsaved, a brief green
+// pulse when it lands (driven by a ~1.5s saved-flash), nothing at rest. It's a
+// box-shadow (ring), so it NEVER reflows neighbouring content — unlike the inline
+// "Saved" text we tried before, which shifted layout as it appeared/disappeared.
+// Pair with a constant `transition-shadow` on the field so both states fade.
+function fieldRing(dirty: boolean, saved: boolean): string {
+  return dirty ? 'ring-1 ring-warning' : saved ? 'ring-1 ring-success' : '';
 }
 
 // Up/down reorder controls: lucide chevrons in 28px targets (clears the WCAG
@@ -143,6 +167,15 @@ function MoveControls({
 export default function QuoteEditor({ detail, onChanged }: Props) {
   const { can } = usePermissions();
   const canWrite = can('quotes', 'write');
+  // Cost/margin is a read affordance, not a write one: read-only users already see
+  // the per-line internal cost bands (ReadonlyLineRow) + the toggle, so the rail
+  // Margin summary is gated the same way QuoteDetail gates it — on quotes:read —
+  // rather than on write, which would hide the aggregate while showing the parts.
+  const canSeeMargin = can('quotes', 'read');
+  // The per-line internal cost/markup/profit strip duplicates the rail's Margin
+  // summary and roughly doubles the height of every line, so it's collapsed by
+  // default; the rail summary stays always-on. Threaded down to each line row.
+  const [showInternal, setShowInternal] = useState(false);
   const { quote, blocks, lines } = detail;
   const currency = quote.currencyCode;
   // Focus anchor: after a confirmed block/line removal the triggering button is
@@ -182,6 +215,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
 
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [ecActive, setEcActive] = useState(false);
+  const [pax8Active, setPax8Active] = useState(false);
   const [terms, setTerms] = useState(quote.termsAndConditions ?? '');
   const [termsDirty, setTermsDirty] = useState(false);
   // Tax rate is stored as a fraction ('0.07'); the input edits it as a percent ('7').
@@ -311,6 +345,18 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
 
   useEffect(() => { void loadEcStatus(); }, [loadEcStatus]);
 
+  const loadPax8Status = useCallback(async () => {
+    if (!canCatalogWrite) { setPax8Active(false); return; }
+    try {
+      const res = await pax8Status();
+      if (!res.ok) return;
+      const body = (await res.json().catch(() => null)) as { data?: { configured?: boolean; enabled?: boolean } } | null;
+      setPax8Active(Boolean(body?.data?.configured && body?.data?.enabled));
+    } catch { /* leave hidden */ }
+  }, [canCatalogWrite]);
+
+  useEffect(() => { void loadPax8Status(); }, [loadPax8Status]);
+
   // Optimistic order overrides so a reorder reflects instantly instead of waiting
   // for the round-trip + (coalesced) refetch. Each is cleared the moment fresh
   // server data arrives (the prop array identity changes on refresh), so the
@@ -349,6 +395,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
       }
       const prev = m[id];
       if (prev && prev.quantity === draft.quantity && prev.unitPrice === draft.unitPrice
+        && (prev.unitCost ?? null) === (draft.unitCost ?? null)
         && prev.taxable === draft.taxable && prev.recurrence === draft.recurrence) return m;
       return { ...m, [id]: draft };
     });
@@ -399,6 +446,25 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
   const railTax = optimisticTotals?.taxTotal ?? quote.taxTotal;
   const railTotal = optimisticTotals?.total ?? quote.total;
   const railDue = optimisticTotals?.dueOnAcceptanceTotal ?? quote.dueOnAcceptanceTotal ?? quote.oneTimeTotal;
+
+  // Internal net-profit summary for the rail's "Margin (internal)" block. Built
+  // over the SAME merged line set as the totals: draft-or-persisted values plus
+  // each line's cost (draft cost from a cost-only edit, else the persisted cost).
+  // computeQuoteProfit does the cents math — pass it the raw read-model strings.
+  const profit = useMemo<QuoteProfit>(
+    () => computeQuoteProfit(lines.map((l) => {
+      const d = lineDrafts[l.id];
+      return {
+        quantity: d?.quantity ?? l.quantity,
+        unitPrice: d?.unitPrice ?? l.unitPrice,
+        taxable: d?.taxable ?? l.taxable,
+        customerVisible: l.customerVisible,
+        recurrence: d?.recurrence ?? l.recurrence,
+        unitCost: d?.unitCost ?? l.unitCost,
+      };
+    })),
+    [lines, lineDrafts],
+  );
 
   // Apply an optimistic id ordering over a base list, but only if it's a clean
   // permutation (same membership) — otherwise fall back to the server order.
@@ -454,13 +520,13 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
               ? { imageId: uploaded.imageId, caption: imageCaption.trim() }
               : { imageId: uploaded.imageId },
           }),
-          errorFallback: 'Image uploaded, but adding the block failed.',
-          successMessage: 'Image block added',
+          errorFallback: 'Image uploaded, but adding the section failed.',
+          successMessage: 'Image section added',
           onUnauthorized: UNAUTHORIZED,
         });
         setImageFile(null); setImageCaption('');
         refresh();
-      }, 'Could not add the image block.');
+      }, 'Could not add the image section.');
       return;
     }
 
@@ -480,13 +546,13 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
     await runScoped('add-block', async () => {
       await runAction({
         request: () => addBlock(quote.id, body),
-        errorFallback: 'Could not add the block.',
-        successMessage: 'Block added',
+        errorFallback: 'Could not add the section.',
+        successMessage: 'Section added',
         onUnauthorized: UNAUTHORIZED,
       });
       setHeadingText(''); setRichText(''); setTableLabel('');
       refresh();
-    }, 'Could not add the block.');
+    }, 'Could not add the section.');
   }, [addType, headingText, richText, tableLabel, imageFile, imageCaption, quote.id, refresh, runScoped]);
 
   // Removing a line_items block cascades to every line under it (server-side), so
@@ -503,12 +569,12 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
     runScoped(`block:${block.id}`, async () => {
       await runAction({
         request: () => deleteBlock(quote.id, block.id),
-        errorFallback: 'Could not remove the block.',
-        successMessage: 'Block removed',
+        errorFallback: 'Could not remove the section.',
+        successMessage: 'Section removed',
         onUnauthorized: UNAUTHORIZED,
       });
       refresh();
-    }, 'Could not remove the block.'),
+    }, 'Could not remove the section.'),
   [quote.id, refresh, runScoped]);
 
   // ---- line mutations (scoped to a line_items block) ----------------------
@@ -539,6 +605,33 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
     return (body?.data ?? []).find((i) => i.sku === sku) ?? null;
   }, [catalog]);
 
+  const importAndAddPax8 = useCallback((blockId: string, product: Pax8Product, term: Pax8PriceOption, sellPrice: number) =>
+    runScoped(`add-line:${blockId}`, async () => {
+      let item = product.vendorSku ? await resolveCatalogBySku(product.vendorSku) : null;
+      if (!item) {
+        item = await runAction<CatalogItem>({
+          request: () => pax8Import({
+            product: {
+              source: 'pax8', pax8ProductId: product.pax8ProductId, name: product.name,
+              vendorName: product.vendorName, vendorSku: product.vendorSku,
+              commitmentTerm: term.commitmentTerm, billingTerm: term.billingTerm,
+              partnerBuyRate: term.partnerBuyRate, currency: term.currencyCode, raw: product.raw,
+            },
+            item: {
+              name: product.name.slice(0, 255), sku: product.vendorSku, description: product.shortDescription,
+              unitPrice: sellPrice, costBasis: term.partnerBuyRate != null ? Number(term.partnerBuyRate) : null,
+            },
+          }),
+          errorFallback: 'Could not import the Pax8 product.',
+          onUnauthorized: UNAUTHORIZED,
+          parseSuccess: (d) => (d as { data: CatalogItem }).data,
+        });
+      }
+      await doAddCatalog(blockId, item);
+      void loadCatalog();
+    }, 'Could not add the Pax8 product.'),
+  [doAddCatalog, resolveCatalogBySku, loadCatalog, runScoped]);
+
   const importAndAddDistributor = useCallback((blockId: string, product: EcProduct, sellPrice: number) =>
     runScoped(`add-line:${blockId}`, async () => {
       // Check the catalog first: if this SKU is already imported, add the existing
@@ -558,6 +651,9 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
               unitPrice: sellPrice,
               costBasis: product.cost != null && Number.isFinite(product.cost) ? Number(product.cost.toFixed(2)) : null,
             },
+            // Tidy the raw distributor title into a readable name + description
+            // server-side (best-effort; falls back to the raw values).
+            aiCleanup: true,
           }),
           errorFallback: 'Could not import the distributor item.',
           // no success toast here — the "Item added" toast from doAddCatalog is the meaningful one
@@ -572,9 +668,10 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
 
   const addManual = useCallback((
     blockId: string,
-    form: { description: string; quantity: string; unitPrice: string; taxable: boolean; recurrence: QuoteLineRecurrence; saveToCatalog: boolean },
+    form: { name: string; description: string; quantity: string; unitPrice: string; cost: string; sku: string; partNumber: string; taxable: boolean; recurrence: QuoteLineRecurrence; saveToCatalog: boolean },
   ) => {
-    if (!form.description.trim()) return Promise.resolve(false);
+    // A line needs at least a title (name) or a description (mirrors the API refine).
+    if (!form.name.trim() && !form.description.trim()) return Promise.resolve(false);
     // Guard qty 0 / non-numeric here too — the inline edit path already does, and
     // a silent $0-quantity line is a real footgun on the add path.
     const qtyNum = Number(form.quantity);
@@ -589,14 +686,27 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
       handleActionError(new Error('invalid price'), 'Enter a unit price of 0 or more.');
       return Promise.resolve(false);
     }
+    // Cost is optional, but a non-empty entry must be valid — reject it the same way
+    // commitCost does inline, rather than silently coercing bad input to null (which
+    // would drop the user's cost and understate the margin with no feedback).
+    const costEmpty = form.cost.trim() === '';
+    const costNum = Number(form.cost);
+    if (!costEmpty && (!Number.isFinite(costNum) || costNum < 0)) {
+      handleActionError(new Error('invalid cost'), 'Enter a cost of 0 or more.');
+      return Promise.resolve(false);
+    }
     return runScoped(`add-line:${blockId}`, async () => {
       await runAction({
         request: () => addManualLine(quote.id, {
           sourceType: 'manual',
           blockId,
-          description: form.description.trim(),
+          name: form.name.trim() || null,
+          description: form.description.trim() || null,
           quantity: qtyNum,
           unitPrice: priceNum,
+          unitCost: costEmpty ? null : costNum,
+          sku: form.sku.trim() || null,
+          partNumber: form.partNumber.trim() || null,
           taxable: form.taxable,
           customerVisible: true,
           recurrence: form.recurrence,
@@ -610,7 +720,8 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
         await runAction({
           request: () => createCatalogItem({
             itemType: 'service',
-            name: form.description.trim(),
+            name: form.name.trim() || form.description.trim(),
+            description: form.description.trim() || null,
             billingType: form.recurrence === 'one_time' ? 'one_time' : 'recurring',
             billingFrequency: form.recurrence === 'monthly'
               ? 'monthly'
@@ -666,7 +777,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
     runScoped(`block:${block.id}`, async () => {
       await runAction({
         request: () => updateBlock(quote.id, block.id, { blockType: block.blockType, content } as QuoteBlockInput),
-        errorFallback: 'Could not update the block.',
+        errorFallback: 'Could not update the section.',
         onUnauthorized: UNAUTHORIZED,
       });
       refresh();
@@ -699,7 +810,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
         try {
           await runAction({
             request: () => reorderBlocksApi(quote.id, { blockIds: ids }),
-            errorFallback: 'Could not reorder blocks.',
+            errorFallback: 'Could not reorder sections.',
             onUnauthorized: UNAUTHORIZED,
           });
           refresh();
@@ -748,15 +859,35 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
 
   return (
     <div className="space-y-6" data-testid="quote-editor">
-      {canWrite && (
-        <p className="text-xs text-muted-foreground" data-testid="quote-editor-autosave-hint">
-          Changes save automatically as you edit. An amber outline marks an edit that hasn’t saved yet.
-        </p>
-      )}
+      {/* The autosave hint is writer-only, but the cost/margin toggle is offered to
+          everyone who can see the editor: read-only users also have per-line cost
+          bands and deserve the same collapse control (ml-auto keeps it right-aligned
+          whether or not the hint renders). */}
+      <div className="flex flex-wrap items-center gap-2">
+        {canWrite && (
+          <p className="text-xs text-muted-foreground" data-testid="quote-editor-autosave-hint">
+            Changes save automatically as you edit. An amber outline marks an edit that hasn’t saved yet.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowInternal((v) => !v)}
+          aria-pressed={showInternal}
+          data-testid="quote-editor-toggle-internal"
+          className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted ${showInternal ? 'border-primary/40 bg-primary/10 text-primary' : ''}`}
+        >
+          {showInternal ? <EyeOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Eye className="h-3.5 w-3.5" aria-hidden="true" />}
+          {showInternal ? 'Hide cost & margin' : 'Show cost & margin'}
+        </button>
+      </div>
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         {/* ── blocks ─────────────────────────────────────────────────── */}
+        {/* min-w-0: this 1fr grid track holds a pricing table with min-w-[640px]
+            inside an overflow-x-auto wrapper. Without min-w-0 the track refuses to
+            shrink below the table's min-content and the whole editor blows out to
+            ~758px on a phone (page-level horizontal scroll). */}
         <div
-          className="space-y-4 rounded-md focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          className="min-w-0 space-y-4 rounded-md focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           ref={blocksColRef}
           tabIndex={-1}
         >
@@ -776,11 +907,14 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
                 catalog={catalog}
                 isPending={isPending}
                 canWrite={canWrite}
+                showInternal={showInternal}
                 ecActive={ecActive}
+                pax8Active={pax8Active}
                 isFirst={idx === 0}
                 isLast={idx === sortedBlocks.length - 1}
                 onAddCatalog={addCatalog}
                 onImportAddDistributor={importAndAddDistributor}
+                onImportAddPax8={importAndAddPax8}
                 onAddManual={addManual}
                 onEditLine={editLine}
                 onEditBlock={editBlock}
@@ -796,7 +930,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
           {/* Add block */}
           {canWrite && (
           <div className="rounded-lg border bg-card p-4 shadow-xs" data-testid="quote-add-block">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Add block</h3>
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Add section</h3>
             <div className="mb-3 flex flex-wrap gap-2">
               {ADD_BLOCK_OPTIONS.map((o) => (
                 <button
@@ -878,7 +1012,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
                 data-testid="quote-add-block-submit"
                 className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
               >
-                {addType === 'image' ? 'Upload & add image' : 'Add block'}
+                {addType === 'image' ? 'Upload & add image' : 'Add section'}
               </button>
             </div>
           </div>
@@ -921,12 +1055,12 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
                 </div>
               )}
             </dl>
+            {canSeeMargin && <MarginPanel profit={profit} currency={currency} />}
             {canWrite && (
               <div className="mt-2 border-t pt-2">
                 <div className="flex items-center justify-between gap-2">
                   <label htmlFor="quote-tax-rate" className="flex items-center gap-2 text-sm text-muted-foreground">
                     Tax rate
-                    {taxSaved && <span className="text-xs font-medium text-success" data-testid="quote-tax-saved">Saved</span>}
                   </label>
                   <div className="flex items-center gap-1">
                     <input
@@ -943,8 +1077,8 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
                       aria-invalid={taxError !== null}
                       aria-describedby={taxError ? 'quote-tax-rate-error' : undefined}
                       data-testid="quote-tax-rate"
-                      className={`h-8 w-20 rounded-md border bg-background px-2 text-right text-sm tabular-nums focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${
-                        taxError ? 'border-destructive ring-1 ring-destructive' : taxDirty ? 'ring-1 ring-warning' : ''
+                      className={`h-8 w-20 rounded-md border bg-background px-2 text-right text-sm tabular-nums transition-shadow focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${
+                        taxError ? 'border-destructive ring-1 ring-destructive' : fieldRing(taxDirty, taxSaved)
                       }`}
                     />
                     <span className="text-sm text-muted-foreground">%</span>
@@ -955,7 +1089,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
                 ) : (
                   <p className="mt-1 text-xs text-muted-foreground">Applies to lines marked taxable.</p>
                 )}
-                <SrSaved show={taxSaved} />
+                <SrSaved show={taxSaved} testId="quote-tax-saved" />
               </div>
             )}
             <div className="mt-3 flex items-end justify-between gap-2 border-t pt-3">
@@ -984,7 +1118,6 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
             <div className="mb-2 flex items-center justify-between gap-2">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Terms & Conditions</h3>
               <span className="flex items-center gap-2">
-                {termsSaved && <span className="text-xs font-medium text-success" data-testid="quote-terms-saved">Saved</span>}
                 <UnsavedBadge show={termsDirty} />
               </span>
             </div>
@@ -995,10 +1128,10 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
               disabled={!canWrite || isPending('terms')}
               data-testid="quote-terms"
               rows={3}
-              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${termsDirty ? 'ring-1 ring-warning' : ''}`}
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm transition-shadow focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${fieldRing(termsDirty, termsSaved)}`}
               placeholder="Payment terms, warranty clauses, etc."
             />
-            <SrSaved show={termsSaved} />
+            <SrSaved show={termsSaved} testId="quote-terms-saved" />
           </div>
         </div>
       </div>
@@ -1021,15 +1154,15 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
           })();
         }}
         isLoading={pendingRemove ? isPending(`block:${pendingRemove.id}`) : false}
-        title="Remove block"
+        title="Remove section"
         message={
           pendingRemove?.blockType === 'line_items' && linesForBlock(pendingRemove.id).length > 0
             ? `This removes the pricing table and its ${linesForBlock(pendingRemove.id).length} line item${
                 linesForBlock(pendingRemove.id).length === 1 ? '' : 's'
               }. This can't be undone.`
-            : 'This removes this block. This can’t be undone.'
+            : "This removes this section. This can't be undone."
         }
-        confirmLabel="Remove block"
+        confirmLabel="Remove section"
         confirmTestId="quote-block-remove-confirm"
       />
 
@@ -1051,7 +1184,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
         title="Remove line"
         message={
           pendingLineRemove
-            ? `This removes "${pendingLineRemove.description || 'this line'}" from the quote. This can’t be undone.`
+            ? `This removes "${lineTitle(pendingLineRemove) || 'this line'}" from the quote. This can't be undone.`
             : ''
         }
         confirmLabel="Remove line"
@@ -1063,7 +1196,7 @@ export default function QuoteEditor({ detail, onChanged }: Props) {
 
 // ── A single block, with an inline line builder when it is a pricing table ──
 function BlockCard({
-  block, quoteId, lines, currency, taxRate, catalog, isPending, canWrite, ecActive, isFirst, isLast, onAddCatalog, onImportAddDistributor, onAddManual, onEditLine, onEditBlock, onMoveBlock, onMoveLine, onRemoveLine, onRemoveBlock, onLineDraft,
+  block, quoteId, lines, currency, taxRate, catalog, isPending, canWrite, showInternal, ecActive, pax8Active, isFirst, isLast, onAddCatalog, onImportAddDistributor, onImportAddPax8, onAddManual, onEditLine, onEditBlock, onMoveBlock, onMoveLine, onRemoveLine, onRemoveBlock, onLineDraft,
 }: {
   block: QuoteBlock;
   quoteId: string;
@@ -1073,14 +1206,17 @@ function BlockCard({
   catalog: CatalogItem[];
   isPending: (key: string) => boolean;
   canWrite: boolean;
+  showInternal: boolean;
   ecActive: boolean;
+  pax8Active: boolean;
   isFirst: boolean;
   isLast: boolean;
   onAddCatalog: (blockId: string, item: CatalogItem) => void;
   onImportAddDistributor: (blockId: string, product: EcProduct, sellPrice: number) => void;
+  onImportAddPax8: (blockId: string, product: Pax8Product, term: Pax8PriceOption, sellPrice: number) => void;
   onAddManual: (
     blockId: string,
-    form: { description: string; quantity: string; unitPrice: string; taxable: boolean; recurrence: QuoteLineRecurrence; saveToCatalog: boolean },
+    form: { name: string; description: string; quantity: string; unitPrice: string; cost: string; sku: string; partNumber: string; taxable: boolean; recurrence: QuoteLineRecurrence; saveToCatalog: boolean },
   ) => Promise<boolean>;
   onEditLine: (lineId: string, body: LineUpdate) => Promise<boolean>;
   onEditBlock: (block: QuoteBlock, content: Record<string, unknown>) => Promise<boolean>;
@@ -1095,10 +1231,14 @@ function BlockCard({
   const blockBusy = isPending(`block:${block.id}`);
   const addLineBusy = isPending(`add-line:${block.id}`);
 
-  const [mode, setMode] = useState<'catalog' | 'manual' | 'distributor'>('catalog');
+  const [mode, setMode] = useState<'catalog' | 'manual' | 'distributor' | 'pax8'>('catalog');
+  const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
   const [qty, setQty] = useState('1');
   const [price, setPrice] = useState('0.00');
+  const [cost, setCost] = useState('');
+  const [sku, setSku] = useState('');
+  const [partNumber, setPartNumber] = useState('');
   const [taxable, setTaxable] = useState(false);
   const [recurrence, setRecurrence] = useState<QuoteLineRecurrence>('one_time');
   const [saveToCatalog, setSaveToCatalog] = useState(false);
@@ -1151,10 +1291,10 @@ function BlockCard({
   };
 
   const submitManual = async () => {
-    const ok = await onAddManual(block.id, { description: desc, quantity: qty, unitPrice: price, taxable, recurrence, saveToCatalog });
+    const ok = await onAddManual(block.id, { name, description: desc, quantity: qty, unitPrice: price, cost, sku, partNumber, taxable, recurrence, saveToCatalog });
     // Only clear the form on success, so a rejected add (e.g. qty 0) keeps the
     // user's input to correct rather than wiping it.
-    if (ok) { setDesc(''); setQty('1'); setPrice('0.00'); setTaxable(false); setRecurrence('one_time'); setSaveToCatalog(false); }
+    if (ok) { setName(''); setDesc(''); setQty('1'); setPrice('0.00'); setCost(''); setSku(''); setPartNumber(''); setTaxable(false); setRecurrence('one_time'); setSaveToCatalog(false); }
   };
 
   return (
@@ -1163,10 +1303,7 @@ function BlockCard({
         <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {BLOCK_TYPE_LABELS[block.blockType] ?? block.blockType}
           {isTable && tableLabel ? ` · ${tableLabel}` : ''}
-          {blockSaved && (
-            <span className="font-medium normal-case tracking-normal text-success" data-testid={`quote-block-saved-${block.id}`}>Saved</span>
-          )}
-          <SrSaved show={blockSaved} />
+          <SrSaved show={blockSaved} testId={`quote-block-saved-${block.id}`} />
         </span>
         {canWrite && (
           <div className="flex items-center gap-1">
@@ -1175,8 +1312,8 @@ function BlockCard({
               disabledDown={isLast}
               onUp={() => onMoveBlock(block, 'up')}
               onDown={() => onMoveBlock(block, 'down')}
-              labelUp="Move block up"
-              labelDown="Move block down"
+              labelUp="Move section up"
+              labelDown="Move section down"
               testIdUp={`quote-block-move-up-${block.id}`}
               testIdDown={`quote-block-move-down-${block.id}`}
             />
@@ -1203,7 +1340,7 @@ function BlockCard({
               onBlur={() => void commitHeading()}
               disabled={blockBusy}
               data-testid={`quote-block-heading-input-${block.id}`}
-              className={`w-full rounded-md border bg-background px-2 py-1 text-lg font-semibold disabled:opacity-60 ${headingDraft.trim() !== heading ? 'ring-1 ring-warning' : ''}`}
+              className={`w-full rounded-md border bg-background px-2 py-1 text-lg font-semibold transition-shadow disabled:opacity-60 ${fieldRing(headingDraft.trim() !== heading, blockSaved)}`}
             />
           ) : (
             <p className="text-lg font-semibold" data-testid={`quote-block-heading-content-${block.id}`}>{heading}</p>
@@ -1219,7 +1356,7 @@ function BlockCard({
               disabled={blockBusy}
               rows={4}
               data-testid={`quote-block-rich-input-${block.id}`}
-              className={`w-full resize-y rounded-md border bg-background px-2 py-1 text-sm disabled:opacity-60 ${richDraft !== html ? 'ring-1 ring-warning' : ''}`}
+              className={`w-full resize-y rounded-md border bg-background px-2 py-1 text-sm transition-shadow disabled:opacity-60 ${fieldRing(richDraft !== html, blockSaved)}`}
             />
           ) : (
             <p className="whitespace-pre-wrap text-sm text-foreground" data-testid={`quote-block-rich-content-${block.id}`}>{html}</p>
@@ -1232,7 +1369,7 @@ function BlockCard({
               {imageCaption && <figcaption className="text-xs text-muted-foreground">{imageCaption}</figcaption>}
             </figure>
           ) : (
-            <p className="text-sm text-muted-foreground">Image block (rendered in the PDF).</p>
+            <p className="text-sm text-muted-foreground">Image section (rendered in the PDF).</p>
           )
         )}
 
@@ -1241,14 +1378,15 @@ function BlockCard({
             {/* The 7-column row (description + 4 inline controls + total + actions)
                 can't compress gracefully on a tablet, so the table keeps a sensible
                 min width and the wrapper scrolls horizontally below that. */}
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-md focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring" role="region" aria-label="Pricing table — scroll sideways for tax, total and row actions" tabIndex={0}>
             <table className="w-full min-w-[640px] text-sm" data-testid={`quote-block-lines-${block.id}`}>
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-2 py-2 font-medium">Description</th>
                   <th className="px-2 py-2 text-right font-medium">Qty</th>
-                  <th className="px-2 py-2 text-right font-medium">Unit</th>
+                  <th className="px-2 py-2 text-right font-medium">Unit price</th>
                   <th className="px-2 py-2 font-medium">Recurrence</th>
+                  <th className="px-2 py-2 text-center font-medium">Taxable</th>
                   <th
                     className="px-2 py-2 text-right font-medium"
                     title="Per-line tax. The header Tax total is authoritative and may differ by a rounding cent."
@@ -1256,13 +1394,15 @@ function BlockCard({
                     Tax
                   </th>
                   <th className="px-2 py-2 text-right font-medium">Total</th>
-                  <th className="px-2 py-2" />
+                  {/* Row-actions column is pinned to the right edge so Up/Down/Remove
+                      stay reachable when the wide table scrolls horizontally. */}
+                  <th className="sticky right-0 border-l bg-card px-2 py-2" />
                 </tr>
               </thead>
               <tbody>
                 {lines.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-2 py-6 text-center text-sm text-muted-foreground">
+                    <td colSpan={8} className="px-2 py-6 text-center text-sm text-muted-foreground">
                       No lines yet. Add a catalog item or a manual line below.
                     </td>
                   </tr>
@@ -1277,32 +1417,14 @@ function BlockCard({
                         busy={isPending(`line:${l.id}`)}
                         isFirst={idx === 0}
                         isLast={idx === lines.length - 1}
+                        showInternal={showInternal}
                         onEdit={onEditLine}
                         onMove={onMoveLine}
                         onRemove={onRemoveLine}
                         onDraft={onLineDraft}
                       />
                     ) : (
-                      <tr key={l.id} className="border-t" data-testid={`quote-line-${l.id}`}>
-                        <td className="px-2 py-2">
-                          <div className="flex items-start gap-2">
-                            {l.catalogItemId && <CatalogLineThumb catalogItemId={l.catalogItemId} />}
-                            <span>{l.description}</span>
-                          </div>
-                        </td>
-                        <td className="px-2 py-2 text-right tabular-nums">{l.quantity}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{formatMoney(l.unitPrice, currency)}</td>
-                        <td className="px-2 py-2">
-                          <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            {formatRecurrence(l.recurrence)}
-                          </span>
-                        </td>
-                        <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
-                          {lineTaxAmount(l.lineTotal, l.taxable, taxRate) === null ? '—' : formatMoney(lineTaxAmount(l.lineTotal, l.taxable, taxRate)!, currency)}
-                        </td>
-                        <td className="px-2 py-2 text-right tabular-nums">{formatMoney(l.lineTotal, currency)}</td>
-                        <td className="px-2 py-2 text-right" />
-                      </tr>
+                      <ReadonlyLineRow key={l.id} line={l} currency={currency} taxRate={taxRate} isFirst={idx === 0} showInternal={showInternal} />
                     ),
                   )
                 )}
@@ -1314,7 +1436,7 @@ function BlockCard({
             {canWrite && (
             <div className="rounded-md border bg-background/40 p-3" data-testid={`quote-block-add-line-${block.id}`}>
               <div className="mb-2 flex gap-2">
-                {(['catalog', 'manual', ...(ecActive ? ['distributor'] as const : [])] as const).map((m) => (
+                {(['catalog', 'manual', ...(ecActive ? ['distributor'] as const : []), ...(pax8Active ? ['pax8'] as const : [])] as const).map((m) => (
                   <button
                     key={m}
                     type="button"
@@ -1325,7 +1447,7 @@ function BlockCard({
                       mode === m ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-muted'
                     }`}
                   >
-                    {m === 'catalog' ? 'Catalog item' : m === 'manual' ? 'Manual line' : 'Search distributor'}
+                    {m === 'catalog' ? 'Catalog item' : m === 'manual' ? 'Manual line' : m === 'distributor' ? 'Search distributor' : 'Search Pax8'}
                   </button>
                 ))}
               </div>
@@ -1335,6 +1457,12 @@ function BlockCard({
                   blockId={block.id}
                   busy={addLineBusy}
                   onImportAdd={(product, sellPrice) => onImportAddDistributor(block.id, product, sellPrice)}
+                />
+              ) : mode === 'pax8' ? (
+                <Pax8ProductLookup
+                  blockId={block.id}
+                  busy={addLineBusy}
+                  onImportAdd={(product, term, sellPrice) => onImportAddPax8(block.id, product, term, sellPrice)}
                 />
               ) : mode === 'catalog' ? (
                 catalog.length === 0 ? (
@@ -1358,13 +1486,20 @@ function BlockCard({
                     idSuffix={`quote-${block.id}`}
                     onApply={(result) => {
                       const d = result.draft;
-                      setDesc(d.description ? `${d.name} — ${d.description}` : d.name);
+                      setName(d.name);
+                      setDesc(d.description ?? '');
                       setTaxable(d.taxable);
                     }}
                   />
+                  <input
+                    type="text" placeholder="Name" aria-label="Line name" value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    data-testid={`quote-manual-name-${block.id}`}
+                    className="h-9 w-full rounded-md border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
+                  />
                   <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[1fr_70px_90px_110px]">
                     <textarea
-                      placeholder="Description" aria-label="Line description" value={desc}
+                      placeholder="Description (optional)" aria-label="Line description" value={desc}
                       onChange={(e) => setDesc(e.target.value)}
                       rows={2}
                       data-testid={`quote-manual-desc-${block.id}`}
@@ -1394,6 +1529,28 @@ function BlockCard({
                       <option value="annual">Annual</option>
                     </select>
                   </div>
+                  {/* Internal-only cost & identity fields (never shown to the customer). */}
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Internal · not shown to customer</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <input
+                      type="text" placeholder="SKU (optional)" aria-label="SKU" value={sku}
+                      onChange={(e) => setSku(e.target.value)}
+                      data-testid={`quote-manual-sku-${block.id}`}
+                      className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
+                    />
+                    <input
+                      type="text" placeholder="Part # (optional)" aria-label="Part number" value={partNumber}
+                      onChange={(e) => setPartNumber(e.target.value)}
+                      data-testid={`quote-manual-partnumber-${block.id}`}
+                      className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
+                    />
+                    <input
+                      type="number" min="0" step="0.01" placeholder="Internal cost (optional)" aria-label="Internal cost" value={cost}
+                      onChange={(e) => setCost(e.target.value)}
+                      data-testid={`quote-manual-cost-${block.id}`}
+                      className="h-9 rounded-md border bg-background px-3 text-right text-sm tabular-nums focus:outline-hidden focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-3 text-xs">
                       <label className="flex items-center gap-1">
@@ -1408,7 +1565,10 @@ function BlockCard({
                     <button
                       type="button"
                       onClick={() => void submitManual()}
-                      disabled={addLineBusy || !desc.trim()}
+                      // A line needs a name OR a description (mirrors the API + addManual
+                      // refine). Gating on description alone silently blocked valid
+                      // name-only lines like a titled SKU with no prose.
+                      disabled={addLineBusy || (!name.trim() && !desc.trim())}
                       data-testid={`quote-manual-add-${block.id}`}
                       className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                     >
@@ -1426,6 +1586,68 @@ function BlockCard({
   );
 }
 
+// ── A single read-only pricing-table line (no write permission) ───────────
+// Mirrors EditableLineRow's two-row shape — the customer-facing cells plus the
+// internal cost/markup/net band — but renders everything as plain text.
+function ReadonlyLineRow({ line: l, currency, taxRate, isFirst, showInternal }: { line: QuoteLine; currency: string; taxRate: string | null; isFirst: boolean; showInternal: boolean }) {
+  const mk = markupPct(l.unitPrice, l.unitCost);
+  const markupStr = mk === null ? '—' : `${String(Number(mk.toFixed(2)))}%`;
+  const netCents = l.unitCost === null
+    ? null
+    : toCents(computeLineTotal(l.quantity, l.unitPrice)) - toCents(computeLineTotal(l.quantity, l.unitCost));
+  const tax = lineTaxAmount(l.lineTotal, l.taxable, taxRate);
+  return (
+    <>
+      <tr className="border-t" data-testid={`quote-line-${l.id}`}>
+        <td className="px-2 py-2">
+          <div className="flex items-start gap-2">
+            {l.catalogItemId && <CatalogLineThumb catalogItemId={l.catalogItemId} />}
+            <div>
+              <div className="font-medium">{lineTitle(l)}</div>
+              {lineBlurb(l) && <div className="text-xs text-muted-foreground">{lineBlurb(l)}</div>}
+            </div>
+          </div>
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums">{l.quantity}</td>
+        <td className="px-2 py-2 text-right tabular-nums">{formatMoney(l.unitPrice, currency)}</td>
+        <td className="px-2 py-2">
+          <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {formatRecurrence(l.recurrence)}
+          </span>
+        </td>
+        <td className="px-2 py-2 text-center text-muted-foreground" data-testid={`quote-line-taxable-${l.id}`}>
+          {/* aria-label on a non-focusable span is ignored by AT, so hide the glyph
+              and carry the meaning in an sr-only label instead. */}
+          <span aria-hidden="true">{l.taxable ? '✓' : '—'}</span>
+          <span className="sr-only">{l.taxable ? 'Taxable' : 'Not taxable'}</span>
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums text-muted-foreground" data-testid={`quote-line-tax-${l.id}`}>
+          {tax === null ? '—' : formatMoney(tax, currency)}
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums">{formatMoney(l.lineTotal, currency)}</td>
+        <td className="sticky right-0 border-l bg-card px-2 py-2 text-right" />
+      </tr>
+      <tr className={`border-0 ${showInternal ? '' : 'hidden'}`} data-testid={`quote-line-internal-${l.id}`}>
+        <td colSpan={8} className="px-2 pb-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-muted/40 px-2 py-1 text-xs text-[hsl(220_12%_40%)] dark:text-muted-foreground">
+            {/* Full disclaimer on the first row, a subtle "Internal" tag on the rest. */}
+            <span className="font-medium uppercase tracking-wide">{isFirst ? 'Internal · not shown to customer' : 'Internal'}</span>
+            <span data-testid={`quote-line-sku-${l.id}`}>SKU {l.sku || '—'}</span>
+            <span data-testid={`quote-line-partnumber-${l.id}`}>PN {l.partNumber || '—'}</span>
+            <span data-testid={`quote-line-cost-${l.id}`}>Cost {l.unitCost === null ? '—' : formatMoney(l.unitCost, currency)}</span>
+            <span data-testid={`quote-line-markup-${l.id}`}>Markup {markupStr}</span>
+            <span className="ml-auto">Profit{' '}
+              <span className="font-medium tabular-nums text-foreground" data-testid={`quote-line-net-${l.id}`}>
+                {netCents === null ? '—' : formatMoney(fromCents(netCents), currency)}
+              </span>
+            </span>
+          </div>
+        </td>
+      </tr>
+    </>
+  );
+}
+
 // ── A single editable pricing-table line (writers only) ───────────────────
 // Each field is locally controlled and committed on blur (text/number) or on
 // change (taxable checkbox, recurrence select) — but only when the value
@@ -1435,7 +1657,7 @@ function BlockCard({
 // state to the incoming prop so server-side normalization (e.g. recomputed
 // totals, clamped quantity) wins.
 function EditableLineRow({
-  line, currency, taxRate, busy, isFirst, isLast, onEdit, onMove, onRemove, onDraft,
+  line, currency, taxRate, busy, isFirst, isLast, showInternal, onEdit, onMove, onRemove, onDraft,
 }: {
   line: QuoteLine;
   currency: string;
@@ -1443,12 +1665,14 @@ function EditableLineRow({
   busy: boolean;
   isFirst: boolean;
   isLast: boolean;
+  showInternal: boolean;
   onEdit: (lineId: string, body: LineUpdate) => Promise<boolean>;
   onMove: (line: QuoteLine, direction: 'up' | 'down') => void;
   onRemove: (line: QuoteLine) => void;
   onDraft: (lineId: string, draft: QuoteLineForMath | null) => void;
 }) {
-  const [desc, setDesc] = useState(line.description);
+  const [name, setName] = useState(line.name ?? '');
+  const [desc, setDesc] = useState(line.description ?? '');
   const [qty, setQty] = useState(line.quantity);
   const [price, setPrice] = useState(line.unitPrice);
   // recurrence/taxable are committed on change (not blur); keep them in local
@@ -1456,6 +1680,10 @@ function EditableLineRow({
   // refresh() round-trip lands, and revert if the save fails.
   const [rec, setRec] = useState(line.recurrence);
   const [taxable, setTaxable] = useState(line.taxable);
+  // Internal cost/identity fields (cost drives the markup/net strip below the row).
+  const [cost, setCost] = useState(line.unitCost ?? '');
+  const [sku, setSku] = useState(line.sku ?? '');
+  const [partNumber, setPartNumber] = useState(line.partNumber ?? '');
 
   // Resync the typed fields from the server, but never over an edit in progress.
   // We track "has the user typed since the last commit?" rather than comparing
@@ -1468,18 +1696,29 @@ function EditableLineRow({
   //     ("edit qty→5, blur, type 7" never loses the 7), and
   //   • after the user stops editing, the next prop adopts the server's canonical
   //     value (e.g. 9.999 → 10.00), clearing the dirty ring and the optimism.
+  const nameEdited = useRef(false);
   const descEdited = useRef(false);
   const qtyEdited = useRef(false);
   const priceEdited = useRef(false);
-  useEffect(() => { if (!descEdited.current) setDesc(line.description); }, [line.description]);
+  const costEdited = useRef(false);
+  const skuEdited = useRef(false);
+  const partEdited = useRef(false);
+  useEffect(() => { if (!nameEdited.current) setName(line.name ?? ''); }, [line.name]);
+  useEffect(() => { if (!descEdited.current) setDesc(line.description ?? ''); }, [line.description]);
   useEffect(() => { if (!qtyEdited.current) setQty(line.quantity); }, [line.quantity]);
   useEffect(() => { if (!priceEdited.current) setPrice(line.unitPrice); }, [line.unitPrice]);
+  useEffect(() => { if (!costEdited.current) setCost(line.unitCost ?? ''); }, [line.unitCost]);
+  useEffect(() => { if (!skuEdited.current) setSku(line.sku ?? ''); }, [line.sku]);
+  useEffect(() => { if (!partEdited.current) setPartNumber(line.partNumber ?? ''); }, [line.partNumber]);
   // recurrence/taxable are committed on change (the PATCH resolves before the
   // refresh GET fires), so a stale resync can't race them — a plain resync wins.
   useEffect(() => { setRec(line.recurrence); }, [line.recurrence]);
   useEffect(() => { setTaxable(line.taxable); }, [line.taxable]);
 
-  // Quiet "Saved" flash in place of the old per-field success toast.
+  // Quiet "Saved" flash in place of the old per-field success toast. This is a
+  // single row-level flag on purpose: committing any one field briefly pulses the
+  // green ring across the row's fields, reading as "this line saved" rather than
+  // tracking which individual cell changed.
   const [saved, setSaved] = useState(false);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current); }, []);
@@ -1495,7 +1734,8 @@ function EditableLineRow({
   }, [onEdit, line.id, flashSaved]);
   // Per-field dirty cue (mirrors the terms/tax ring) so every editable surface
   // signals unsaved state the same way.
-  const descDirty = desc.trim() !== line.description;
+  const nameDirty = name.trim() !== (line.name ?? '');
+  const descDirty = desc.trim() !== (line.description ?? '');
   const qtyDirty = Number(qty) !== Number(line.quantity);
   const priceDirty = Number(price) !== Number(line.unitPrice);
 
@@ -1519,25 +1759,59 @@ function EditableLineRow({
   const displayTotal = totalDiverged ? computeLineTotal(effQty, effPrice) : line.lineTotal;
   const displayTax = lineTaxAmount(displayTotal, taxable, taxRate);
 
+  // Markup is derived from price+cost. The input is controlled by local state that
+  // resyncs from the derived value when price/cost change — but only while the
+  // field is NOT focused, so a cross-field cost edit never yanks the caret. (This
+  // replaces the old key={markupStr} remount, which dropped focus on every
+  // commit.) Net is (price − cost) × qty in cents; "—" when no cost is set.
+  const mk = markupPct(effPrice, cost);
+  const markupStr = mk === null ? '' : String(Number(mk.toFixed(2)));
+  const markupFocused = useRef(false);
+  const [markupInput, setMarkupInput] = useState(markupStr);
+  useEffect(() => { if (!markupFocused.current) setMarkupInput(markupStr); }, [markupStr]);
+  const netCents = cost.trim() === ''
+    ? null
+    : toCents(computeLineTotal(effQty, effPrice)) - toCents(computeLineTotal(effQty, cost));
+  const costDirty = cost.trim() === '' ? line.unitCost !== null : Number(cost) !== Number(line.unitCost);
+  const skuDirty = sku.trim() !== (line.sku ?? '');
+  const partDirty = partNumber.trim() !== (line.partNumber ?? '');
+
   // Report this row's effective values to the parent so the rail "Live totals"
   // recompute uses the same inputs. Emit null once nothing diverges, so the rail
   // reverts to the authoritative server figures; cleanup on unmount avoids a
   // phantom draft skewing the rail after a delete.
-  const diverged = totalDiverged || taxable !== line.taxable || rec !== line.recurrence;
+  const diverged = totalDiverged || taxable !== line.taxable || rec !== line.recurrence || costDirty;
   useEffect(() => {
     onDraft(line.id, diverged
-      ? { quantity: String(effQty), unitPrice: String(effPrice), taxable, customerVisible: line.customerVisible, recurrence: rec }
+      ? { quantity: String(effQty), unitPrice: String(effPrice), unitCost: cost || null, taxable, customerVisible: line.customerVisible, recurrence: rec }
       : null);
-  }, [onDraft, line.id, line.customerVisible, diverged, effQty, effPrice, taxable, rec]);
+  }, [onDraft, line.id, line.customerVisible, diverged, effQty, effPrice, cost, taxable, rec]);
   // Clear this row's draft when it unmounts (e.g. removed) so the rail doesn't
   // keep a phantom override.
   useEffect(() => () => onDraft(line.id, null), [onDraft, line.id]);
 
+  const commitName = () => {
+    const next = name.trim();
+    nameEdited.current = false; // committing — let the server value re-adopt next
+    if (next === (line.name ?? '')) { setName(line.name ?? ''); return; }
+    // A line can't have both name and description blank (mirrors the API refine).
+    if (!next && !(line.description ?? '').trim()) {
+      handleActionError(new Error('empty line'), 'A line needs a name or a description.');
+      setName(line.name ?? '');
+      return;
+    }
+    void edit({ name: next || null });
+  };
   const commitDesc = () => {
     const next = desc.trim();
     descEdited.current = false; // committing — let the server value re-adopt next
-    if (!next || next === line.description) { setDesc(line.description); return; }
-    void edit({ description: next });
+    if (next === (line.description ?? '')) { setDesc(line.description ?? ''); return; }
+    if (!next && !(line.name ?? '').trim()) {
+      handleActionError(new Error('empty line'), 'A line needs a name or a description.');
+      setDesc(line.description ?? '');
+      return;
+    }
+    void edit({ description: next || null });
   };
   const commitQty = () => {
     const n = Number(qty);
@@ -1563,22 +1837,70 @@ function EditableLineRow({
     }
     void edit({ unitPrice: n });
   };
+  const commitCost = () => {
+    costEdited.current = false;
+    if (cost.trim() === '') { if (line.unitCost !== null) void edit({ unitCost: null }); return; }
+    const n = Number(cost);
+    if (!Number.isFinite(n) || n < 0) {
+      handleActionError(new Error('invalid cost'), 'Enter a cost of 0 or more.');
+      setCost(line.unitCost ?? '');
+      return;
+    }
+    if (n !== Number(line.unitCost)) void edit({ unitCost: n });
+  };
+  const commitSku = () => {
+    skuEdited.current = false;
+    const next = sku.trim();
+    if (next !== (line.sku ?? '')) void edit({ sku: next || null });
+  };
+  const commitPartNumber = () => {
+    partEdited.current = false;
+    const next = partNumber.trim();
+    if (next !== (line.partNumber ?? '')) void edit({ partNumber: next || null });
+  };
+  // Editing markup% commits a new unit price derived from cost: price = cost·(1+m).
+  const onMarkupCommit = (raw: string) => {
+    const m = Number(raw);
+    // Need a cost base, and treat an emptied markup field as "leave price alone" —
+    // Number('') is 0 (finite), which would otherwise rewrite unitPrice down to cost
+    // (zero margin) just because the user cleared the field.
+    if (cost.trim() === '' || raw.trim() === '' || !Number.isFinite(m)) return;
+    const nextPrice = priceFromMarkup(cost, m);
+    setPrice(nextPrice);
+    priceEdited.current = false;
+    if (Number(nextPrice) !== Number(line.unitPrice)) void edit({ unitPrice: Number(nextPrice) });
+  };
 
   return (
+    <>
     <tr className="border-t align-top" data-testid={`quote-line-${line.id}`}>
       <td className="px-2 py-2">
         <div className="flex items-start gap-2">
           {line.catalogItemId && <CatalogLineThumb catalogItemId={line.catalogItemId} />}
-          <textarea
-            value={desc}
-            aria-label="Line description"
-            onChange={(e) => { setDesc(e.target.value); descEdited.current = true; }}
-            onBlur={commitDesc}
-            rows={2}
-            disabled={busy}
-            data-testid={`quote-line-desc-${line.id}`}
-            className={`min-h-9 w-full resize-y rounded-md border bg-background px-2 py-1 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${descDirty ? 'ring-1 ring-warning' : ''}`}
-          />
+          <div className="w-full space-y-1">
+            <input
+              type="text"
+              value={name}
+              aria-label="Line name"
+              placeholder="Name"
+              onChange={(e) => { setName(e.target.value); nameEdited.current = true; }}
+              onBlur={commitName}
+              disabled={busy}
+              data-testid={`quote-line-name-${line.id}`}
+              className={`h-9 w-full rounded-md border bg-background px-2 py-1 text-sm font-medium transition-shadow focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${fieldRing(nameDirty, saved)}`}
+            />
+            <textarea
+              value={desc}
+              aria-label="Line description"
+              placeholder="Description (optional)"
+              onChange={(e) => { setDesc(e.target.value); descEdited.current = true; }}
+              onBlur={commitDesc}
+              rows={2}
+              disabled={busy}
+              data-testid={`quote-line-desc-${line.id}`}
+              className={`min-h-9 w-full resize-y rounded-md border bg-background px-2 py-1 text-sm text-muted-foreground transition-shadow focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${fieldRing(descDirty, saved)}`}
+            />
+          </div>
         </div>
       </td>
       <td className="px-2 py-2 text-right">
@@ -1590,7 +1912,7 @@ function EditableLineRow({
           onBlur={commitQty}
           disabled={busy}
           data-testid={`quote-line-qty-${line.id}`}
-          className={`h-9 w-16 rounded-md border bg-background px-2 text-right text-sm tabular-nums focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${qtyDirty ? 'ring-1 ring-warning' : ''}`}
+          className={`h-9 w-16 rounded-md border bg-background px-2 text-right text-sm tabular-nums transition-shadow focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${fieldRing(qtyDirty, saved)}`}
         />
       </td>
       <td className="px-2 py-2 text-right">
@@ -1602,7 +1924,7 @@ function EditableLineRow({
           onBlur={commitPrice}
           disabled={busy}
           data-testid={`quote-line-price-${line.id}`}
-          className={`h-9 w-24 rounded-md border bg-background px-2 text-right text-sm tabular-nums focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${priceDirty ? 'ring-1 ring-warning' : ''}`}
+          className={`h-9 w-24 rounded-md border bg-background px-2 text-right text-sm tabular-nums transition-shadow focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60 ${fieldRing(priceDirty, saved)}`}
         />
       </td>
       <td className="px-2 py-2">
@@ -1623,31 +1945,28 @@ function EditableLineRow({
           <option value="annual">Annual</option>
         </select>
       </td>
-      <td className="px-2 py-2 text-right">
-        <label className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={taxable}
-            aria-label="Taxable"
-            onChange={(e) => {
-              const next = e.target.checked;
-              setTaxable(next); // optimistic — revert if the save fails
-              void edit({ taxable: next }).then((ok) => { if (!ok) setTaxable(line.taxable); });
-            }}
-            disabled={busy}
-            data-testid={`quote-line-taxable-${line.id}`}
-          />
-          <span className="tabular-nums" data-testid={`quote-line-tax-${line.id}`}>
-            {displayTax === null ? '—' : formatMoney(displayTax, currency)}
-          </span>
-        </label>
+      <td className="px-2 py-2 text-center">
+        <input
+          type="checkbox"
+          checked={taxable}
+          aria-label="Taxable"
+          onChange={(e) => {
+            const next = e.target.checked;
+            setTaxable(next); // optimistic — revert if the save fails
+            void edit({ taxable: next }).then((ok) => { if (!ok) setTaxable(line.taxable); });
+          }}
+          disabled={busy}
+          data-testid={`quote-line-taxable-${line.id}`}
+        />
+      </td>
+      <td className="px-2 py-2 text-right tabular-nums text-muted-foreground" data-testid={`quote-line-tax-${line.id}`}>
+        {displayTax === null ? '—' : formatMoney(displayTax, currency)}
       </td>
       <td className="px-2 py-2 text-right tabular-nums">
         <span data-testid={`quote-line-total-${line.id}`}>{formatMoney(displayTotal, currency)}</span>
-        {saved && <span className="ml-1 text-xs font-medium text-success" data-testid={`quote-line-saved-${line.id}`}>Saved</span>}
-        <SrSaved show={saved} />
+        <SrSaved show={saved} testId={`quote-line-saved-${line.id}`} />
       </td>
-      <td className="px-2 py-2 text-right">
+      <td className="sticky right-0 border-l bg-card px-2 py-2 text-right">
         <div className="flex items-center justify-end gap-1">
           <MoveControls
             disabledUp={isFirst}
@@ -1671,6 +1990,75 @@ function EditableLineRow({
         </div>
       </td>
     </tr>
+    {/* Internal-only cost/markup/profit band — never shown to the customer.
+        Collapsed by default via the editor's "Show cost & margin" toggle; kept in
+        the DOM (hidden) rather than unmounted so totals/draft wiring stays live. */}
+    <tr className={`border-0 ${showInternal ? '' : 'hidden'}`} data-testid={`quote-line-internal-${line.id}`}>
+      <td colSpan={8} className="px-2 pb-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-muted/40 px-2 py-1 text-xs text-[hsl(220_12%_40%)] dark:text-muted-foreground">
+          {/* Full disclaimer on the first row; a subtle "Internal" tag persists on
+              every following row so a writer scanning mid-table never mistakes the
+              cost/markup band for customer-facing copy. */}
+          <span className="font-medium uppercase tracking-wide">{isFirst ? 'Internal · not shown to customer' : 'Internal'}</span>
+          <label className="flex items-center gap-1">SKU
+            <input
+              type="text"
+              value={sku}
+              onChange={(e) => { setSku(e.target.value); skuEdited.current = true; }}
+              onBlur={commitSku}
+              disabled={busy}
+              data-testid={`quote-line-sku-${line.id}`}
+              className={`h-6 w-28 rounded border bg-background px-1 text-foreground transition-shadow ${fieldRing(skuDirty, saved)}`}
+            />
+          </label>
+          <label className="flex items-center gap-1">PN
+            <input
+              type="text"
+              value={partNumber}
+              onChange={(e) => { setPartNumber(e.target.value); partEdited.current = true; }}
+              onBlur={commitPartNumber}
+              disabled={busy}
+              data-testid={`quote-line-partnumber-${line.id}`}
+              className={`h-6 w-28 rounded border bg-background px-1 text-foreground transition-shadow ${fieldRing(partDirty, saved)}`}
+            />
+          </label>
+          <label className="flex items-center gap-1">Cost
+            <input
+              type="number" min="0" step="0.01"
+              value={cost}
+              onChange={(e) => { setCost(e.target.value); costEdited.current = true; }}
+              onBlur={commitCost}
+              disabled={busy}
+              data-testid={`quote-line-cost-${line.id}`}
+              className={`h-6 w-20 rounded border bg-background px-1 text-right tabular-nums text-foreground transition-shadow ${fieldRing(costDirty, saved)}`}
+            />
+          </label>
+          <label className="flex items-center gap-1">Markup
+            <input
+              type="number" step="0.1"
+              value={markupInput}
+              onFocus={() => { markupFocused.current = true; }}
+              onChange={(e) => setMarkupInput(e.target.value)}
+              onBlur={(e) => { markupFocused.current = false; onMarkupCommit(e.target.value); }}
+              disabled={busy || cost.trim() === ''}
+              // Tell keyboard/SR users WHY the field is disabled — sighted users can
+              // see the empty cost field, AT users can't.
+              title={cost.trim() === '' ? 'Enter a cost first to set markup %' : undefined}
+              aria-describedby={cost.trim() === '' ? `quote-line-markup-hint-${line.id}` : undefined}
+              data-testid={`quote-line-markup-${line.id}`}
+              className="h-6 w-16 rounded border bg-background px-1 text-right tabular-nums text-foreground disabled:opacity-60"
+            />%
+            {cost.trim() === '' && <span id={`quote-line-markup-hint-${line.id}`} className="sr-only">Enter a cost first to set markup %.</span>}
+          </label>
+          <span className="ml-auto">Profit{' '}
+            <span className="font-medium tabular-nums text-foreground" data-testid={`quote-line-net-${line.id}`}>
+              {netCents === null ? '—' : formatMoney(fromCents(netCents), currency)}
+            </span>
+          </span>
+        </div>
+      </td>
+    </tr>
+    </>
   );
 }
 

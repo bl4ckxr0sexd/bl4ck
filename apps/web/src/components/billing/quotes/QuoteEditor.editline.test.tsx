@@ -47,7 +47,8 @@ const block: QuoteDetailData['blocks'][number] = {
 
 const line: QuoteDetailData['lines'][number] = {
   id: 'line-1', quoteId: 'q-1', blockId: 'blk-1', orgId: 'org-1', sourceType: 'manual',
-  catalogItemId: null, parentLineId: null, description: 'Managed support', quantity: '1.00',
+  catalogItemId: null, parentLineId: null, unitCost: null, sku: null, partNumber: null,
+  name: null, description: 'Managed support', quantity: '1.00',
   unitPrice: '50.00', taxable: false, customerVisible: true, lineTotal: '50.00',
   recurrence: 'monthly', termMonths: null, billingFrequency: null, sortOrder: 0,
   createdAt: '2026-06-01T00:00:00Z',
@@ -122,10 +123,12 @@ describe('QuoteEditor — inline line editing', () => {
     });
     // refresh() is coalesced (trailing), so onChanged fires shortly after the PATCH.
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    // Routine inline edits no longer fire a success toast (that was per-field
-    // spam) — they flash a quiet "Saved" cue on the row instead.
-    await waitFor(() => expect(screen.getByTestId('quote-line-saved-line-1')).toBeInTheDocument());
-    expect(showToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'success', message: 'Line updated' }));
+    // Per-field line edits confirm via the dirty-ring clearing + SrSaved live
+    // region, NOT a toast — toasts are reserved for action-level events (line
+    // added/removed). A toast per blur was a storm that double-announced.
+    await waitFor(() => expect(screen.getByTestId('quote-line-saved-line-1')).toHaveTextContent('Saved'));
+    expect(showToast).not.toHaveBeenCalledWith(expect.objectContaining({ message: 'Saved' }));
+    expect(showToast).not.toHaveBeenCalledWith(expect.objectContaining({ message: 'Line updated' }));
   });
 
   it('changing quantity sends a numeric quantity', async () => {

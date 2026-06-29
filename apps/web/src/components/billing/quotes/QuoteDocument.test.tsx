@@ -31,8 +31,8 @@ function makeDetail(overrides: Partial<QuoteDetailData> = {}): QuoteDetailData {
       { id: 'b-1', quoteId: 'q-1', orgId: 'org-1', blockType: 'line_items', content: { label: 'Services' }, sortOrder: 0, createdAt: '2026-06-01T00:00:00Z' },
     ],
     lines: [
-      { id: 'l-1', quoteId: 'q-1', blockId: 'b-1', orgId: 'org-1', sourceType: 'manual', catalogItemId: null, parentLineId: null, description: 'Managed Workstation', quantity: '10', unitPrice: '45.00', taxable: false, customerVisible: true, lineTotal: '450.00', recurrence: 'monthly', termMonths: null, billingFrequency: null, sortOrder: 0, createdAt: '2026-06-01T00:00:00Z' },
-      { id: 'l-2', quoteId: 'q-1', blockId: 'b-1', orgId: 'org-1', sourceType: 'manual', catalogItemId: null, parentLineId: null, description: 'Onboarding', quantity: '1', unitPrice: '500.00', taxable: false, customerVisible: true, lineTotal: '500.00', recurrence: 'one_time', termMonths: null, billingFrequency: null, sortOrder: 1, createdAt: '2026-06-01T00:00:00Z' },
+      { id: 'l-1', quoteId: 'q-1', blockId: 'b-1', orgId: 'org-1', sourceType: 'manual', catalogItemId: null, parentLineId: null, name: null, description: 'Managed Workstation', quantity: '10', unitPrice: '45.00', unitCost: null, sku: null, partNumber: null, taxable: false, customerVisible: true, lineTotal: '450.00', recurrence: 'monthly', termMonths: null, billingFrequency: null, sortOrder: 0, createdAt: '2026-06-01T00:00:00Z' },
+      { id: 'l-2', quoteId: 'q-1', blockId: 'b-1', orgId: 'org-1', sourceType: 'manual', catalogItemId: null, parentLineId: null, name: null, description: 'Onboarding', quantity: '1', unitPrice: '500.00', unitCost: null, sku: null, partNumber: null, taxable: false, customerVisible: true, lineTotal: '500.00', recurrence: 'one_time', termMonths: null, billingFrequency: null, sortOrder: 1, createdAt: '2026-06-01T00:00:00Z' },
     ],
     branding: {
       partnerName: 'Lantern IT', logoUrl: null, primaryColor: '#1c8a9e', footer: 'Thank you for your business.',
@@ -73,6 +73,40 @@ describe('QuoteDocument', () => {
     render(<QuoteDocument detail={d} customerName="Acme Industries" />);
     expect(screen.getByTestId('quote-document-number')).toHaveTextContent('Draft');
     expect(screen.getByTestId('quote-document-wordmark')).toHaveTextContent('Lantern IT'); // no logoUrl → wordmark
+  });
+
+  it('never renders internal cost/markup/net on the customer document', () => {
+    const detail = makeDetail({
+      lines: [
+        {
+          id: 'l-3',
+          quoteId: 'q-1',
+          blockId: 'b-1',
+          orgId: 'org-1',
+          sourceType: 'manual',
+          catalogItemId: null,
+          parentLineId: null,
+          unitCost: '100.00',
+          sku: 'SKU-1',
+          partNumber: 'PN-001',
+          name: null,
+          description: 'Test Product',
+          quantity: '1',
+          unitPrice: '130.00',
+          taxable: false,
+          customerVisible: true,
+          lineTotal: '130.00',
+          recurrence: 'one_time',
+          termMonths: null,
+          billingFrequency: null,
+          sortOrder: 0,
+          createdAt: '2026-06-01T00:00:00Z',
+        },
+      ],
+    });
+    const { container } = render(<QuoteDocument detail={detail} customerName="Acme" />);
+    expect(container.textContent).not.toMatch(/markup/i);
+    expect(container.textContent).not.toContain('100.00'); // the cost value
   });
 });
 

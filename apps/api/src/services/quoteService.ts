@@ -1,8 +1,9 @@
 import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
-import { db } from '../db';
+import { db, runOutsideDbContext, withSystemDbAccessContext } from '../db';
 import { quotes, quoteLines, quoteBlocks } from '../db/schema/quotes';
+import { organizations, partners } from '../db/schema/orgs';
 import { catalogItems } from '../db/schema/catalog';
-import { computeLineTotal } from './invoiceMath';
+import { computeLineTotal, resolveEffectiveTaxRate } from './invoiceMath';
 import { computeQuoteTotals, type QuoteLineForMath } from './quoteMath';
 import { QuoteServiceError, type QuoteActor } from './quoteTypes';
 import type {
@@ -15,6 +16,16 @@ import type {
 // integration tests — exactly like invoiceService. The service itself uses the
 // bare `db` proxy directly; it never opens its own context.
 // ---------------------------------------------------------------------------
+
+/**
+ * Strip internal-only economics (unitCost/unit_cost) from quote lines before
+ * returning them to customer-facing surfaces (public quote URL, portal, PDF).
+ * sku and partNumber are acceptable on the customer document; unitCost is NOT,
+ * and markup/net must never be derived from it on the customer side.
+ */
+export function toCustomerLines<T extends { unitCost: unknown }>(lines: T[]): Omit<T, 'unitCost'>[] {
+  return lines.map(({ unitCost: _cost, ...rest }) => rest as Omit<T, 'unitCost'>);
+}
 
 function resolvePartner(actor: QuoteActor): string {
   if (!actor.partnerId) {
@@ -87,14 +98,41 @@ async function nextLineSortOrder(quoteId: string): Promise<number> {
 // CRUD
 // ---------------------------------------------------------------------------
 
+/**
+ * Effective tax rate stamped onto a new quote, mirroring invoices'
+ * `resolveEffectiveTaxRate` precedence: a tax-exempt customer wins (0), then the
+ * org's own rate, then the partner's `default_tax_rate` (the "Invoice defaults →
+ * Default tax rate" setting). Read in a SYSTEM context because the partner-axis
+ * `partners` row is invisible to org-scoped request contexts — unlike invoices,
+ * a quote has no later "issue" step to stamp the partner default, so the rate
+ * must be resolved up front to show tax in the editor. Returns null (not an
+ * all-zero fraction) when there is no tax, keeping a no-tax quote visually clean.
+ */
+async function resolveQuoteTaxRate(orgId: string, partnerId: string): Promise<string | null> {
+  const rate = await runOutsideDbContext(() => withSystemDbAccessContext(async () => {
+    const [org] = await db.select({ taxExempt: organizations.taxExempt, taxRate: organizations.taxRate })
+      .from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    const [partner] = await db.select({ defaultTaxRate: partners.defaultTaxRate })
+      .from(partners).where(eq(partners.id, partnerId)).limit(1);
+    return resolveEffectiveTaxRate({
+      taxExempt: org?.taxExempt ?? false,
+      orgRate: org?.taxRate ?? null,
+      partnerRate: partner?.defaultTaxRate ?? null,
+    });
+  }));
+  return Number(rate) > 0 ? rate : null;
+}
+
 export async function createQuote(input: CreateQuoteInput, actor: QuoteActor) {
   const partnerId = resolvePartner(actor);
   assertOrg(actor, input.orgId);
+  const taxRate = await resolveQuoteTaxRate(input.orgId, partnerId);
   const [row] = await db.insert(quotes).values({
     partnerId,
     orgId: input.orgId,
     siteId: input.siteId ?? null,
     currencyCode: input.currencyCode,
+    taxRate,
     expiryDate: input.expiryDate ?? null,
     introNotes: input.introNotes ?? null,
     terms: input.terms ?? null,
@@ -234,7 +272,8 @@ export async function addManualLine(quoteId: string, input: QuoteLineInput, acto
     blockId: input.blockId ?? null,
     sourceType: input.sourceType,
     catalogItemId: input.catalogItemId ?? null,
-    description: input.description,
+    name: input.name ?? null,
+    description: input.description ?? null,
     quantity,
     unitPrice,
     taxable: input.taxable,
@@ -243,6 +282,9 @@ export async function addManualLine(quoteId: string, input: QuoteLineInput, acto
     recurrence: input.recurrence,
     termMonths: input.termMonths ?? null,
     billingFrequency: input.billingFrequency ?? null,
+    unitCost: input.unitCost != null ? Number(input.unitCost).toFixed(2) : null,
+    sku: input.sku ?? null,
+    partNumber: input.partNumber ?? null,
     sortOrder,
   }).returning();
   await recomputeAndPersist(quoteId);
@@ -261,7 +303,8 @@ export async function addCatalogLine(
   catalogItemId: string,
   quantity: number,
   blockId: string | undefined,
-  actor: QuoteActor
+  actor: QuoteActor,
+  options?: { partNumber?: string | null }
 ) {
   const q = await loadDraft(quoteId, actor);
   // Scope the catalog lookup to the quote's OWN partner. catalog_items is
@@ -289,7 +332,9 @@ export async function addCatalogLine(
     blockId: blockId ?? null,
     sourceType: 'catalog',
     catalogItemId,
-    description: item.name,
+    // Mirror the catalog item: its name is the line title, its description the blurb.
+    name: item.name,
+    description: item.description ?? null,
     quantity: qty,
     unitPrice: item.unitPrice,
     taxable: item.taxable,
@@ -298,6 +343,11 @@ export async function addCatalogLine(
     recurrence,
     termMonths: item.commitmentTermMonths ?? null,
     billingFrequency: item.billingFrequency ?? null,
+    // Snapshot internal economics from the catalog item at add-time so a later
+    // catalog edit never mutates existing quote line cost/sku data.
+    unitCost: item.costBasis ?? null,
+    sku: item.sku ?? null,
+    partNumber: options?.partNumber ?? null,
     sortOrder,
   }).returning();
   await recomputeAndPersist(quoteId);
@@ -308,10 +358,11 @@ export async function updateLine(
   quoteId: string,
   lineId: string,
   input: {
-    description?: string; quantity?: number; unitPrice?: number;
+    name?: string | null; description?: string | null; quantity?: number; unitPrice?: number;
     taxable?: boolean; customerVisible?: boolean;
     recurrence?: 'one_time' | 'monthly' | 'annual';
     termMonths?: number | null; sortOrder?: number;
+    unitCost?: number | null; sku?: string | null; partNumber?: string | null;
   },
   actor: QuoteActor
 ) {
@@ -322,7 +373,10 @@ export async function updateLine(
   const quantity = input.quantity != null ? String(input.quantity) : existing.quantity;
   const unitPrice = input.unitPrice != null ? Number(input.unitPrice).toFixed(2) : existing.unitPrice;
   const set: Record<string, unknown> = {
-    description: input.description ?? existing.description,
+    // name/description are independently patchable; undefined leaves them as-is,
+    // an explicit null clears them (the refine on the route schema keeps ≥1 set).
+    name: input.name !== undefined ? input.name : existing.name,
+    description: input.description !== undefined ? input.description : existing.description,
     quantity,
     unitPrice,
     taxable: input.taxable ?? existing.taxable,
@@ -332,6 +386,9 @@ export async function updateLine(
   };
   if (input.termMonths !== undefined) set.termMonths = input.termMonths;
   if (input.sortOrder !== undefined) set.sortOrder = input.sortOrder;
+  if (input.unitCost !== undefined) set.unitCost = input.unitCost != null ? Number(input.unitCost).toFixed(2) : null;
+  if (input.sku !== undefined) set.sku = input.sku;
+  if (input.partNumber !== undefined) set.partNumber = input.partNumber;
   await db.update(quoteLines).set(set).where(eq(quoteLines.id, lineId));
   await recomputeAndPersist(quoteId);
   const [updated] = await db.select().from(quoteLines).where(eq(quoteLines.id, lineId)).limit(1);
