@@ -371,3 +371,142 @@ describe('AlertsPage — acknowledge in-flight feedback', () => {
     );
   });
 });
+
+describe('AlertsPage — suppress duration picker', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const listOnlyMock = (suppressResponse: () => Promise<Response>) =>
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/alerts' && method === 'GET') {
+        return Promise.resolve(makeJsonResponse({ data: [activeAlert] }));
+      }
+      if (url === '/devices' && method === 'GET') {
+        return Promise.resolve(makeJsonResponse({ data: [] }));
+      }
+      if (url === `/alerts/${ALERT_ID}/suppress` && method === 'POST') {
+        return suppressResponse();
+      }
+      return Promise.resolve(makeJsonResponse({ error: `unexpected ${method} ${url}` }, false, 404));
+    });
+
+  it('opens the duration picker instead of firing a blind POST (the original bug)', async () => {
+    listOnlyMock(() => Promise.resolve(makeJsonResponse({ id: ALERT_ID, status: 'suppressed' })));
+
+    render(<AlertsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /Suppress: High CPU on SRV-01/i }));
+
+    // The dialog is shown and NO suppress request has been sent yet.
+    expect(await screen.findByTestId('suppress-confirm')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      `/alerts/${ALERT_ID}/suppress`,
+      expect.anything(),
+    );
+  });
+
+  it('sends the default 24h "until" timestamp in the body when confirmed', async () => {
+    listOnlyMock(() => Promise.resolve(makeJsonResponse({ id: ALERT_ID, status: 'suppressed' })));
+
+    render(<AlertsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /Suppress: High CPU on SRV-01/i }));
+    const before = Date.now();
+    fireEvent.click(await screen.findByTestId('suppress-confirm'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/alerts/${ALERT_ID}/suppress`,
+        expect.objectContaining({ method: 'POST', body: expect.any(String) }),
+      );
+    });
+
+    const call = fetchMock.mock.calls.find(([url]) => url === `/alerts/${ALERT_ID}/suppress`)!;
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(typeof body.until).toBe('string');
+    // Default preset is 24h — guard the value, not just "in the future", so a
+    // regression to a different default is caught.
+    const untilMs = new Date(body.until).getTime();
+    expect(untilMs).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000 - 2000);
+    expect(untilMs).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000 + 2000);
+  });
+
+  it('reverts the optimistic update and surfaces the server error when suppression fails', async () => {
+    listOnlyMock(() => Promise.resolve(makeJsonResponse({ error: 'Cannot suppress a resolved alert' }, false, 400)));
+
+    render(<AlertsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /Suppress: High CPU on SRV-01/i }));
+    fireEvent.click(await screen.findByTestId('suppress-confirm'));
+
+    // The server's specific reason is shown, not a generic message.
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: 'Cannot suppress a resolved alert' }),
+      );
+    });
+    // Optimistic suppression is rolled back: the row's Suppress button returns.
+    expect(await screen.findByRole('button', { name: /Suppress: High CPU on SRV-01/i })).toBeInTheDocument();
+  });
+});
+
+describe('AlertsPage — bulk suppress', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const bulkMock = () =>
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/alerts' && method === 'GET') {
+        return Promise.resolve(makeJsonResponse({ data: [activeAlert] }));
+      }
+      if (url === '/devices' && method === 'GET') {
+        return Promise.resolve(makeJsonResponse({ data: [] }));
+      }
+      if (url === '/alerts/bulk' && method === 'POST') {
+        return Promise.resolve(makeJsonResponse({ updated: 1, skipped: 0, failed: 0 }));
+      }
+      return Promise.resolve(makeJsonResponse({ error: `unexpected ${method} ${url}` }, false, 404));
+    });
+
+  it('opens the duration picker and POSTs /alerts/bulk with action:suppress + until on confirm', async () => {
+    bulkMock();
+    render(<AlertsPage />);
+
+    // Select the alert, open the bulk menu, choose Suppress.
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Select High CPU on SRV-01/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Bulk Actions/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Suppress/i }));
+
+    // The duration picker opens; no bulk POST has fired yet.
+    expect(await screen.findByTestId('suppress-confirm')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith('/alerts/bulk', expect.anything());
+
+    const before = Date.now();
+    fireEvent.click(screen.getByTestId('suppress-confirm'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/alerts/bulk',
+        expect.objectContaining({ method: 'POST', body: expect.any(String) }),
+      );
+    });
+
+    const call = fetchMock.mock.calls.find(([url]) => url === '/alerts/bulk')!;
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.action).toBe('suppress');
+    expect(body.alertIds).toEqual([ALERT_ID]);
+    const untilMs = new Date(body.until).getTime();
+    expect(untilMs).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000 - 2000);
+    expect(untilMs).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000 + 2000);
+
+    // Past-tense success copy ("suppressed", not "suppressd").
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith(
+        expect.objectContaining({ message: '1 alert suppressed' }),
+      );
+    });
+  });
+});
