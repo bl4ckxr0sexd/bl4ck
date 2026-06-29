@@ -284,11 +284,21 @@ const testWebhookSchema = z.object({
 const webhookIdParamSchema = z.object({ id: z.string().guid() });
 const webhookRetryParamSchema = z.object({ id: z.string().guid(), deliveryId: z.string().guid() });
 
-webhookRoutes.use('*', authMiddleware);
+// NOTE: do NOT use `webhookRoutes.use('*', authMiddleware)` here. This router is
+// mounted at `/webhooks`, but the public, signature-gated `/webhooks/tickets`
+// (inbound email) and `/webhooks/stripe` (Stripe Connect) routers mount under the
+// same prefix. Hono flattens `.route()` mounts, so a `/webhooks/*` wildcard would
+// blanket those nested public paths with session auth and 401 them before their
+// HMAC/signature handlers run (issue #2053). Lead each route below with
+// `authMiddleware` per-route instead — the inline-per-route pattern in
+// invoices/settings.ts. (externalServices.ts scopes auth the same anti-wildcard
+// way but via path-targeted `.use('/billing/portal', authMiddleware)` rather than
+// inline-leading, so it's the principle, not the exact form, to copy.)
 
 // GET /webhooks - List webhooks for org (paginated, filtered by status)
 webhookRoutes.get(
   '/',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   zValidator('query', listWebhooksSchema),
   async (c) => {
@@ -357,6 +367,7 @@ webhookRoutes.get(
 // POST /webhooks - Create webhook
 webhookRoutes.post(
   '/',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   requirePermission(PERMISSIONS.ORGS_WRITE.resource, PERMISSIONS.ORGS_WRITE.action),
   requireMfa(),
@@ -432,6 +443,7 @@ webhookRoutes.post(
 // GET /webhooks/:id - Get webhook details including delivery stats
 webhookRoutes.get(
   '/:id',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   zValidator('param', webhookIdParamSchema),
   async (c) => {
@@ -455,6 +467,7 @@ webhookRoutes.get(
 // PATCH /webhooks/:id - Update webhook
 webhookRoutes.patch(
   '/:id',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   requirePermission(PERMISSIONS.ORGS_WRITE.resource, PERMISSIONS.ORGS_WRITE.action),
   requireMfa(),
@@ -532,6 +545,7 @@ webhookRoutes.patch(
 // DELETE /webhooks/:id - Delete webhook
 webhookRoutes.delete(
   '/:id',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   requirePermission(PERMISSIONS.ORGS_WRITE.resource, PERMISSIONS.ORGS_WRITE.action),
   requireMfa(),
@@ -568,6 +582,7 @@ webhookRoutes.delete(
 // GET /webhooks/:id/deliveries - Get delivery history (paginated, filtered by status)
 webhookRoutes.get(
   '/:id/deliveries',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   zValidator('param', webhookIdParamSchema),
   zValidator('query', listDeliveriesSchema),
@@ -617,6 +632,7 @@ webhookRoutes.get(
 // POST /webhooks/:id/test - Send test payload to webhook
 webhookRoutes.post(
   '/:id/test',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   requirePermission(PERMISSIONS.ORGS_WRITE.resource, PERMISSIONS.ORGS_WRITE.action),
   requireMfa(),
@@ -715,6 +731,7 @@ webhookRoutes.post(
 // POST /webhooks/:id/retry/:deliveryId - Retry a failed delivery
 webhookRoutes.post(
   '/:id/retry/:deliveryId',
+  authMiddleware,
   requireScope('organization', 'partner', 'system'),
   requirePermission(PERMISSIONS.ORGS_WRITE.resource, PERMISSIONS.ORGS_WRITE.action),
   requireMfa(),
