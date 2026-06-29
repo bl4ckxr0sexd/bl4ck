@@ -134,6 +134,7 @@ import { sentinelOneRoutes } from './routes/sentinelOne';
 import { softwareInventoryRoutes } from './routes/softwareInventory';
 import { huntressRoutes } from './routes/huntress';
 import { pax8Routes } from './routes/pax8';
+import { unifiRoutes } from './routes/unifi';
 import { accountingRoutes } from './routes/accounting';
 import { sensitiveDataRoutes } from './routes/sensitiveData';
 import { peripheralControlRoutes } from './routes/peripheralControl';
@@ -184,6 +185,8 @@ import { initializeDiscoveryWorker, shutdownDiscoveryWorker } from './jobs/disco
 import { initializeNetworkBaselineWorker, shutdownNetworkBaselineWorker } from './jobs/networkBaselineWorker';
 import { initializeSnmpWorker, shutdownSnmpWorker } from './jobs/snmpWorker';
 import { initializeMonitorWorker, shutdownMonitorWorker } from './jobs/monitorWorker';
+import { initializeUnifiWorker } from './jobs/unifiWorker';
+import { initializeUnifiTelemetryWorker } from './jobs/unifiTelemetryWorker';
 import { initializeSnmpRetention, shutdownSnmpRetention } from './jobs/snmpRetention';
 import { initializeReliabilityRetention, shutdownReliabilityRetention } from './jobs/reliabilityRetention';
 import { initializeProcessSampleRetention, shutdownProcessSampleRetention } from './jobs/processSampleRetention';
@@ -889,6 +892,7 @@ api.route('/dns-security', dnsSecurityRoutes);
 api.route('/s1', sentinelOneRoutes);
 api.route('/huntress', huntressRoutes);
 api.route('/pax8', pax8Routes);
+api.route('/unifi', unifiRoutes);
 api.route('/accounting', accountingRoutes);
 api.route('/software-inventory', softwareInventoryRoutes);
 api.route('/sensitive-data', sensitiveDataRoutes);
@@ -1143,6 +1147,8 @@ async function initializeWorkers(): Promise<void> {
     ['networkBaselineWorker', initializeNetworkBaselineWorker],
     ['snmpWorker', initializeSnmpWorker],
     ['monitorWorker', initializeMonitorWorker],
+    ['unifiWorker', initializeUnifiWorker],
+    ['unifiTelemetryWorker', initializeUnifiTelemetryWorker],
     ['snmpRetention', initializeSnmpRetention],
     ['patchComplianceReportWorker', initializePatchComplianceReportWorker],
     ['cveEnrichmentWorker', initializeCveEnrichmentWorker],

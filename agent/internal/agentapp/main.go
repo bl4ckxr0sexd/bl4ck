@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,11 +33,45 @@ import (
 	"github.com/breeze-rmm/agent/internal/secmem"
 	"github.com/breeze-rmm/agent/internal/state"
 	"github.com/breeze-rmm/agent/internal/tcc"
+	"github.com/breeze-rmm/agent/internal/unifi"
 	"github.com/breeze-rmm/agent/internal/userhelper"
 	"github.com/breeze-rmm/agent/internal/websocket"
 	"github.com/breeze-rmm/agent/pkg/api"
 	"github.com/spf13/cobra"
 )
+
+// unifiAuthTransport injects the agent's bearer token into requests to the
+// Breeze API for the UniFi telemetry collector. It reveals the token per-request
+// (preserving secmem semantics) and clones the request rather than mutating the
+// caller's. Redirect-following is disabled on the owning http.Client so the
+// token can never leak to another host (mirrors pkg/api's redirect guard).
+type unifiAuthTransport struct {
+	base  http.RoundTripper
+	token *secmem.SecureString
+}
+
+func (t *unifiAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.token != nil && !t.token.IsZeroed() {
+		r2 := req.Clone(req.Context())
+		r2.Header.Set("Authorization", "Bearer "+t.token.Reveal())
+		return t.base.RoundTrip(r2)
+	}
+	return t.base.RoundTrip(req)
+}
+
+// newUnifiAPIClient builds an http.Client that authenticates to the Breeze API
+// as this agent and refuses redirects (token-leak guard).
+func newUnifiAPIClient(token *secmem.SecureString, tlsCfg *tls.Config) *http.Client {
+	tr := &http.Transport{}
+	if tlsCfg != nil {
+		tr.TLSClientConfig = tlsCfg
+	}
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		Transport:     &unifiAuthTransport{base: tr, token: token},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
 
 var (
 	version          = "0.5.0"
@@ -342,6 +377,13 @@ type agentComponents struct {
 	// supervisorDone closes after the supervisor goroutine has fully
 	// exited. nil when supervisorCancel is nil.
 	supervisorDone <-chan struct{}
+
+	// unifiCancel cancels the UniFi deep-telemetry collector loop. nil when
+	// the collector was not started (no ServerURL/AgentID).
+	unifiCancel context.CancelFunc
+	// unifiDone closes after the collector loop goroutine has fully exited.
+	// nil when unifiCancel is nil.
+	unifiDone <-chan struct{}
 }
 
 // shutdownAgent gracefully stops all agent components.
@@ -366,6 +408,18 @@ func shutdownAgent(comps *agentComponents) {
 		if comps.etwluaDone != nil {
 			runWithTimeout("etwlua stop", 2*time.Second, func() {
 				<-comps.etwluaDone
+			})
+		}
+	}
+
+	// Stop the UniFi collector loop so its in-flight controller/API HTTP work
+	// is cancelled rather than abandoned, and the loop doesn't outlive the
+	// agent's token across an in-process restart.
+	if comps.unifiCancel != nil {
+		comps.unifiCancel()
+		if comps.unifiDone != nil {
+			runWithTimeout("unifi collector stop", 2*time.Second, func() {
+				<-comps.unifiDone
 			})
 		}
 	}
@@ -649,6 +703,31 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 	hb.SetWebSocketClient(wsClient)
 	go wsClient.Start()
 
+	// UniFi Phase 2a: read-only deep-telemetry collector. Polls each assigned
+	// on-site UniFi controller's local Network Integration API and uploads
+	// per-device PoE/health + client telemetry. Runs for the agent process
+	// lifetime and no-ops until the server assigns collectors to this device.
+	var unifiCancel context.CancelFunc
+	var unifiDone <-chan struct{}
+	if cfg.ServerURL != "" && cfg.AgentID != "" {
+		var unifiCtx context.Context
+		// Scope the loop to a cancellable context registered in agentComponents
+		// so shutdownAgent stops it. context.Background() here would never cancel:
+		// on self-update/config-reload the orphaned loop keeps polling with a
+		// zeroed token and spins auth-failure logs (same class as ETW PR #959).
+		unifiCtx, unifiCancel = context.WithCancel(context.Background())
+		unifiDone = unifi.StartCollectorLoop(unifiCtx, unifi.CollectorDeps{
+			APIBaseURL: cfg.ServerURL,
+			AgentID:    cfg.AgentID,
+			HTTP:       newUnifiAPIClient(secureToken, tlsCfg),
+			// Loop failures here are config-fetch / telemetry-upload errors —
+			// operationally significant and, unlike poll errors, never surface
+			// via the ingest worker. Log at Warn so the log shipper (MinLevel
+			// warn) actually delivers them; Debug was invisible in the field.
+			Logf: func(format string, args ...any) { log.Warn(fmt.Sprintf(format, args...)) },
+		})
+	}
+
 	// PAM Track 3: subscribe to Microsoft-Windows-LUA ETW provider for
 	// UAC consent discovery. Windows-only; no-op stub on other platforms
 	// (see etwlua_start_other.go). ctx scoped to the agent process so
@@ -698,6 +777,8 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 		etwluaDone:       etwluaDone,
 		supervisorCancel: supervisorCancel,
 		supervisorDone:   supervisorDone,
+		unifiCancel:      unifiCancel,
+		unifiDone:        unifiDone,
 	}, nil
 }
 
