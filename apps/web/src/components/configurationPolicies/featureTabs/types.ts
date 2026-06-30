@@ -1,4 +1,17 @@
-export type FeatureType = 'patch' | 'alert_rule' | 'backup' | 'security' | 'monitoring' | 'maintenance' | 'compliance' | 'automation' | 'event_log' | 'software_policy' | 'sensitive_data' | 'peripheral_control' | 'warranty' | 'helper' | 'remote_access' | 'pam' | 'vulnerability';
+import type { ConfigFeatureType } from '@breeze/shared';
+
+// Derived from the canonical CONFIG_FEATURE_TYPES (single source of truth in
+// @breeze/shared) so the config-policy editor's feature tabs can't silently
+// drift from the registry. `onedrive_helper` is deliberately excluded: it has
+// no editor tab (the OneDrive Helper is configured elsewhere). Deriving via
+// Exclude means a new canonical feature type makes FEATURE_META below fail to
+// compile until a tab entry is added, and featureTypeParity.test.ts asserts the
+// exclusion stays honest. (#2004)
+//
+// FeatureType is sourced FROM this tuple (not a parallel literal) so the runtime
+// exclusion list and the compile-time Exclude can't drift from each other.
+export const EDITOR_EXCLUDED_FEATURE_TYPES = ['onedrive_helper'] as const;
+export type FeatureType = Exclude<ConfigFeatureType, typeof EDITOR_EXCLUDED_FEATURE_TYPES[number]>;
 
 export type FeatureLink = {
   id: string;
