@@ -1,9 +1,10 @@
 /**
  * AI Catalog Tools
  *
- * Provides read-only AI tools over the partner product catalog:
+ * Provides AI tools over the partner product catalog:
  *  - `search_catalog`   — list/search active catalog items (hardware/software/service/bundle)
  *  - `get_catalog_item` — full detail for one item, plus bundle components if it is a bundle
+ *  - `manage_catalog`   — create/update/archive items, bundle components, and org price overrides
  *
  * The catalog is partner-scoped (RLS shape 3). Every query is filtered by
  * `auth.partnerId`; a context without a partner gets an error string. Listing
@@ -11,10 +12,42 @@
  */
 
 import { and, asc, eq, ilike } from 'drizzle-orm';
+import type {
+  BundleComponentInput,
+  CreateCatalogItemInput,
+  OrgPriceOverrideInput,
+  UpdateCatalogItemInput
+} from '@breeze/shared';
 import { db } from '../db';
 import { catalogItems, catalogBundleComponents } from '../db/schema';
+import type { AuthContext } from '../middleware/auth';
 import type { AiTool, AiToolTier } from './aiTools';
-import { escapeLikePattern } from './catalogService';
+import {
+  archiveCatalogItem,
+  CatalogServiceError,
+  createCatalogItem,
+  escapeLikePattern,
+  removeOrgPriceOverride,
+  setBundleComponents,
+  setOrgPriceOverride,
+  updateCatalogItem,
+  type CatalogActor
+} from './catalogService';
+
+function actorFromAuth(auth: AuthContext): CatalogActor {
+  return {
+    userId: auth.user.id,
+    partnerId: auth.partnerId ?? null,
+    accessibleOrgIds: auth.accessibleOrgIds
+  };
+}
+
+function serviceErrorToJson(err: unknown): string | null {
+  if (err instanceof CatalogServiceError) {
+    return JSON.stringify({ error: err.message, code: err.code });
+  }
+  return null;
+}
 
 export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
   aiTools.set('search_catalog', {
@@ -124,5 +157,85 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
         );
       return JSON.stringify({ item, components });
     }
+  });
+
+  aiTools.set('manage_catalog', {
+    tier: 2 as AiToolTier,
+    deviceArgs: [],
+    definition: {
+      name: 'manage_catalog',
+      description:
+        'Create and manage partner catalog items, organization price overrides, and bundle components.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          action: {
+            type: 'string',
+            enum: [
+              'create_item',
+              'update_item',
+              'archive_item',
+              'set_org_price',
+              'remove_org_price',
+              'set_bundle_components',
+            ],
+          },
+          catalogId: { type: 'string', description: 'Catalog item UUID' },
+          orgId: { type: 'string', description: 'Organization UUID for org-specific pricing' },
+          item: { type: 'object', description: 'Catalog item create input or update patch' },
+          override: { type: 'object', description: 'Organization price override fields' },
+          components: {
+            type: 'array',
+            description: 'Bundle component rows for set_bundle_components',
+            items: { type: 'object' as const },
+          },
+        },
+        required: ['action'],
+      },
+    },
+    handler: async (input, auth) => {
+      const actor = actorFromAuth(auth);
+      const s = (k: string) => (input[k] == null ? undefined : String(input[k]));
+
+      try {
+        switch (input.action) {
+          case 'create_item':
+            return JSON.stringify(await createCatalogItem(input.item as CreateCatalogItemInput, actor));
+          case 'update_item':
+            return JSON.stringify(await updateCatalogItem(
+              String(input.catalogId),
+              input.item as UpdateCatalogItemInput,
+              actor
+            ));
+          case 'archive_item':
+            return JSON.stringify(await archiveCatalogItem(String(input.catalogId), actor));
+          case 'set_org_price':
+            return JSON.stringify(await setOrgPriceOverride(
+              String(input.catalogId),
+              String(input.orgId),
+              input.override as OrgPriceOverrideInput,
+              actor
+            ));
+          case 'remove_org_price':
+            return JSON.stringify(await removeOrgPriceOverride(
+              String(input.catalogId),
+              String(input.orgId),
+              actor
+            ));
+          case 'set_bundle_components':
+            return JSON.stringify(await setBundleComponents(
+              String(input.catalogId),
+              (input.components ?? []) as BundleComponentInput[],
+              actor
+            ));
+          default:
+            return JSON.stringify({ error: `Unknown action: ${s('action')}` });
+        }
+      } catch (err) {
+        const json = serviceErrorToJson(err);
+        if (json) return json;
+        throw err;
+      }
+    },
   });
 }

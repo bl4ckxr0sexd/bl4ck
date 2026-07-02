@@ -8,7 +8,7 @@
 
 import { and, desc, eq, type SQL } from 'drizzle-orm';
 import { db } from '../db';
-import { tickets } from '../db/schema';
+import { alerts, tickets } from '../db/schema';
 import type { AuthContext } from '../middleware/auth';
 import { deviceInSiteScope, ticketSiteScopeCondition } from '../routes/tickets/siteScope';
 import type { AiTool, AiToolTier } from './aiTools';
@@ -17,7 +17,17 @@ import {
   changeTicketStatus,
   assignTicket,
   addTicketComment,
-  type TicketStatus
+  TicketServiceError,
+  updateTicketFields,
+  linkAlertToTicket,
+  unlinkAlertFromTicket,
+  createTicketFromAlert,
+  editTicketComment,
+  deleteTicketComment,
+  moveTicketOrg,
+  type CreateTicketInput,
+  type TicketStatus,
+  type UpdateTicketFieldsInput
 } from './ticketService';
 import {
   createTimeEntry,
@@ -26,9 +36,19 @@ import {
   TimeEntryServiceError
 } from './timeEntryService';
 import { findStatusByName, listActiveStatusNames } from './ticketConfigService';
+import { getUserPermissions, hasPermission, PERMISSIONS } from './permissions';
+
+type ParseResult<T> = { value: T } | { error: string };
 
 function actorFrom(auth: AuthContext) {
   return { userId: auth.user.id, name: auth.user.name };
+}
+
+function serviceErrorToJson(err: unknown): string | null {
+  if (err instanceof TicketServiceError) {
+    return JSON.stringify({ error: err.message, code: err.code });
+  }
+  return null;
 }
 
 function timeEntryActorFrom(auth: AuthContext) {
@@ -69,6 +89,145 @@ async function findTicketWithAccess(ticketId: string, auth: AuthContext) {
   return ticket;
 }
 
+async function findAlertWithAccess(alertId: string, auth: AuthContext) {
+  const conditions: SQL[] = [eq(alerts.id, alertId)];
+  const orgCond = auth.orgCondition(alerts.orgId);
+  if (orgCond) conditions.push(orgCond);
+  const [alert] = await db.select().from(alerts).where(and(...conditions)).limit(1);
+  if (!alert) return null;
+  if (alert.deviceId && !(await deviceInSiteScope(auth, alert.deviceId))) {
+    return null;
+  }
+  return alert;
+}
+
+async function canManageAnyTicketComment(auth: AuthContext): Promise<boolean> {
+  const userPerms = await getUserPermissions(auth.user.id, {
+    partnerId: auth.partnerId || undefined,
+    orgId: auth.orgId || undefined,
+  });
+  if (!userPerms) return false;
+  return hasPermission(userPerms, PERMISSIONS.TICKETS_MANAGE.resource, PERMISSIONS.TICKETS_MANAGE.action);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function stringField(record: Record<string, unknown>, key: string, label: string): ParseResult<string | undefined> {
+  if (!hasOwn(record, key)) return { value: undefined };
+  const value = record[key];
+  if (typeof value === 'string') return { value };
+  return { error: `${label} must be a string` };
+}
+
+function stringOrNullField(record: Record<string, unknown>, key: string, label: string): ParseResult<string | null | undefined> {
+  if (!hasOwn(record, key)) return { value: undefined };
+  const value = record[key];
+  if (value === null) return { value: null };
+  if (typeof value === 'string') return { value };
+  return { error: `${label} must be a string or null` };
+}
+
+function numberOrNullField(record: Record<string, unknown>, key: string, label: string): ParseResult<number | null | undefined> {
+  if (!hasOwn(record, key)) return { value: undefined };
+  const value = record[key];
+  if (value === null) return { value: null };
+  if (typeof value === 'number' && Number.isFinite(value)) return { value };
+  return { error: `${label} must be a number or null` };
+}
+
+function priorityField(record: Record<string, unknown>, label: string): ParseResult<UpdateTicketFieldsInput['priority'] | undefined> {
+  if (!hasOwn(record, 'priority')) return { value: undefined };
+  const value = record.priority;
+  if (value === 'low' || value === 'normal' || value === 'high' || value === 'urgent') {
+    return { value };
+  }
+  return { error: `${label} must be one of low, normal, high, urgent` };
+}
+
+function dueDateField(record: Record<string, unknown>, label: string): ParseResult<Date | null | undefined> {
+  if (!hasOwn(record, 'dueDate')) return { value: undefined };
+  const value = record.dueDate;
+  if (value === null) return { value: null };
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return { value };
+  if (typeof value === 'string') {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return { value: date };
+  }
+  return { error: `${label} must be an ISO datetime string or null` };
+}
+
+function parseUpdateFields(value: unknown): ParseResult<UpdateTicketFieldsInput> {
+  if (!isRecord(value)) return { error: 'fields object is required for update_fields action' };
+  const fields: UpdateTicketFieldsInput = {};
+
+  for (const key of ['subject', 'description'] as const) {
+    const parsed = stringField(value, key, `fields.${key}`);
+    if ('error' in parsed) return { error: parsed.error };
+    if (parsed.value !== undefined) fields[key] = parsed.value;
+  }
+
+  for (const key of ['categoryId', 'deviceId', 'submittedBy', 'submitterName', 'submitterEmail'] as const) {
+    const parsed = stringOrNullField(value, key, `fields.${key}`);
+    if ('error' in parsed) return { error: parsed.error };
+    if (parsed.value !== undefined) fields[key] = parsed.value;
+  }
+
+  const priority = priorityField(value, 'fields.priority');
+  if ('error' in priority) return { error: priority.error };
+  if (priority.value !== undefined) fields.priority = priority.value;
+
+  const dueDate = dueDateField(value, 'fields.dueDate');
+  if ('error' in dueDate) return { error: dueDate.error };
+  if (dueDate.value !== undefined) fields.dueDate = dueDate.value;
+
+  const responseSlaMinutes = numberOrNullField(value, 'responseSlaMinutes', 'fields.responseSlaMinutes');
+  if ('error' in responseSlaMinutes) return { error: responseSlaMinutes.error };
+  if (responseSlaMinutes.value !== undefined) fields.responseSlaMinutes = responseSlaMinutes.value;
+
+  const resolutionSlaMinutes = numberOrNullField(value, 'resolutionSlaMinutes', 'fields.resolutionSlaMinutes');
+  if ('error' in resolutionSlaMinutes) return { error: resolutionSlaMinutes.error };
+  if (resolutionSlaMinutes.value !== undefined) fields.resolutionSlaMinutes = resolutionSlaMinutes.value;
+
+  if (hasOwn(value, 'tags')) {
+    if (!Array.isArray(value.tags) || !value.tags.every((tag): tag is string => typeof tag === 'string')) {
+      return { error: 'fields.tags must be an array of strings' };
+    }
+    fields.tags = value.tags;
+  }
+
+  if (Object.keys(fields).length === 0) return { error: 'At least one update field is required' };
+  return { value: fields };
+}
+
+function parseAlertOverrides(value: unknown): ParseResult<Partial<Pick<CreateTicketInput, 'subject' | 'description' | 'categoryId' | 'priority' | 'assigneeId'>>> {
+  if (value === undefined) return { value: {} };
+  if (!isRecord(value)) return { error: 'overrides must be an object' };
+
+  const overrides: Partial<Pick<CreateTicketInput, 'subject' | 'description' | 'categoryId' | 'priority' | 'assigneeId'>> = {};
+  const subject = stringField(value, 'subject', 'overrides.subject');
+  if ('error' in subject) return { error: subject.error };
+  if (subject.value !== undefined) overrides.subject = subject.value;
+  const description = stringField(value, 'description', 'overrides.description');
+  if ('error' in description) return { error: description.error };
+  if (description.value !== undefined) overrides.description = description.value;
+  const categoryId = stringField(value, 'categoryId', 'overrides.categoryId');
+  if ('error' in categoryId) return { error: categoryId.error };
+  if (categoryId.value !== undefined) overrides.categoryId = categoryId.value;
+  const assigneeId = stringField(value, 'assigneeId', 'overrides.assigneeId');
+  if ('error' in assigneeId) return { error: assigneeId.error };
+  if (assigneeId.value !== undefined) overrides.assigneeId = assigneeId.value;
+  const priority = priorityField(value, 'overrides.priority');
+  if ('error' in priority) return { error: priority.error };
+  if (priority.value !== undefined) overrides.priority = priority.value;
+  return { value: overrides };
+}
+
 export function registerTicketingTools(aiTools: Map<string, AiTool>): void {
   aiTools.set('manage_tickets', {
     tier: 1 as AiToolTier,
@@ -76,7 +235,7 @@ export function registerTicketingTools(aiTools: Map<string, AiTool>): void {
     definition: {
       name: 'manage_tickets',
       description:
-        'Search, view, create, comment on, assign, change the status of, and log time against support tickets. ' +
+        'Search, view, create, comment on, assign, update fields, change status, link/unlink alerts, create from alerts, edit/delete comments, move tickets between orgs with approval, and log time against support tickets. ' +
         'Use action "list" to search, "get" for full detail, "create" to open a new ticket, ' +
         '"comment" to add a reply or internal note, "assign" to set the assignee, ' +
         '"update_status" to move the lifecycle (resolving requires resolutionNote), ' +
@@ -88,12 +247,37 @@ export function registerTicketingTools(aiTools: Map<string, AiTool>): void {
         properties: {
           action: {
             type: 'string',
-            enum: ['list', 'get', 'create', 'comment', 'assign', 'update_status', 'log_time_entry', 'start_timer', 'stop_timer'],
+            enum: [
+              'list',
+              'get',
+              'create',
+              'comment',
+              'assign',
+              'update_status',
+              'log_time_entry',
+              'start_timer',
+              'stop_timer',
+              'update_fields',
+              'link_alert',
+              'unlink_alert',
+              'create_from_alert',
+              'edit_comment',
+              'delete_comment',
+              'move_org'
+            ],
             description: 'The action to perform'
           },
           ticketId: {
             type: 'string',
-            description: 'Ticket UUID (required for get/comment/assign/update_status)'
+            description: 'Ticket UUID (required for get/comment/assign/update_status/update_fields/link_alert/unlink_alert/move_org)'
+          },
+          alertId: {
+            type: 'string',
+            description: 'Alert UUID (required for link_alert/unlink_alert/create_from_alert)'
+          },
+          commentId: {
+            type: 'string',
+            description: 'Comment UUID (required for edit_comment/delete_comment)'
           },
           orgId: {
             type: 'string',
@@ -122,7 +306,23 @@ export function registerTicketingTools(aiTools: Map<string, AiTool>): void {
             type: 'string',
             description: 'Required when resolving a ticket'
           },
-          content: { type: 'string', description: 'Comment body (comment)' },
+          content: { type: 'string', description: 'Comment body (comment/edit_comment)' },
+          expectedTicketId: {
+            type: 'string',
+            description: 'Parent ticket UUID for edit_comment/delete_comment scope verification'
+          },
+          targetOrgId: {
+            type: 'string',
+            description: 'Target organization UUID for move_org'
+          },
+          fields: {
+            type: 'object',
+            description: 'Field patch for update_fields'
+          },
+          overrides: {
+            type: 'object',
+            description: 'Optional create_from_alert ticket overrides (subject, description, categoryId, priority, assigneeId)'
+          },
           isPublic: {
             type: 'boolean',
             description: 'Comment visibility — false = internal note (default true)'
@@ -322,6 +522,141 @@ export function registerTicketingTools(aiTools: Map<string, AiTool>): void {
           actor
         );
         return JSON.stringify({ ticket });
+      }
+
+      // ── update_fields ────────────────────────────────────────────────────
+      if (action === 'update_fields') {
+        if (!input.ticketId) return JSON.stringify({ error: 'ticketId is required for update_fields action' });
+        const parsedFields = parseUpdateFields(input.fields);
+        if ('error' in parsedFields) return JSON.stringify({ error: parsedFields.error });
+        // Scoped pre-check: ensure ticket is visible before the service mutates by id.
+        const found = await findTicketWithAccess(String(input.ticketId), auth);
+        if (!found) return JSON.stringify({ error: 'Ticket not found' });
+        if (typeof parsedFields.value.deviceId === 'string' && !(await deviceInSiteScope(auth, parsedFields.value.deviceId))) {
+          return JSON.stringify({ error: 'Device not found or access denied' });
+        }
+        try {
+          const ticket = await updateTicketFields(String(input.ticketId), parsedFields.value, actor);
+          return JSON.stringify({ ticket });
+        } catch (err) {
+          const json = serviceErrorToJson(err);
+          if (json) return json;
+          throw err;
+        }
+      }
+
+      // ── link_alert ────────────────────────────────────────────────────────
+      if (action === 'link_alert') {
+        if (!input.ticketId) return JSON.stringify({ error: 'ticketId is required for link_alert action' });
+        if (!input.alertId) return JSON.stringify({ error: 'alertId is required for link_alert action' });
+        const found = await findTicketWithAccess(String(input.ticketId), auth);
+        if (!found) return JSON.stringify({ error: 'Ticket not found' });
+        const alert = await findAlertWithAccess(String(input.alertId), auth);
+        if (!alert) return JSON.stringify({ error: 'Alert not found' });
+        try {
+          const link = await linkAlertToTicket(String(input.ticketId), String(input.alertId), actor);
+          return JSON.stringify({ link });
+        } catch (err) {
+          const json = serviceErrorToJson(err);
+          if (json) return json;
+          throw err;
+        }
+      }
+
+      // ── unlink_alert ──────────────────────────────────────────────────────
+      if (action === 'unlink_alert') {
+        if (!input.ticketId) return JSON.stringify({ error: 'ticketId is required for unlink_alert action' });
+        if (!input.alertId) return JSON.stringify({ error: 'alertId is required for unlink_alert action' });
+        const found = await findTicketWithAccess(String(input.ticketId), auth);
+        if (!found) return JSON.stringify({ error: 'Ticket not found' });
+        try {
+          const result = await unlinkAlertFromTicket(String(input.ticketId), String(input.alertId), actor);
+          return JSON.stringify({ unlinked: result });
+        } catch (err) {
+          const json = serviceErrorToJson(err);
+          if (json) return json;
+          throw err;
+        }
+      }
+
+      // ── create_from_alert ─────────────────────────────────────────────────
+      if (action === 'create_from_alert') {
+        if (!input.alertId) return JSON.stringify({ error: 'alertId is required for create_from_alert action' });
+        const alert = await findAlertWithAccess(String(input.alertId), auth);
+        if (!alert) return JSON.stringify({ error: 'Alert not found' });
+        const parsedOverrides = parseAlertOverrides(input.overrides);
+        if ('error' in parsedOverrides) return JSON.stringify({ error: parsedOverrides.error });
+        try {
+          const ticket = await createTicketFromAlert(String(input.alertId), actor, parsedOverrides.value);
+          return JSON.stringify({ ticket });
+        } catch (err) {
+          const json = serviceErrorToJson(err);
+          if (json) return json;
+          throw err;
+        }
+      }
+
+      // ── edit_comment ──────────────────────────────────────────────────────
+      if (action === 'edit_comment') {
+        if (!input.commentId) return JSON.stringify({ error: 'commentId is required for edit_comment action' });
+        if (!input.expectedTicketId) return JSON.stringify({ error: 'expectedTicketId is required for edit_comment action' });
+        if (!input.content) return JSON.stringify({ error: 'content is required for edit_comment action' });
+        const found = await findTicketWithAccess(String(input.expectedTicketId), auth);
+        if (!found) return JSON.stringify({ error: 'Ticket not found' });
+        const canManageAny = await canManageAnyTicketComment(auth);
+        try {
+          const comment = await editTicketComment(
+            String(input.commentId),
+            { content: String(input.content) },
+            actor,
+            { canManageAny, expectedTicketId: String(input.expectedTicketId) }
+          );
+          return JSON.stringify({ comment });
+        } catch (err) {
+          const json = serviceErrorToJson(err);
+          if (json) return json;
+          throw err;
+        }
+      }
+
+      // ── delete_comment ────────────────────────────────────────────────────
+      if (action === 'delete_comment') {
+        if (!input.commentId) return JSON.stringify({ error: 'commentId is required for delete_comment action' });
+        if (!input.expectedTicketId) return JSON.stringify({ error: 'expectedTicketId is required for delete_comment action' });
+        const found = await findTicketWithAccess(String(input.expectedTicketId), auth);
+        if (!found) return JSON.stringify({ error: 'Ticket not found' });
+        const canManageAny = await canManageAnyTicketComment(auth);
+        try {
+          const deleted = await deleteTicketComment(
+            String(input.commentId),
+            actor,
+            { canManageAny, expectedTicketId: String(input.expectedTicketId) }
+          );
+          return JSON.stringify({ deleted });
+        } catch (err) {
+          const json = serviceErrorToJson(err);
+          if (json) return json;
+          throw err;
+        }
+      }
+
+      // ── move_org ──────────────────────────────────────────────────────────
+      if (action === 'move_org') {
+        if (!input.ticketId) return JSON.stringify({ error: 'ticketId is required for move_org action' });
+        if (!input.targetOrgId) return JSON.stringify({ error: 'targetOrgId is required for move_org action' });
+        const found = await findTicketWithAccess(String(input.ticketId), auth);
+        if (!found) return JSON.stringify({ error: 'Ticket not found' });
+        if (!auth.canAccessOrg(String(input.targetOrgId))) {
+          return JSON.stringify({ error: 'Access to target organization denied' });
+        }
+        try {
+          const ticket = await moveTicketOrg(String(input.ticketId), String(input.targetOrgId), actor);
+          return JSON.stringify({ ticket });
+        } catch (err) {
+          const json = serviceErrorToJson(err);
+          if (json) return json;
+          throw err;
+        }
       }
 
       // ── log_time_entry ────────────────────────────────────────────────────

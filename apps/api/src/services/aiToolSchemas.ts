@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { isIP } from 'node:net';
+import { INVOICE_STATUSES } from '@breeze/shared';
 import { fleetToolInputSchemas } from './aiToolSchemasFleet';
 import { backupToolSchemas } from './aiToolSchemasBackup';
 import {
@@ -182,8 +183,29 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
   }),
 
   manage_tickets: z.object({
-    action: z.enum(['list', 'get', 'create', 'comment', 'assign', 'update_status', 'log_time_entry', 'start_timer', 'stop_timer']),
+    action: z.enum([
+      'list',
+      'get',
+      'create',
+      'comment',
+      'assign',
+      'update_status',
+      'log_time_entry',
+      'start_timer',
+      'stop_timer',
+      'update_fields',
+      'link_alert',
+      'unlink_alert',
+      'create_from_alert',
+      'edit_comment',
+      'delete_comment',
+      'move_org',
+    ]),
     ticketId: uuid.optional(),
+    alertId: uuid.optional(),
+    commentId: uuid.optional(),
+    expectedTicketId: uuid.optional(),
+    targetOrgId: uuid.optional(),
     orgId: uuid.optional(),
     deviceId: uuid.optional(),
     assigneeId: uuid.optional(),
@@ -201,6 +223,154 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
     endedAt: z.string().datetime().optional(),
     isBillable: z.boolean().optional(),
     hourlyRate: z.number().nonnegative().optional(),
+    fields: z.object({
+      subject: z.string().min(1).max(255).optional(),
+      description: z.string().max(50_000).optional(),
+      categoryId: uuid.nullable().optional(),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+      dueDate: z.string().datetime().nullable().optional(),
+      responseSlaMinutes: z.number().int().nonnegative().nullable().optional(),
+      resolutionSlaMinutes: z.number().int().nonnegative().nullable().optional(),
+      deviceId: uuid.nullable().optional(),
+      tags: z.array(z.string().min(1).max(100)).max(50).optional(),
+      submittedBy: uuid.nullable().optional(),
+      submitterName: z.string().max(255).nullable().optional(),
+      submitterEmail: z.string().email().max(255).nullable().optional(),
+    }).optional(),
+    overrides: z.object({
+      subject: z.string().min(1).max(255).optional(),
+      description: z.string().max(50_000).optional(),
+      categoryId: uuid.optional(),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+      assigneeId: uuid.optional(),
+    }).optional(),
+  }),
+
+  list_invoices: z.object({
+    orgId: uuid.optional(),
+    status: z.enum(INVOICE_STATUSES).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
+
+  get_invoice: z.object({
+    invoiceId: uuid,
+  }),
+
+  manage_invoices: z.object({
+    action: z.enum([
+      'create_draft', 'add_manual_line', 'add_catalog_line', 'add_bundle_line', 'add_contract_line',
+      'update_line', 'remove_line', 'update_header', 'delete_draft',
+      'assemble_from_org', 'assemble_from_ticket',
+      'issue', 'void', 'record_payment', 'void_payment', 'create_pay_link',
+    ]),
+    orgId: uuid.optional(),
+    siteId: uuid.optional(),
+    invoiceId: uuid.optional(),
+    lineId: uuid.optional(),
+    paymentId: uuid.optional(),
+    catalogItemId: uuid.optional(),
+    bundleId: uuid.optional(),
+    contractId: uuid.optional(),
+    contractLineId: uuid.optional(),
+    ticketId: uuid.optional(),
+    quantity: z.number().optional(),
+    notes: z.string().optional(),
+    termsAndConditions: z.string().optional(),
+    reason: z.string().optional(),
+    reissue: z.boolean().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    line: z.record(z.string(), z.unknown()).optional(),
+    patch: z.record(z.string(), z.unknown()).optional(),
+    payment: z.record(z.string(), z.unknown()).optional(),
+  }),
+
+  manage_quotes: z.object({
+    action: z.enum([
+      'create_draft',
+      'update',
+      'delete_draft',
+      'add_block',
+      'update_block',
+      'delete_block',
+      'reorder_blocks',
+      'add_manual_line',
+      'add_catalog_line',
+      'update_line',
+      'remove_line',
+      'reorder_lines',
+      'send',
+      'decline',
+      'create_pay_link',
+    ]),
+    quoteId: uuid.optional(),
+    blockId: uuid.optional(),
+    lineId: uuid.optional(),
+    catalogItemId: uuid.optional(),
+    quantity: z.number().optional(),
+    partNumber: z.string().optional(),
+    reason: z.string().optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+    block: z.record(z.string(), z.unknown()).optional(),
+    line: z.record(z.string(), z.unknown()).optional(),
+    patch: z.record(z.string(), z.unknown()).optional(),
+    blockIds: z.array(uuid).optional(),
+    lineIds: z.array(uuid).optional(),
+  }),
+
+  search_catalog: z.object({
+    search: z.string().optional(),
+    itemType: z.enum(['hardware', 'software', 'service']).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
+
+  get_catalog_item: z.object({
+    catalogItemId: uuid,
+  }),
+
+  manage_catalog: z.object({
+    action: z.enum([
+      'create_item',
+      'update_item',
+      'archive_item',
+      'set_org_price',
+      'remove_org_price',
+      'set_bundle_components',
+    ]),
+    catalogId: uuid.optional(),
+    orgId: uuid.optional(),
+    item: z.record(z.string(), z.unknown()).optional(),
+    override: z.record(z.string(), z.unknown()).optional(),
+    components: z.array(z.record(z.string(), z.unknown())).optional(),
+  }),
+
+  list_contracts: z.object({
+    orgId: uuid.optional(),
+    status: z.enum(['draft', 'active', 'paused', 'cancelled', 'expired']).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
+
+  get_contract: z.object({
+    contractId: uuid,
+  }),
+
+  manage_contracts: z.object({
+    action: z.enum([
+      'create_draft',
+      'update',
+      'delete_draft',
+      'add_line',
+      'remove_line',
+      'activate',
+      'pause',
+      'resume',
+      'cancel',
+    ]),
+    contractId: uuid.optional(),
+    lineId: uuid.optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+    line: z.record(z.string(), z.unknown()).optional(),
+    patch: z.record(z.string(), z.unknown()).optional(),
   }),
 
   manage_alerts: z.object({
