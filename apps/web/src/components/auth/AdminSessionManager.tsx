@@ -73,17 +73,31 @@ export default function AdminSessionManager() {
 
     const loadOrgSessionTimeout = async () => {
       try {
-        const response = await fetchWithAuth(`/orgs/organizations/${currentOrgId}`);
+        // Use effective settings so a partner-level `security.sessionTimeout`
+        // default is honored by the idle-logout runtime, matching what the
+        // settings UI shows as effective/locked. Reading the raw org record
+        // missed partner defaults the org hadn't overridden locally (#2147).
+        const response = await fetchWithAuth(
+          `/orgs/organizations/${currentOrgId}/effective-settings`
+        );
         if (!response.ok) {
+          // Surface the failure: this is the path that enforces a possibly
+          // partner-locked idle timeout, so a silent fall-back to the frontend
+          // default must at least be diagnosable (matches OrgSettingsPage).
+          console.warn(
+            '[AdminSessionManager] Failed to load effective session timeout:',
+            response.status
+          );
           return;
         }
         const data = await response.json();
-        const configuredMinutes = Number(data?.settings?.security?.sessionTimeout);
+        const configuredMinutes = Number(data?.effective?.security?.sessionTimeout);
         if (!cancelled && Number.isFinite(configuredMinutes) && configuredMinutes > 0) {
           setIdleTimeoutMs(Math.max(1, configuredMinutes) * 60 * 1000);
         }
-      } catch {
-        // Keep current timeout fallback when org settings cannot be loaded.
+      } catch (err) {
+        // Keep current timeout fallback when effective settings cannot be loaded.
+        console.warn('[AdminSessionManager] Error loading effective session timeout:', err);
       }
     };
 
