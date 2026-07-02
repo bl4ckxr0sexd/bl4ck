@@ -70,6 +70,15 @@ export default function RemoteTerminal({
   const disconnectFiredRef = useRef(false);
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
+  // Tracks whether the one-shot auto-connect has already fired. This gates the
+  // auto-connect effect so it runs exactly once, on initial mount: without it,
+  // the disconnected+no-session state produced by a manual Disconnect (or a
+  // clean server-side session end) re-satisfies the effect's condition and it
+  // silently reconnects — defeating the Disconnect button (issue #2137). After
+  // the first attempt, reconnecting requires an explicit user action (the
+  // Reconnect / Retry button). It is state (not a ref) so the same flag also
+  // reactively drives the Reconnect button's visibility.
+  const [autoConnectAttempted, setAutoConnectAttempted] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId || null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [connectionTime, setConnectionTime] = useState<Date | null>(null);
@@ -351,6 +360,12 @@ export default function RemoteTerminal({
     }
 
     setStatus('disconnected');
+    // Clear the session id synchronously here rather than relying on the async
+    // ws.onclose handler: disconnect() flips status to 'disconnected'
+    // immediately (revealing the Reconnect button), so if the user clicks
+    // Reconnect before onclose flushes, connect() would otherwise reuse the
+    // just-ended sessionId and mint a ws-ticket for a dead session.
+    setSessionId(null);
     setConnectionTime(null);
     if (!disconnectFiredRef.current) {
       disconnectFiredRef.current = true;
@@ -394,16 +409,22 @@ export default function RemoteTerminal({
     };
   }, [initTerminal]);
 
-  // Auto-connect after terminal is initialized
+  // Auto-connect exactly once, on initial mount. The attempt flag is only set
+  // when the timer actually fires (not when scheduled), so an effect re-run
+  // caused by a changing `connect` identity during the delay reschedules
+  // rather than dropping the initial connection. After this first attempt the
+  // terminal never auto-reconnects — a manual Disconnect or a clean session
+  // end leaves it disconnected until the user explicitly reconnects (#2137).
   useEffect(() => {
-    if (terminalReady && status === 'disconnected' && !sessionId) {
+    if (terminalReady && status === 'disconnected' && !sessionId && !autoConnectAttempted) {
       // Small delay to ensure terminal is ready
       const timer = setTimeout(() => {
+        setAutoConnectAttempted(true);
         connect();
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [terminalReady, status, sessionId, connect]);
+  }, [terminalReady, status, sessionId, autoConnectAttempted, connect]);
 
   // Format connection duration
   const getConnectionDuration = () => {
@@ -513,6 +534,20 @@ export default function RemoteTerminal({
             >
               <RefreshCw className="h-4 w-4" />
               Retry
+            </button>
+          ) : status === 'disconnected' && autoConnectAttempted ? (
+            // Shown only after the initial auto-connect has run, i.e. the user
+            // has landed on a real disconnected state (manual Disconnect or a
+            // clean session end) rather than the brief pre-connect window on
+            // mount. Gives an explicit reconnect affordance now that we no
+            // longer auto-reconnect (#2137).
+            <button
+              type="button"
+              onClick={connect}
+              className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Reconnect
             </button>
           ) : null}
         </div>
