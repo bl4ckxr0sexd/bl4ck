@@ -199,6 +199,18 @@ describe('manage_tickets tool', () => {
     expect(parsed.error).toMatch(/not found/i);
   });
 
+  it('get always applies the soft-delete filter (excludes deleted tickets)', async () => {
+    // Phase 6: findTicketWithAccess must gate on isNull(tickets.deletedAt) so a
+    // soft-deleted ticket resolves as not-found even when its id is guessed.
+    // Regression guard: dropping that predicate would remove the "is null" clause
+    // from the WHERE the scoped by-id select hands to .where().
+    mockLimit.mockResolvedValue(TICKET_ROW);
+    await getTool().handler({ action: 'get', ticketId: 't-1' }, auth);
+    const whereArg = mockWhere.mock.calls.at(-1)?.[0];
+    expect(whereArg).toBeDefined();
+    expect(JSON.stringify(whereArg)).toContain('is null');
+  });
+
   // ── comment ───────────────────────────────────────────────────────────────
 
   it('comment delegates to addTicketComment when ticket is in scope', async () => {
@@ -443,11 +455,16 @@ describe('manage_tickets list — site-axis scoping', () => {
     expect(JSON.stringify(whereArg)).toContain('is null');
   });
 
-  it("leaves an unrestricted caller's list unchanged (no site condition)", async () => {
+  it("adds no site condition for an unrestricted caller (only the soft-delete filter)", async () => {
     const out = await getTool().handler({ action: 'list' }, auth);
     expect(JSON.parse(out)).toHaveProperty('tickets');
+    // One select (no devices subquery) → no site-axis condition was applied.
     expect(mockSelect).toHaveBeenCalledTimes(1);
-    expect(mockWhere.mock.calls.at(-1)?.[0]).toBeUndefined();
+    // The list still always excludes soft-deleted tickets (Phase 6), so where()
+    // now carries the deleted_at IS NULL filter instead of being undefined.
+    const whereArg = mockWhere.mock.calls.at(-1)?.[0];
+    expect(whereArg).toBeDefined();
+    expect(JSON.stringify(whereArg)).toContain('is null');
   });
 });
 
