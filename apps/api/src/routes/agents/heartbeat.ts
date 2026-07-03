@@ -550,8 +550,13 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
   // all auto-upgrades; `auto`/`staged` honour the maintenance window when set.
   // Bootstrap installs (a component not yet present) are intentionally NOT
   // gated below — a device must be able to finish installing regardless.
-  // Fails open: if the lookup throws we behave as before (upgrades allowed).
-  let updateGateAllows = true;
+  // Fails CLOSED (#2125): the agent update policy is a control-plane safety
+  // setting, so if the lookup throws we cannot prove auto-upgrades are allowed
+  // and must withhold version-to-version targets rather than bypass Manual mode
+  // or a maintenance window. The gate therefore starts denied and is only
+  // opened by a successful policy evaluation. Missing-component bootstrap stays
+  // allowed via its own explicit branches below, which never read this gate.
+  let updateGateAllows = false;
   try {
     const updateSettings = await getOrgAgentUpdatePolicy(device.orgId);
     const gate = shouldSendAgentUpgrade(updateSettings, new Date());
@@ -562,7 +567,17 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
       );
     }
   } catch (err) {
-    console.error(`[agents] failed to resolve agent update policy for ${agentId}:`, err);
+    // Fail-closed enlarges the blast radius of a persistent lookup failure: it
+    // would silently withhold every version-to-version upgrade for the org's
+    // fleet, invisible to the agent (indistinguishable from "already latest").
+    // Route to Sentry like every other genuine-failure catch in this file so
+    // that freeze is loudly observable, not just a per-heartbeat stdout line.
+    console.error(
+      `[agents] failed to resolve agent update policy for ${agentId}; ` +
+        `withholding version-to-version auto-upgrades (fail closed):`,
+      err,
+    );
+    captureException(err);
   }
 
   let upgradeTo: string | null = null;
