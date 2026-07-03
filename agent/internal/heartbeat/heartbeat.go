@@ -139,6 +139,7 @@ type Heartbeat struct {
 	hardwareCol           *collectors.HardwareCollector
 	softwareCol           *collectors.SoftwareCollector
 	inventoryCol          *collectors.InventoryCollector
+	vpnCol                *collectors.VPNCollector
 	changeTrackerCol      *collectors.ChangeTrackerCollector
 	sessionCol            *collectors.SessionCollector
 	policyStateCol        *collectors.PolicyStateCollector
@@ -387,6 +388,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		hardwareCol:  collectors.NewHardwareCollector(),
 		softwareCol:  collectors.NewSoftwareCollector(),
 		inventoryCol: collectors.NewInventoryCollector(),
+		vpnCol:       collectors.NewVPNCollector(),
 		changeTrackerCol: collectors.NewChangeTrackerCollector(
 			filepath.Join(config.GetDataDir(), "change_tracker_snapshot.json"),
 		),
@@ -1407,7 +1409,32 @@ func (h *Heartbeat) sendNetworkInventory() {
 		return
 	}
 
-	h.sendInventoryData("network", map[string]any{"adapters": adapters}, fmt.Sprintf("network (%d adapters)", len(adapters)))
+	// Active-VPN-client presence (#2139) rides along with the network payload
+	// on the same cached-inventory cadence. Non-fatal: if VPN detection fails
+	// we still ship the adapter list. Crucially we OMIT the `vpns` key on
+	// failure rather than sending `[]` — an empty array means "collected, no
+	// active VPN", and the API only overwrites the stored snapshot when the key
+	// is present, so a transient failure preserves last-known state instead of
+	// clobbering a live tunnel to "no VPN".
+	payload := map[string]any{"adapters": adapters}
+	vpnLabel := "vpns skipped"
+	if h.vpnCol != nil {
+		if detected, vErr := h.vpnCol.Collect(); vErr != nil {
+			log.Warn("failed to collect VPN presence", "error", vErr.Error())
+		} else {
+			if detected == nil {
+				detected = []collectors.VpnPresence{}
+			}
+			payload["vpns"] = detected
+			vpnLabel = fmt.Sprintf("%d vpns", len(detected))
+		}
+	}
+
+	h.sendInventoryData(
+		"network",
+		payload,
+		fmt.Sprintf("network (%d adapters, %s)", len(adapters), vpnLabel),
+	)
 }
 
 func (h *Heartbeat) sendConfigurationChanges() {

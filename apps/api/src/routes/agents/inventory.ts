@@ -188,13 +188,34 @@ inventoryRoutes.put('/:id/network', bodyLimit({ maxSize: 5 * 1024 * 1024, onErro
     return c.json({ error: 'Device not found' }, 404);
   }
 
+  const now = new Date();
+
+  // Active-VPN-client presence snapshot (#2139). Only present when the agent
+  // successfully collected VPN state — a failed collection OMITS the key (see
+  // sendNetworkInventory) so we DON'T overwrite the stored snapshot and clobber
+  // a live tunnel to "no VPN". We stamp reportedAt server-side per entry.
+  // Semantics of the stored column: null = never successfully reported (old
+  // agent or every collection failed); [] = reported with no active VPN.
+  const vpnProvided = data.vpns !== undefined;
+  const activeVpns = vpnProvided
+    ? data.vpns!.map((vpn) => ({
+        provider: vpn.provider,
+        active: vpn.active,
+        interfaceName: vpn.interfaceName,
+        ipv4: vpn.ipv4,
+        ipv6: vpn.ipv6,
+        dnsName: vpn.dnsName,
+        detectionSource: vpn.detectionSource,
+        reportedAt: now.toISOString()
+      }))
+    : null;
+
   await db.transaction(async (tx) => {
     await tx
       .delete(deviceNetwork)
       .where(eq(deviceNetwork.deviceId, device.id));
 
     if (data.adapters.length > 0) {
-      const now = new Date();
       await tx.insert(deviceNetwork).values(
         data.adapters.map((adapter) => ({
           deviceId: device.id,
@@ -208,9 +229,23 @@ inventoryRoutes.put('/:id/network', bodyLimit({ maxSize: 5 * 1024 * 1024, onErro
         }))
       );
     }
+
+    // Leave devices.activeVpns untouched when the agent didn't report VPN
+    // state, so an old agent (or a transient collection failure) never
+    // overwrites last-known-good.
+    if (vpnProvided) {
+      await tx
+        .update(devices)
+        .set({ activeVpns, updatedAt: now })
+        .where(eq(devices.id, device.id));
+    }
   });
 
-  return c.json({ success: true, count: data.adapters.length });
+  return c.json({
+    success: true,
+    count: data.adapters.length,
+    vpnCount: vpnProvided ? activeVpns!.length : null
+  });
 });
 
 // PUT /:id/warranty-info — agent reports locally-collected warranty data (e.g. Apple plist)
