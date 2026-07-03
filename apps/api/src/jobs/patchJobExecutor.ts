@@ -41,6 +41,29 @@ const jobPolicyAutoApproveSchema = z.object({
   deferralDays: z.number().int().min(0).optional(),
 });
 
+/**
+ * Parse one stored job-JSONB ring category list (`categories` / `excludeCategories`).
+ * Returns:
+ *  - `undefined` when the field is absent (legacy job → no category filtering),
+ *  - `string[]` (blanks dropped) when the value is a valid array of strings, or
+ *  - `null` when present-but-malformed (a non-array, or an array containing a
+ *    non-string entry).
+ *
+ * A malformed value must NOT be silently coerced to "no filter": dropping a
+ * `categories` allowlist would widen to "install every category" and dropping an
+ * `excludeCategories` denylist would let an excluded category into the install
+ * set — the same widen-past-admin-intent hazard the `sources` handler guards
+ * against. Callers fail closed (skip the device) on `null`. An empty array is
+ * valid and means "no filter" (the schema default), unlike `sources` where an
+ * empty set means "install nothing". (#2117)
+ */
+export function parseJobCategoryList(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  if (value.some((v) => typeof v !== 'string')) return null;
+  return (value as string[]).filter((v) => v.length > 0);
+}
+
 const { db } = dbModule;
 const runWithSystemDbAccess = async <T>(fn: () => Promise<T>): Promise<T> => {
   const withSystem = dbModule.withSystemDbAccessContext;
@@ -507,6 +530,8 @@ async function prepareDeviceExecution(
   const patchesConfig = patchJob.patches as {
     ringId?: string | null;
     categoryRules?: unknown[];
+    categories?: unknown;
+    excludeCategories?: unknown;
     autoApprove?: unknown;
     sources?: unknown;
     policyAutoApprove?: unknown;
@@ -613,6 +638,40 @@ async function prepareDeviceExecution(
     }
   }
 
+  // Ring category include/exclude filters (#2117). Mirror the sources posture:
+  // absent = legacy job (no filtering); present-but-malformed skips the device
+  // rather than silently dropping the filter, which would widen install scope
+  // past the ring's category intent (an excluded category would flow in, or an
+  // allowlist would collapse to "install everything").
+  let jobCategories: string[] | undefined;
+  let jobExcludeCategories: string[] | undefined;
+  let malformedCategoryFilter = false;
+
+  const parsedCategories = parseJobCategoryList(patchesConfig?.categories);
+  if (parsedCategories === null) {
+    malformedCategoryFilter = true;
+    const message = `[PatchJobExecutor] Job ${patchJobId} has malformed patches.categories; skipping device to avoid widening install scope past the ring category filter`;
+    console.warn(`${message}:`, JSON.stringify(patchesConfig?.categories));
+    captureException(new Error(message));
+  } else {
+    jobCategories = parsedCategories;
+  }
+
+  const parsedExcludeCategories = parseJobCategoryList(patchesConfig?.excludeCategories);
+  if (parsedExcludeCategories === null) {
+    malformedCategoryFilter = true;
+    const message = `[PatchJobExecutor] Job ${patchJobId} has malformed patches.excludeCategories; skipping device to avoid widening install scope past the ring category filter`;
+    console.warn(`${message}:`, JSON.stringify(patchesConfig?.excludeCategories));
+    captureException(new Error(message));
+  } else {
+    jobExcludeCategories = parsedExcludeCategories;
+  }
+
+  if (malformedCategoryFilter) {
+    await markDeviceSkipped(patchJobId, deviceId, 'invalid_patch_categories');
+    return { skipped: true, reason: 'Invalid patch category filter' };
+  }
+
   const ringConfig: RingConfig = {
     ringId: patchesConfig?.ringId ?? null,
     categoryRules: (Array.isArray(patchesConfig?.categoryRules)
@@ -620,6 +679,8 @@ async function prepareDeviceExecution(
       : []) as RingConfig['categoryRules'],
     autoApprove: patchesConfig?.autoApprove ?? {},
     deferralDays: 0,
+    categories: jobCategories,
+    excludeCategories: jobExcludeCategories,
     sources: jobSources,
     policyAutoApprove,
     apps: jobApps,
