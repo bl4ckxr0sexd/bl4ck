@@ -32,6 +32,7 @@ const TARGET_GLOBS = [
   'src/components/alerts/AlertsPage.tsx',
   'src/components/alerts/AlertDetailPage.tsx',
   'src/components/settings/PartnerSettingsPage.tsx',
+  'src/components/settings/OrgSettingsPage.tsx',
   'src/components/settings/LoginBrandingCard.tsx',
   'src/components/settings/ConnectSsoCard.tsx',
   'src/components/patches/PatchesPage.tsx',
