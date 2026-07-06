@@ -1,14 +1,26 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { and, desc, eq, ilike, inArray, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gt, ilike, inArray, lte, type SQL } from 'drizzle-orm';
+
+import {
+  VULN_STATUS_FILTERS,
+  VULN_SEVERITIES,
+  VULN_TICKET_PRIORITIES,
+  VULN_SKIP_REASON_LABELS,
+  type SkippedItem,
+  type VulnSkipReason,
+} from '@breeze/shared';
 
 import { db, runOutsideDbContext, withSystemDbAccessContext } from '../db';
 import { deviceVulnerabilities, devices, vulnerabilities } from '../db/schema';
 import { authMiddleware, requireMfa, requirePermission, requireScope, type AuthContext } from '../middleware/auth';
 import { PERMISSIONS, type UserPermissions } from '../services/permissions';
 import { remediateVulnerabilities } from '../services/vulnerabilityRemediation';
+import { buildGroupDetail, computeStats, filterFindings, groupFindings, toGroupFinding } from '../services/vulnerabilityFleetAggregation';
+import { fetchCveCatalogRecord, fetchFleetFindingRows } from '../services/vulnerabilityFleetQueries';
 import { writeRouteAudit } from '../services/auditEvents';
+import { createTicket } from '../services/ticketService';
 import { platformAdminMiddleware } from '../middleware/platformAdmin';
 import { userRateLimit } from '../middleware/userRateLimit';
 import { enqueueVulnSourceSync, enqueueVulnCorrelation } from '../jobs/vulnerabilityJobs';
@@ -24,18 +36,33 @@ const statusSchema = z
   .string()
   .trim()
   .transform((value) => value.toLowerCase())
-  .pipe(z.enum(['open', 'patched', 'mitigated', 'accepted', 'all']));
+  .pipe(z.enum(VULN_STATUS_FILTERS));
 
 const severitySchema = z
   .string()
   .trim()
   .transform((value) => value.toLowerCase())
-  .pipe(z.enum(['low', 'medium', 'high', 'critical']));
+  .pipe(z.enum(VULN_SEVERITIES));
+
+// Query-string boolean: accepts "true"/"false" (any case), rejects everything else.
+const boolQuerySchema = z
+  .string()
+  .trim()
+  .transform((value) => value.toLowerCase())
+  .pipe(z.enum(['true', 'false']))
+  .transform((value) => value === 'true');
+
+// Query-string integer: accepted-risk expiry window in days (the stat card
+// sends 14). Coerced from the raw string; bounded to keep the window sane.
+const expiringWithinDaysSchema = z.coerce.number().int().min(1).max(365);
 
 const listQuerySchema = z.object({
   status: statusSchema.default('open'),
   severity: severitySchema.optional(),
   cve: z.string().trim().min(1).max(32).optional(),
+  kevOnly: boolQuerySchema.optional(),
+  patchAvailable: boolQuerySchema.optional(),
+  expiringWithinDays: expiringWithinDaysSchema.optional(),
 });
 
 const deviceParamSchema = z.object({
@@ -57,6 +84,55 @@ const acceptRiskSchema = z.object({
 
 const mitigateSchema = z.object({
   note: z.string().trim().min(1).max(2000),
+});
+
+const bulkAcceptRiskSchema = z.object({
+  deviceVulnerabilityIds: z.array(z.string().uuid()).min(1).max(200),
+  reason: z.string().trim().min(1).max(2000),
+  acceptedUntil: z.string().datetime(),
+});
+
+const bulkMitigateSchema = z.object({
+  deviceVulnerabilityIds: z.array(z.string().uuid()).min(1).max(200),
+  note: z.string().trim().min(1).max(2000),
+});
+
+// The client sends ONLY the finding ids, a title, a priority, and an optional
+// free-text note. It does NOT send a `description`: the old `description` field
+// enumerated device names + CVE ids across ALL selected orgs and was passed
+// verbatim into every per-org ticket, leaking one org's hostnames/CVEs into
+// another org's (org-readable) ticket. The server now builds each ticket's
+// description itself, per org, from that org's rows only (see the /tickets route).
+const bulkTicketSchema = z.object({
+  deviceVulnerabilityIds: z.array(z.string().uuid()).min(1).max(200),
+  title: z.string().trim().min(1).max(255),
+  note: z.string().trim().max(50_000).optional(),
+  priority: z.enum(VULN_TICKET_PRIORITIES).default('normal'),
+});
+
+const softwareQuerySchema = z.object({
+  status: statusSchema.default('open'),
+  severity: severitySchema.optional(),
+  search: z.string().trim().min(1).max(200).optional(),
+  kevOnly: boolQuerySchema.optional(),
+  patchAvailable: boolQuerySchema.optional(),
+  expiringWithinDays: expiringWithinDaysSchema.optional(),
+});
+
+const SOFTWARE_GROUP_CAP = 500;
+// Same cap + hasMore contract for the by-CVE fleet view (one row per CVE, so
+// cardinality is catalog-bounded; a cap with a truncation notice beats pagination).
+const FLEET_CVE_CAP = 500;
+
+const groupKeyParamSchema = z.object({
+  // Opaque group key: sw:<name>|<vendor> or os:<platform>. Hono decodes the
+  // URL-encoded segment before validation.
+  groupKey: z.string().min(4).max(600).regex(/^(sw:|os:)/),
+});
+
+const cveIdParamSchema = z.object({
+  // Real-world CVE ids are CVE-YYYY-NNNN+, but seeded/e2e ids use letters too.
+  cveId: z.string().trim().regex(/^CVE-\d{4}-[A-Za-z0-9-]{1,32}$/i),
 });
 
 const requireVulnerabilityWrite = requirePermission(
@@ -121,6 +197,99 @@ async function loadFindingForWrite(id: string, auth: AuthContext): Promise<Findi
     };
   }
   return { ok: true, row };
+}
+
+type BulkFindingRow = { id: string; orgId: string; deviceId: string; vulnerabilityId: string; status: string };
+type BulkAccess = { valid: BulkFindingRow[]; skipped: SkippedItem[] };
+
+/** Summarize distinct skip CODES as human prose for an all-skipped outcome, e.g.
+ *  "5 no available patch, 2 not an open vulnerability" (labels from the shared map). */
+function describeSkips(skipped: SkippedItem[]): string {
+  const counts = new Map<VulnSkipReason, number>();
+  for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) ?? 0) + 1);
+  return [...counts.entries()].map(([reason, n]) => `${n} ${VULN_SKIP_REASON_LABELS[reason]}`).join(', ');
+}
+
+/**
+ * Build a ticket description for ONE org's findings, from server-resolved data
+ * only. `rows` MUST all belong to the same org (the caller groups by org first),
+ * so the deduped CVE ids and device names below reference nothing outside that
+ * tenant. The optional user `note` is appended verbatim. Ids missing from the
+ * lookup maps (device deleted / catalog purged mid-request) are dropped rather
+ * than surfaced as blanks.
+ */
+function buildTicketDescription(
+  rows: BulkFindingRow[],
+  deviceNameById: Map<string, string>,
+  cveByVulnId: Map<string, string>,
+  note?: string,
+): string {
+  const cves = [...new Set(rows.map((r) => cveByVulnId.get(r.vulnerabilityId)).filter((v): v is string => !!v))].sort();
+  const deviceNames = [
+    ...new Set(rows.map((r) => deviceNameById.get(r.deviceId)).filter((v): v is string => !!v)),
+  ].sort((a, b) => a.localeCompare(b));
+
+  const lines = [`Vulnerability remediation request covering ${rows.length} finding(s).`, ''];
+  lines.push(`CVEs (${cves.length}): ${cves.length > 0 ? cves.join(', ') : 'n/a'}`);
+  lines.push(`Affected devices (${deviceNames.length}): ${deviceNames.length > 0 ? deviceNames.join(', ') : 'n/a'}`);
+  if (note) {
+    lines.push('', note);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Batch analogue of loadFindingForWrite: resolves each id to a finding the
+ * caller may write (org via RLS + orgCondition on the device row, site via
+ * canAccessSite), collecting per-item skip reasons instead of failing the
+ * batch. Duplicate ids are collapsed.
+ */
+async function loadFindingsForBulkWrite(ids: string[], auth: AuthContext): Promise<BulkAccess> {
+  const unique = [...new Set(ids)];
+  const rows = await db
+    .select({
+      id: deviceVulnerabilities.id,
+      orgId: deviceVulnerabilities.orgId,
+      deviceId: deviceVulnerabilities.deviceId,
+      vulnerabilityId: deviceVulnerabilities.vulnerabilityId,
+      status: deviceVulnerabilities.status,
+    })
+    .from(deviceVulnerabilities)
+    .where(inArray(deviceVulnerabilities.id, unique));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  const deviceIds = [...new Set(rows.map((r) => r.deviceId))];
+  const orgCond = auth.orgCondition(devices.orgId);
+  const deviceRows =
+    deviceIds.length > 0
+      ? await db
+          .select({ id: devices.id, siteId: devices.siteId })
+          .from(devices)
+          .where(orgCond ? and(inArray(devices.id, deviceIds), orgCond) : inArray(devices.id, deviceIds))
+      : [];
+  const deviceById = new Map(deviceRows.map((d) => [d.id, d]));
+
+  const valid: BulkFindingRow[] = [];
+  const skipped: SkippedItem[] = [];
+  for (const id of unique) {
+    const row = byId.get(id);
+    if (!row) {
+      skipped.push({ id, reason: 'not_found' });
+      continue;
+    }
+    const device = deviceById.get(row.deviceId);
+    if (!device) {
+      // Device outside the caller's org scope reads as not-found (no existence leak).
+      skipped.push({ id, reason: 'not_found' });
+      continue;
+    }
+    if (auth.canAccessSite && !auth.canAccessSite(device.siteId)) {
+      skipped.push({ id, reason: 'site_access_denied' });
+      continue;
+    }
+    valid.push(row);
+  }
+  return { valid, skipped };
 }
 
 type DeviceVulnerabilityRow = {
@@ -193,7 +362,7 @@ function mergeRows(deviceRows: DeviceVulnerabilityRow[], catalogRows: CatalogRow
 
 async function readCatalogRows(
   vulnerabilityIds: string[],
-  filters: { severity?: string; cve?: string },
+  filters: { severity?: string; cve?: string; kevOnly?: boolean; patchAvailable?: boolean },
 ): Promise<CatalogRow[]> {
   if (vulnerabilityIds.length === 0) return [];
 
@@ -202,7 +371,13 @@ async function readCatalogRows(
     conditions.push(eq(vulnerabilities.severity, filters.severity));
   }
   if (filters.cve) {
-    conditions.push(ilike(vulnerabilities.cveId, filters.cve));
+    conditions.push(ilike(vulnerabilities.cveId, `%${filters.cve}%`));
+  }
+  if (filters.kevOnly) {
+    conditions.push(eq(vulnerabilities.knownExploited, true));
+  }
+  if (filters.patchAvailable) {
+    conditions.push(eq(vulnerabilities.patchAvailable, true));
   }
 
   return runOutsideDbContext(() =>
@@ -230,6 +405,10 @@ async function listVulnerabilities(filters: {
   deviceId?: string;
   severity?: string;
   cve?: string;
+  kevOnly?: boolean;
+  patchAvailable?: boolean;
+  /** Only findings whose accepted-risk window expires within N days from now. */
+  expiringWithinDays?: number;
   /** Site-axis narrowing: when set, only return findings for devices in these sites.
    *  Empty array = caller has no in-scope sites → return nothing (fail-closed). */
   allowedSiteIds?: string[];
@@ -242,6 +421,14 @@ async function listVulnerabilities(filters: {
   }
   if (filters.deviceId) {
     conditions.push(eq(deviceVulnerabilities.deviceId, filters.deviceId));
+  }
+  // Accepted-risk expiry window (backs the "Accepted, expiring soon" stat card,
+  // matching computeStats in vulnerabilityFleetAggregation.ts: acceptedUntil in
+  // (now, now + N days]). Rows without acceptedUntil never match.
+  if (filters.expiringWithinDays !== undefined) {
+    const now = new Date();
+    const soon = new Date(now.getTime() + filters.expiringWithinDays * 24 * 60 * 60 * 1000);
+    conditions.push(gt(deviceVulnerabilities.acceptedUntil, now), lte(deviceVulnerabilities.acceptedUntil, soon));
   }
   // Site-axis (app-layer only; RLS does NOT enforce site isolation). Mirrors
   // assertDeviceSiteAccess used by per-device routes in this file and
@@ -278,6 +465,8 @@ async function listVulnerabilities(filters: {
   const catalogRows = await readCatalogRows(vulnerabilityIds, {
     severity: filters.severity,
     cve: filters.cve,
+    kevOnly: filters.kevOnly,
+    patchAvailable: filters.patchAvailable,
   });
 
   return mergeRows(deviceRows, catalogRows);
@@ -294,6 +483,8 @@ type FleetRow = {
   epssScore: number | null;
   riskScore: number | null;
   deviceCount: number;
+  patchAvailable: boolean;
+  statuses: string[];
 };
 
 /**
@@ -304,7 +495,15 @@ type FleetRow = {
  */
 function aggregateFleet(items: MergedItem[]): FleetRow[] {
   const byVuln = new Map<string, FleetRow>();
+  const statusesByVuln = new Map<string, Set<string>>();
   for (const item of items) {
+    const statuses = statusesByVuln.get(item.vulnerabilityId);
+    if (statuses) {
+      statuses.add(item.status);
+    } else {
+      statusesByVuln.set(item.vulnerabilityId, new Set([item.status]));
+    }
+
     const existing = byVuln.get(item.vulnerabilityId);
     if (existing) {
       existing.deviceCount += 1;
@@ -322,7 +521,14 @@ function aggregateFleet(items: MergedItem[]): FleetRow[] {
       epssScore: item.epssScore,
       riskScore: item.riskScore,
       deviceCount: 1,
+      patchAvailable: item.patchAvailable,
+      statuses: [],
     });
+  }
+
+  for (const row of byVuln.values()) {
+    const statuses = statusesByVuln.get(row.id);
+    row.statuses = statuses ? [...statuses].sort() : [];
   }
 
   return Array.from(byVuln.values()).sort((a, b) => {
@@ -349,7 +555,62 @@ vulnerabilityRoutes.get('/', zValidator('query', listQuerySchema), async (c) => 
     ...query,
     allowedSiteIds: perms?.allowedSiteIds,
   });
-  return c.json({ items: aggregateFleet(items) });
+  const rows = aggregateFleet(items);
+  return c.json({
+    items: rows.slice(0, FLEET_CVE_CAP),
+    hasMore: rows.length > FLEET_CVE_CAP,
+  });
+});
+
+// Fleet work queue: one row per remediation unit (software product or OS
+// pseudo-group). Group cardinality is fleet-bounded; hard cap + hasMore
+// instead of pagination.
+vulnerabilityRoutes.get('/software', zValidator('query', softwareQuerySchema), async (c) => {
+  const query = c.req.valid('query');
+  const perms = c.get('permissions') as UserPermissions | undefined;
+  const rows = await fetchFleetFindingRows({
+    status: query.status,
+    allowedSiteIds: perms?.allowedSiteIds,
+  });
+  const filtered = filterFindings(rows, {
+    status: query.status,
+    severity: query.severity,
+    kevOnly: query.kevOnly,
+    patchAvailable: query.patchAvailable,
+    expiringWithinDays: query.expiringWithinDays,
+  });
+  const groups = groupFindings(filtered, { search: query.search });
+  return c.json({
+    items: groups.slice(0, SOFTWARE_GROUP_CAP),
+    hasMore: groups.length > SOFTWARE_GROUP_CAP,
+  });
+});
+
+// Software-group drawer payload: group summary + per-CVE rollup + raw findings.
+vulnerabilityRoutes.get('/software/:groupKey', zValidator('param', groupKeyParamSchema), async (c) => {
+  const { groupKey } = c.req.valid('param');
+  const perms = c.get('permissions') as UserPermissions | undefined;
+  // status 'all' so the drawer can show accepted/mitigated findings alongside
+  // open ones (reopen lives in the drawers).
+  const rows = await fetchFleetFindingRows({ status: 'all', allowedSiteIds: perms?.allowedSiteIds });
+  const detail = buildGroupDetail(groupKey, rows);
+  if (!detail) {
+    return c.json({ error: 'Group not found' }, 404);
+  }
+  return c.json(detail);
+});
+
+// The four stat-card numbers in one call. Needs every status: open findings
+// feed three cards, accepted findings feed the expiring-soon card. Also carries
+// totalFindings/lastDetectedAt (computed from the same rows — no extra query)
+// so the empty states can tell a clean fleet from one that never produced data.
+vulnerabilityRoutes.get('/stats', async (c) => {
+  const perms = c.get('permissions') as UserPermissions | undefined;
+  const rows = await fetchFleetFindingRows({
+    status: 'all',
+    allowedSiteIds: perms?.allowedSiteIds,
+  });
+  return c.json(computeStats(rows, new Date()));
 });
 
 vulnerabilityRoutes.get(
@@ -369,6 +630,26 @@ vulnerabilityRoutes.get(
     return c.json({ items });
   },
 );
+
+// CVE drawer payload: catalog record + fleet findings for that CVE. Registered
+// LAST among the GET routes — a param in the first path segment would
+// otherwise shadow every static-first-segment GET route above it
+// (/software, /software/:groupKey, /stats, /devices/:deviceId).
+vulnerabilityRoutes.get('/:cveId/devices', zValidator('param', cveIdParamSchema), async (c) => {
+  const { cveId } = c.req.valid('param');
+  const cve = await fetchCveCatalogRecord(cveId);
+  if (!cve) {
+    return c.json({ error: 'CVE not found' }, 404);
+  }
+  const perms = c.get('permissions') as UserPermissions | undefined;
+  const rows = await fetchFleetFindingRows({ status: 'all', allowedSiteIds: perms?.allowedSiteIds });
+  const target = cveId.toLowerCase();
+  const findings = rows
+    .filter((r) => r.cveId.toLowerCase() === target)
+    .map(toGroupFinding)
+    .sort((a, b) => a.deviceName.localeCompare(b.deviceName));
+  return c.json({ cve, findings });
+});
 
 // POST /remediate — schedule per-device install commands for a set of findings.
 // The `*` middleware already enforces auth + scope + DEVICES_READ; this high-power
@@ -390,11 +671,189 @@ vulnerabilityRoutes.post(
       auth,
     );
     // runAction treats {success:false} as a failure; report success when at least
-    // one finding was scheduled (or nothing was asked).
+    // one finding was scheduled (or nothing was asked). When nothing was scheduled
+    // but items were skipped, surface WHY (distinct skip reasons) so the client
+    // shows the real cause instead of a generic "Failed to schedule remediation."
+    const message =
+      result.scheduled === 0 && result.skipped.length > 0
+        ? `Nothing scheduled: ${describeSkips(result.skipped)}`
+        : undefined;
     return c.json({
       success: result.scheduled > 0 || deviceVulnerabilityIds.length === 0,
       ...result,
+      ...(message ? { message } : {}),
     });
+  },
+);
+
+// POST /bulk/accept-risk — accept risk for many findings at once, fault-tolerant
+// per item. MUST be registered before /:id/accept-risk below: Hono's router
+// matches in registration order, so a param route registered first would
+// otherwise shadow this static path (bound as id="bulk").
+vulnerabilityRoutes.post(
+  '/bulk/accept-risk',
+  requirePermission(PERMISSIONS.VULN_RISK_ACCEPT.resource, PERMISSIONS.VULN_RISK_ACCEPT.action),
+  zValidator('json', bulkAcceptRiskSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { deviceVulnerabilityIds, reason, acceptedUntil } = c.req.valid('json');
+
+    if (new Date(acceptedUntil).getTime() <= Date.now()) {
+      return c.json({ success: false, error: 'acceptedUntil must be in the future' }, 400);
+    }
+
+    const { valid, skipped } = await loadFindingsForBulkWrite(deviceVulnerabilityIds, auth);
+    if (valid.length > 0) {
+      await db
+        .update(deviceVulnerabilities)
+        .set({
+          status: 'accepted',
+          acceptedBy: auth.user.id,
+          acceptedUntil: new Date(acceptedUntil),
+          // Acceptance rationale reuses mitigation_note — same as the
+          // per-finding accept-risk endpoint (no dedicated reason column).
+          mitigationNote: reason,
+          updatedAt: new Date(),
+        })
+        .where(inArray(deviceVulnerabilities.id, valid.map((v) => v.id)));
+      for (const row of valid) {
+        writeRouteAudit(c, {
+          orgId: row.orgId,
+          action: 'vulnerability.accept_risk',
+          resourceType: 'device_vulnerability',
+          resourceId: row.id,
+          details: { acceptedUntil, reason, bulk: true },
+        });
+      }
+    }
+    return c.json({ success: valid.length > 0, succeeded: valid.length, skipped });
+  },
+);
+
+// POST /bulk/mitigate — mitigate many findings at once, fault-tolerant per item.
+// MUST be registered before /:id/mitigate below (same shadowing reason as above).
+vulnerabilityRoutes.post(
+  '/bulk/mitigate',
+  requireVulnerabilityWrite,
+  zValidator('json', bulkMitigateSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { deviceVulnerabilityIds, note } = c.req.valid('json');
+
+    const { valid, skipped } = await loadFindingsForBulkWrite(deviceVulnerabilityIds, auth);
+    if (valid.length > 0) {
+      await db
+        .update(deviceVulnerabilities)
+        .set({ status: 'mitigated', mitigationNote: note, resolvedAt: new Date(), updatedAt: new Date() })
+        .where(inArray(deviceVulnerabilities.id, valid.map((v) => v.id)));
+      for (const row of valid) {
+        writeRouteAudit(c, {
+          orgId: row.orgId,
+          action: 'vulnerability.mitigate',
+          resourceType: 'device_vulnerability',
+          resourceId: row.id,
+          details: { note, bulk: true },
+        });
+      }
+    }
+    return c.json({ success: valid.length > 0, succeeded: valid.length, skipped });
+  },
+);
+
+// POST /tickets — create native ticket(s) from vulnerability findings, splitting
+// a cross-org selection into one ticket per org (a ticket is org-owned, so
+// grouping by org avoids leaking device/finding data across tenants into a
+// single ticket). BOTH the finding<->ticket linkage AND the ticket description
+// CONTENT are org-scoped server-side: each ticket's description is built here
+// from ONLY that org's findings (its own device names + CVE ids, resolved from
+// server-side data, never from client input), so org A's hostnames/CVEs can
+// never appear in org B's ticket. The client supplies only ids/title/priority
+// and an optional free-text note. Static single-segment path — registered
+// alongside the other bulk POST routes above, before the `/:id/*` POST routes.
+vulnerabilityRoutes.post(
+  '/tickets',
+  requirePermission(PERMISSIONS.TICKETS_WRITE.resource, PERMISSIONS.TICKETS_WRITE.action),
+  zValidator('json', bulkTicketSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { deviceVulnerabilityIds, title, note, priority } = c.req.valid('json');
+
+    const { valid, skipped } = await loadFindingsForBulkWrite(deviceVulnerabilityIds, auth);
+
+    const byOrg = new Map<string, BulkFindingRow[]>();
+    for (const row of valid) {
+      const bucket = byOrg.get(row.orgId);
+      if (bucket) bucket.push(row);
+      else byOrg.set(row.orgId, [row]);
+    }
+
+    // Resolve display data (device names + CVE ids) for the accessible findings
+    // ONCE, from server-side tables — NOT from client input. Device names come
+    // from the request (RLS-scoped) context; the CVE catalog is global reference
+    // data read under a system context (mirrors readCatalogRows). These maps are
+    // consumed per-org below so each ticket's description contains only its own
+    // org's data.
+    const validDeviceIds = [...new Set(valid.map((r) => r.deviceId))];
+    const deviceNameRows =
+      validDeviceIds.length > 0
+        ? await db
+            .select({ id: devices.id, hostname: devices.hostname, displayName: devices.displayName })
+            .from(devices)
+            .where(inArray(devices.id, validDeviceIds))
+        : [];
+    const deviceNameById = new Map(deviceNameRows.map((d) => [d.id, d.displayName ?? d.hostname]));
+
+    const validVulnIds = [...new Set(valid.map((r) => r.vulnerabilityId))];
+    const cveRows =
+      validVulnIds.length > 0
+        ? await runOutsideDbContext(() =>
+            withSystemDbAccessContext(() =>
+              db
+                .select({ id: vulnerabilities.id, cveId: vulnerabilities.cveId })
+                .from(vulnerabilities)
+                .where(inArray(vulnerabilities.id, validVulnIds)),
+            ),
+          )
+        : [];
+    const cveByVulnId = new Map(cveRows.map((v) => [v.id, v.cveId]));
+
+    const tickets: Array<{ ticketId: string; orgId: string; findingCount: number }> = [];
+    for (const [orgId, rows] of byOrg) {
+      if (!auth.canAccessOrg(orgId)) {
+        for (const r of rows) skipped.push({ id: r.id, reason: 'org_access_denied' });
+        continue;
+      }
+      const description = buildTicketDescription(rows, deviceNameById, cveByVulnId, note);
+      try {
+        const ticket = await createTicket(
+          { orgId, subject: title, description, priority, source: 'manual' },
+          { userId: auth.user.id, name: auth.user.name, email: auth.user.email },
+        );
+        await db
+          .update(deviceVulnerabilities)
+          .set({ ticketId: ticket.id, updatedAt: new Date() })
+          .where(inArray(deviceVulnerabilities.id, rows.map((r) => r.id)));
+        writeRouteAudit(c, {
+          orgId,
+          action: 'vulnerability.ticket_create',
+          resourceType: 'ticket',
+          resourceId: ticket.id,
+          details: { deviceVulnerabilityIds: rows.map((r) => r.id), title },
+        });
+        tickets.push({ ticketId: ticket.id, orgId, findingCount: rows.length });
+      } catch {
+        // TicketServiceError message is dynamic prose; collapse to the closest code.
+        for (const r of rows) skipped.push({ id: r.id, reason: 'ticket_create_failed' });
+      }
+    }
+
+    // All-skipped surfacing: when no ticket was created but items were skipped,
+    // tell the client WHY (distinct skip reasons) instead of a generic failure.
+    const message =
+      tickets.length === 0 && skipped.length > 0
+        ? `No tickets created: ${describeSkips(skipped)}`
+        : undefined;
+    return c.json({ success: tickets.length > 0, tickets, skipped, ...(message ? { message } : {}) });
   },
 );
 
