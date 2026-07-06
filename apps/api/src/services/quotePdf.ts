@@ -14,6 +14,7 @@
 // route in routes/quotes/quotes.ts supplies the real quote_images loader.
 
 import PDFDocument from 'pdfkit';
+import { toCents, fromCents } from '@breeze/shared';
 import { sellerAddressLines, type SellerSnapshot } from './sellerSnapshot';
 import { captureException } from './sentry';
 
@@ -109,6 +110,14 @@ interface QuoteHeader {
   annualRecurringTotal?: string | number | null;
   // Amount invoiced on accept (one-time + one-time tax); derived in getQuote.
   dueOnAcceptanceTotal?: string | number | null;
+  // Deposit config (persisted columns): when set to a non-'none' type with an
+  // amount, the summary shows a bold deposit figure + remaining-balance row in
+  // place of the plain "Due on acceptance" row.
+  depositType?: string | null;
+  depositAmount?: string | null;
+  // Per-category subtotals (one-time / monthly / annual), derived in getQuote.
+  // Rendered as muted rows only when >1 category is present.
+  categoryBreakdown?: { category: string; oneTimeTotal: string; monthlyTotal: string; annualTotal: string }[];
   sellerSnapshot?: unknown;
   termsAndConditions?: string | null;
 }
@@ -315,7 +324,17 @@ async function renderLineTable(
 
 function renderRecurringSummary(doc: PDFKit.PDFDocument, quote: QuoteHeader, currency: string, primary: string, startY: number, showTax = false): number {
   const c = columnsFor(doc, showTax);
-  let y = ensureSpace(doc, startY + 6, 90);
+  // Hoisted above ensureSpace so the page-break reservation can size itself to
+  // the actual content drawn below.
+  const breakdown = quote.categoryBreakdown ?? [];
+  const hasDeposit = quote.depositType && quote.depositType !== 'none' && quote.depositAmount != null;
+  // 90px covered the legacy footer. Category rows add 12px each (+4px gap) and a
+  // deposit adds the extra bold remainder row (18px) — reserve for them, or
+  // ensureSpace won't break the page and the new rows draw past the bottom
+  // margin (pdfkit doesn't auto-paginate explicit-coordinate text). Stays 90 for
+  // a no-deposit, ≤1-category quote so those render exactly as before.
+  const needed = 90 + (breakdown.length > 1 ? breakdown.length * 12 + 4 : 0) + (hasDeposit ? 18 : 0);
+  let y = ensureSpace(doc, startY + 6, needed);
 
   // Wider label column than the line table's so the emphasised "Due on
   // acceptance" figure (14pt) and the recurring labels never wrap/overlap.
@@ -325,6 +344,23 @@ function renderRecurringSummary(doc: PDFKit.PDFDocument, quote: QuoteHeader, cur
 
   const labelX = sumX;
   const labelW = c.colAmtX - sumX - 8;
+
+  // Per-category subtotals (muted) — only worth showing when the quote spans more
+  // than one category. Drawn above the One-time/Monthly/Annual roll-up.
+  if (breakdown.length > 1) {
+    for (const b of breakdown) {
+      const label = b.category === 'other' ? 'Other' : b.category[0]!.toUpperCase() + b.category.slice(1);
+      const parts: string[] = [];
+      if (Number(b.oneTimeTotal) > 0) parts.push(formatMoney(b.oneTimeTotal, currency));
+      if (Number(b.monthlyTotal) > 0) parts.push(`${formatMoney(b.monthlyTotal, currency)}/mo`);
+      if (Number(b.annualTotal) > 0) parts.push(`${formatMoney(b.annualTotal, currency)}/yr`);
+      doc.font('Helvetica').fontSize(9).fillColor('#9ca3af');
+      doc.text(label, labelX, y, { width: labelW, align: 'left' });
+      doc.text(parts.join(' + '), c.colAmtX - 60, y, { width: c.colNumW + 60, align: 'right' });
+      y += 12;
+    }
+    y += 4;
+  }
   const drawRow = (
     label: string,
     amount: string | number | null | undefined,
@@ -347,9 +383,17 @@ function renderRecurringSummary(doc: PDFKit.PDFDocument, quote: QuoteHeader, cur
   }
   const hasRecurring =
     Number(quote.monthlyRecurringTotal ?? 0) > 0 || Number(quote.annualRecurringTotal ?? 0) > 0;
-  // Accent primary figure = what accept invoices now. Fall back to the one-time
-  // total if the derived field is somehow absent.
-  drawRow('Due on acceptance', quote.dueOnAcceptanceTotal ?? quote.oneTimeTotal, '', { emphasis: true });
+  // Accent primary figure = what accept invoices now. When a deposit is
+  // configured the emphasised figure becomes the deposit due, with the remaining
+  // balance beneath (remainder = due-on-acceptance − deposit, in cents). Fall
+  // back to the one-time total if the derived field is somehow absent.
+  if (hasDeposit) {
+    drawRow('Deposit due on acceptance', quote.depositAmount, '', { emphasis: true });
+    const remainderCents = toCents(quote.dueOnAcceptanceTotal ?? quote.oneTimeTotal) - toCents(quote.depositAmount);
+    drawRow('Remaining balance (due per terms)', fromCents(remainderCents), '', { bold: true });
+  } else {
+    drawRow('Due on acceptance', quote.dueOnAcceptanceTotal ?? quote.oneTimeTotal, '', { emphasis: true });
+  }
   if (hasRecurring) {
     drawRow('First-period total', quote.total, '');
   }

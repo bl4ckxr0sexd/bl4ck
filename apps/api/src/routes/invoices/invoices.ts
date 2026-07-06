@@ -9,8 +9,9 @@ import {
 } from '@breeze/shared';
 import {
   createManualInvoice, getInvoice, listInvoices, addManualLine, addCatalogLine, addBundleLine,
-  updateLine, removeLine, deleteDraftInvoice, updateInvoice
+  updateLine, removeLine, deleteDraftInvoice, updateInvoice, updateIssuedDueDate
 } from '../../services/invoiceService';
+import { writeRouteAudit } from '../../services/auditEvents';
 import { InvoiceServiceError, type InvoiceActor } from '../../services/invoiceTypes';
 import { resolveQuoteBranding } from '../../services/quoteBranding';
 
@@ -20,6 +21,19 @@ const readPerm = requirePermission(PERMISSIONS.INVOICES_READ.resource, PERMISSIO
 const writePerm = requirePermission(PERMISSIONS.INVOICES_WRITE.resource, PERMISSIONS.INVOICES_WRITE.action);
 const idParam = z.object({ id: z.string().guid() });
 const lineParam = z.object({ id: z.string().guid(), lineId: z.string().guid() });
+const dueDateSchema = z.object({
+  dueDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+    .refine((s) => {
+      // The regex alone accepts non-calendar dates like 2026-13-40 — Date parses
+      // those by rolling over into the next month/year, so round-trip the parsed
+      // date back to a YYYY-MM-DD string and require it to match verbatim. A
+      // rolled-over date silently reaches the invoiceService update and 500s at
+      // the Postgres DATE column instead of failing validation here.
+      const d = new Date(`${s}T00:00:00Z`);
+      return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+    }, 'invalid calendar date'),
+});
 
 export function invoiceActorFrom(c: { get: (k: string) => unknown }): InvoiceActor {
   const auth = c.get('auth') as AuthContext;
@@ -67,6 +81,19 @@ invoiceCrudRoutes.post('/:id/lines/catalog', scopes, writePerm, zValidator('para
 invoiceCrudRoutes.post('/:id/lines/bundle', scopes, writePerm, zValidator('param', idParam), zValidator('json', bundleLineSchema), async (c) => {
   try { const b = c.req.valid('json'); return c.json({ data: await addBundleLine(c.req.valid('param').id, b.bundleId, b.quantity, invoiceActorFrom(c)) }); }
   catch (err) { return handleServiceError(c, err); }
+});
+invoiceCrudRoutes.patch('/:id/due-date', scopes, writePerm, zValidator('param', idParam), zValidator('json', dueDateSchema), async (c) => {
+  try {
+    const { invoice, audit } = await updateIssuedDueDate(c.req.valid('param').id, c.req.valid('json').dueDate, invoiceActorFrom(c));
+    writeRouteAudit(c, {
+      orgId: audit.orgId,
+      action: 'invoice.due_date.updated',
+      resourceType: 'invoice',
+      resourceId: audit.invoiceId,
+      details: { oldDueDate: audit.oldDueDate, newDueDate: audit.newDueDate },
+    });
+    return c.json({ data: invoice });
+  } catch (err) { return handleServiceError(c, err); }
 });
 invoiceCrudRoutes.patch('/:id/lines/:lineId', scopes, writePerm, zValidator('param', lineParam), zValidator('json', updateLineSchema), async (c) => {
   try { const p = c.req.valid('param'); return c.json({ data: await updateLine(p.id, p.lineId, c.req.valid('json'), invoiceActorFrom(c)) }); }

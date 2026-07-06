@@ -3,8 +3,9 @@ import { db, runOutsideDbContext, withSystemDbAccessContext } from '../db';
 import { quotes, quoteImages } from '../db/schema/quotes';
 import { organizations, partners } from '../db/schema/orgs';
 import { portalBranding } from '../db/schema/portal';
-import { getQuote } from './quoteService';
+import { getQuote, toCustomerLines } from './quoteService';
 import { QuoteServiceError, type QuoteActor } from './quoteTypes';
+import { validateQuoteDeposit, type QuoteLineForMath } from './quoteMath';
 import { allocateQuoteCounter, formatQuoteNumber } from './quoteNumbers';
 import { createQuoteAcceptToken } from './quoteAcceptToken';
 import { buildQuoteTemplate } from './quoteEmail';
@@ -88,6 +89,20 @@ export async function sendQuote(id: string, actor: QuoteActor): Promise<{ quote:
     throw new QuoteServiceError(`Cannot send a quote in status ${quote.status}`, 409, 'INVALID_STATE');
   }
 
+  // A deposit config can silently become unsatisfiable while drafting (e.g. the
+  // last one-time line was deleted after the deposit was set) — recompute stores
+  // NULL then, and this hard gate stops the quote going out with broken terms.
+  if (quote.depositType && quote.depositType !== 'none') {
+    const check = validateQuoteDeposit(
+      lines as QuoteLineForMath[],
+      quote.taxRate ? parseFloat(quote.taxRate) : null,
+      { type: quote.depositType, percent: quote.depositPercent },
+    );
+    if (!check.ok) {
+      throw new QuoteServiceError(`Cannot send: ${check.message}`, 409, 'DEPOSIT_INVALID');
+    }
+  }
+
   // Quotes are numbered at creation now; keep that number on issue. Only legacy
   // drafts created before number-at-creation still allocate here.
   let quoteNumber = quote.quoteNumber;
@@ -149,10 +164,17 @@ export async function sendQuote(id: string, actor: QuoteActor): Promise<{ quote:
           .limit(1);
         return img?.data ? { data: img.data } : null;
       };
+      // Customer-emailed PDF: filter to customer-visible lines (mirrors the
+      // portal-download route, apps/api/src/routes/portal/quotes.ts). `lines`
+      // itself stays unfiltered above — the deposit send-gate (and any other
+      // internal computation over `lines`) intentionally covers ALL lines /
+      // applies its own visibility rules internally. Internal-only line names
+      // + prices must never reach the customer's inbox.
+      const customerLines = toCustomerLines(lines.filter((l) => l.customerVisible));
       const { renderQuotePdf } = await import('./quotePdf');
       const pdf = await renderQuotePdf(
         { ...quote, status: 'sent', quoteNumber, sellerSnapshot: quote.sellerSnapshot ?? buildSellerSnapshot(partnerRow) },
-        blocks, lines, loadImage, {
+        blocks, customerLines, loadImage, {
           partnerName: partner?.name ?? 'Proposal', logoUrl: brand?.logoUrl ?? null, primaryColor: brand?.primaryColor ?? null,
           footer: quote.terms ?? brand?.footerText ?? null, currencyCode: quote.currencyCode ?? 'USD',
         });

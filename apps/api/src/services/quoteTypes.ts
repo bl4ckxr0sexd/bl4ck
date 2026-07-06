@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { quoteStatusSchema } from '@breeze/shared';
+import { quoteStatusSchema, type QuoteDepositValidation } from '@breeze/shared';
 
 // Single source of truth for the quote status union lives in the shared Zod
 // schema (validators/quotes.ts); infer the type here rather than re-declaring it.
@@ -30,7 +30,15 @@ export type QuoteServiceErrorCode =
   // Line-move validation codes (moveLineToBlock): a bundle child can't be moved
   // independently of its parent, and lines can only move into a line-items block.
   | 'LINE_IS_BUNDLE_CHILD'
-  | 'BLOCK_NOT_LINE_ITEMS';
+  | 'BLOCK_NOT_LINE_ITEMS'
+  // Deposit validation codes, sourced from the shared validateQuoteDeposit contract
+  // (Extract keeps this union in lockstep with @breeze/shared without duplicating it).
+  | Extract<QuoteDepositValidation, { ok: false }>['code']
+  // Send-time deposit gate (quoteLifecycle.sendQuote): a deposit config that has
+  // become unsatisfiable since it was set (e.g. the last one-time line was
+  // deleted) blocks the send with this single code, regardless of which
+  // underlying validateQuoteDeposit rule failed.
+  | 'DEPOSIT_INVALID';
 
 export class QuoteServiceError extends Error {
   constructor(

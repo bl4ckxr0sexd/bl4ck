@@ -315,6 +315,9 @@ export interface InvoiceSummary {
   total: string;
   amountPaid: string;
   balance: string;
+  // Snapshotted deposit due at quote acceptance; null when the invoice has no
+  // deposit. Present on both the list select and the detail payload.
+  depositDue: string | null;
 }
 
 // Intentional duplicate of SellerSnapshot in apps/api/src/services/sellerSnapshot.ts
@@ -407,6 +410,13 @@ export interface QuoteHeader extends QuoteSummary {
   annualRecurringTotal?: string;
   /** Amount invoiced on accept (one-time + one-time tax); derived server-side. */
   dueOnAcceptanceTotal?: string;
+  /** Deposit config (persisted); type 'none' or a null amount means no deposit. */
+  depositType?: string | null;
+  depositAmount?: string | null;
+  /** Deposit due at acceptance, or null when no valid deposit is configured. */
+  depositDueTotal?: string | null;
+  /** Per-category subtotals over customer-visible lines; empty categories omitted. */
+  categoryBreakdown?: { category: string; oneTimeTotal: string; monthlyTotal: string; annualTotal: string }[];
   billToName?: string | null;
   sellerSnapshot?: SellerSnapshot | null;
   termsAndConditions?: string | null;
