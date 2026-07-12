@@ -25,6 +25,12 @@
 #
 set -euo pipefail
 
+# Must run under bash (uses printf -v, BASH_SOURCE, [[ ]]). `sh setup.sh` breaks.
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "Please run this with bash:  ./setup.sh   (or: bash setup.sh)" >&2
+  exit 1
+fi
+
 # --------------------------------------------------------------------------
 # pretty logging
 # --------------------------------------------------------------------------
@@ -82,6 +88,28 @@ else
 fi
 docker info >/dev/null 2>&1 || die "cannot talk to the Docker daemon (is it running? do you need sudo?)."
 ok "docker + compose + openssl present"
+
+# resource sanity — building the web/API images from source is the heavy step
+# and OOM/disk is the #1 reason a fresh-VPS build dies. Warn, don't block.
+mem_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+swap_kb=$(awk '/SwapTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+if [ "$mem_kb" -gt 0 ] && [ $((mem_kb + swap_kb)) -lt 2600000 ]; then
+  warn "Only ~$((mem_kb/1024))MB RAM + $((swap_kb/1024))MB swap detected. Building from source"
+  warn "  can be OOM-killed under ~2.5GB. If the build dies with 'killed', add swap:"
+  warn "    fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+fi
+disk_kb=$(df -Pk . 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
+if [ "${disk_kb:-0}" -gt 0 ] && [ "$disk_kb" -lt 10485760 ]; then
+  warn "Only ~$((disk_kb/1024/1024))GB free disk here. Images + build cache need ~8-10GB; free space first if the build fails with 'no space left on device'."
+fi
+# ports 80/443 must be free for Caddy (best-effort check; skipped if no ss/lsof)
+if command -v ss >/dev/null 2>&1; then
+  for p in 80 443; do
+    if ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}\$"; then
+      warn "Port ${p} already appears to be in use — Caddy needs 80 and 443 for HTTPS. Stop whatever is bound there, or the stack won't get a cert."
+    fi
+  done
+fi
 
 # --------------------------------------------------------------------------
 # 2. arch detection
@@ -191,6 +219,9 @@ set_env ACME_EMAIL                   "$ACME"
 set_env BREEZE_VERSION               "$BREEZE_VERSION_PIN"
 set_env NODE_ENV                     "production"
 set_env BINARY_SOURCE                "github"
+# self-hosted, not the Breeze SaaS. Must be explicit in production — an unset
+# value can silently bypass the partner email-verification gate.
+set_env IS_HOSTED                    "false"
 set_env BREEZE_BOOTSTRAP_ADMIN_EMAIL "$ADMIN_EMAIL"
 set_env BREEZE_BOOTSTRAP_ADMIN_PASSWORD "$ADMIN_PASSWORD"
 
@@ -287,10 +318,17 @@ if [ "$DO_BUILD" = "0" ]; then
 fi
 
 info "Building images from source (first run downloads base layers — can take a while)"
-$DC build
+if ! $DC build; then
+  die "Image build failed. On a small VPS this is almost always out-of-memory or
+     out-of-disk. Add swap (see the RAM warning above), free some disk, then
+     re-run ./setup.sh — it resumes from your existing .env without rotating secrets."
+fi
 
 info "Starting the stack"
-$DC up -d
+if ! $DC up -d; then
+  die "Could not start the stack. If the error mentions 'port is already allocated',
+     ports 80/443 are taken (stop the other web server). Otherwise: $DC logs"
+fi
 
 info "Waiting for the API to become healthy"
 deadline=$(( $(date +%s) + 300 ))
