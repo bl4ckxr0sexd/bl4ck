@@ -37,6 +37,71 @@
 
 ---
 
+## ⚡ About this fork
+
+This is a self-hosting fork of [LanternOps/breeze](https://github.com/lanternops/breeze) `v0.94.0` with two changes aimed at MSPs who hand out one installer to many machines:
+
+- **Reusable installers** — a single downloaded Windows/macOS installer can enroll **many devices** instead of dying after the first install.
+- **Long-lived installers** — installers stay valid for **~365 days** instead of the stock 1 hour, so you can save one file and reuse it.
+
+Everything else is stock Breeze (AGPL-3.0). See [What changed](#what-changed-in-this-fork) for the exact diff and knobs.
+
+### One-command setup
+
+On a fresh Docker host:
+
+```bash
+git clone https://github.com/bl4ckxr0sexd/bl4ck.git breeze && cd breeze
+./setup.sh                 # interactive: asks for domain, ACME email, admin login
+```
+
+or fully non-interactive:
+
+```bash
+./setup.sh \
+  --domain rmm.example.com \
+  --acme-email you@example.com \
+  --admin-email you@example.com \
+  --admin-password 'YourStrongPassword16+' \
+  --non-interactive
+```
+
+`setup.sh` is idempotent and handles the whole install:
+
+1. Checks prerequisites (Docker, Docker Compose v2, OpenSSL).
+2. Detects CPU arch and builds for `linux/amd64` or `linux/arm64` automatically.
+3. Creates `.env` from `.env.example` and **generates every required secret** (JWT, encryption keys, peppers, Postgres/Redis passwords, TURN secret). Re-running preserves existing secrets — it never rotates your keys.
+4. Applies the reusable + long-lived installer defaults.
+5. Generates `docker-compose.override.yml` (builds images from source and maps the four enrollment-key env vars the base compose file doesn't).
+6. Builds, starts the stack, and waits for the API to report healthy.
+
+**Requirements:** Docker Engine + Compose v2, and (for a real TLS cert) a domain whose DNS points at the host with ports **80** and **443** open. Use `--domain localhost` to test with a self-signed cert.
+
+**After first login:** remove `BREEZE_BOOTSTRAP_ADMIN_EMAIL` and `BREEZE_BOOTSTRAP_ADMIN_PASSWORD` from `.env`, then `docker compose up -d`, so the bootstrap credential isn't left on disk.
+
+### What changed in this fork
+
+| Area | Stock Breeze | This fork |
+|---|---|---|
+| Installer reuse | 1 device per installer | Unlimited devices per installer (`CHILD_ENROLLMENT_KEY_MAX_USAGE=unlimited`) |
+| Installer lifetime | ~1 hour | ~365 days (`*_TTL_MINUTES=525600`) |
+
+- **Code:** `apps/api/src/routes/enrollmentKeys.ts` — the per-device child enrollment key and the installer-download bootstrap token now honour `CHILD_ENROLLMENT_KEY_MAX_USAGE` and the raised TTL defaults, instead of the hard-coded `maxUsage: 1` / 1-hour expiry. An explicit device-count or expiry entered at installer-creation time still wins — the env var is only the default when the field is left blank.
+- **Config** (set by `setup.sh`, mapped into the API via `docker-compose.override.yml`):
+
+  ```env
+  CHILD_ENROLLMENT_KEY_MAX_USAGE=unlimited      # per-device child keys carry no usage cap
+  CHILD_ENROLLMENT_KEY_TTL_MINUTES=525600       # 365 days
+  ENROLLMENT_KEY_DEFAULT_TTL_MINUTES=525600     # parent-key default = 365 days
+  INSTALLER_BOOTSTRAP_TOKEN_TTL_MINUTES=525600  # embedded installer token = 365 days
+  ```
+
+  > These four vars **must** live in the API service's compose `environment:` block — the stock `docker-compose.yml` doesn't map them, so `.env` alone is ignored and the API silently falls back to the 1-hour/1-use defaults. `setup.sh` handles this for you.
+
+> **Note:** one installer file embeds one token tied to the count chosen at download time. Re-running the *same* file on a machine that's already enrolled is expected to no-op/error — hand the file to *new* machines, or download a fresh one for a different device count.
+
+---
+
 ## What is Breeze?
 
 Breeze is a full-featured remote monitoring and management platform with AI built into its core — not bolted on as an afterthought.

@@ -93,6 +93,19 @@ const CHILD_ENROLLMENT_KEY_TTL_MINUTES = envInt(
   60 * 24,
 );
 
+const CHILD_ENROLLMENT_KEY_MAX_USAGE: number | null = (() => {
+  const raw = process.env.CHILD_ENROLLMENT_KEY_MAX_USAGE;
+  if (!raw || raw.toLowerCase() === "unlimited") return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+})();
+
+// installer_bootstrap_tokens.max_usage is NOT NULL with a DB CHECK >= 1, so the
+// bootstrap-token installer paths (Windows MSI, macOS app-bundle) cannot store
+// the "unlimited" (null) child-key default. Map unlimited to this finite cap —
+// it matches the .max(100000) ceiling the parent-key create/rotate schemas use.
+const BOOTSTRAP_TOKEN_UNLIMITED_MAX_USAGE = 100000;
+
 // Parent keys that are within this window of expiry are refused as installer
 // sources. Prevents a race where the admin-side parent is already live on
 // this side of the API but the install on a remote device fires 30 seconds
@@ -306,7 +319,7 @@ export async function redeemShortCode(
         name: `${parent.name} (invite download)`,
         key: tokenHash,
         keySecretHash: parent.keySecretHash,
-        maxUsage: 1,
+        maxUsage: CHILD_ENROLLMENT_KEY_MAX_USAGE,
         expiresAt: freshChildExpiresAt(),
         createdBy: null,
         installerPlatform: parent.installerPlatform,
@@ -439,7 +452,7 @@ export async function mintChildEnrollmentKey(
       siteId,
       name: input.nameSuffix ? `mcp-invite ${input.nameSuffix}` : "mcp-invite",
       key: keyHash,
-      maxUsage: input.maxUsage ?? 1,
+      maxUsage: input.maxUsage ?? CHILD_ENROLLMENT_KEY_MAX_USAGE,
       expiresAt,
       createdBy: null,
       shortCode,
@@ -967,8 +980,17 @@ enrollmentKeyRoutes.get(
     const auth = c.get("auth");
     const keyId = c.req.param("id")!;
     const platform = c.req.param("platform");
-    const { count: childMaxUsage = 1, ttlMinutes: childTtlMinutes } =
-      c.req.valid("query");
+    const { count: queryCount, ttlMinutes: queryTtl } = c.req.valid("query");
+    // When the admin leaves the device-count / expiry fields unset, fall back to
+    // the deployment defaults (CHILD_ENROLLMENT_KEY_MAX_USAGE / _TTL_MINUTES)
+    // rather than a hard-coded single-use 1. An explicit value from the form
+    // still wins — this only fills an *unset* field.
+    const childMaxUsage: number | null =
+      queryCount ?? CHILD_ENROLLMENT_KEY_MAX_USAGE;
+    const childTtlMinutes = queryTtl ?? CHILD_ENROLLMENT_KEY_TTL_MINUTES;
+    // Bootstrap tokens can't be null (see BOOTSTRAP_TOKEN_UNLIMITED_MAX_USAGE).
+    const bootstrapTokenMaxUsage =
+      childMaxUsage ?? BOOTSTRAP_TOKEN_UNLIMITED_MAX_USAGE;
 
     if (platform !== "windows" && platform !== "macos") {
       return c.json(
@@ -1058,7 +1080,7 @@ enrollmentKeyRoutes.get(
           issued = await issueBootstrapTokenForKey({
             parentEnrollmentKeyId: parentKey.id,
             createdByUserId: auth.user.id,
-            maxUsage: childMaxUsage,
+            maxUsage: bootstrapTokenMaxUsage,
           });
         } catch (err) {
           if (err instanceof BootstrapTokenIssuanceError) {
@@ -1147,7 +1169,7 @@ enrollmentKeyRoutes.get(
         issued = await issueBootstrapTokenForKey({
           parentEnrollmentKeyId: parentKey.id,
           createdByUserId: auth.user.id,
-          maxUsage: childMaxUsage,
+          maxUsage: bootstrapTokenMaxUsage,
           installerPlatform: "windows",
         });
       } catch (err) {
@@ -1253,7 +1275,7 @@ enrollmentKeyRoutes.get(
       .values({
         orgId: parentKey.orgId,
         siteId: parentKey.siteId,
-        name: `${parentKey.name} (installer${childMaxUsage > 1 ? ` x${childMaxUsage}` : ""})`,
+        name: `${parentKey.name} (installer${childMaxUsage !== null && childMaxUsage > 1 ? ` x${childMaxUsage}` : ""})`,
         key: childKeyHash,
         keySecretHash: parentKey.keySecretHash,
         maxUsage: childMaxUsage,
@@ -2021,7 +2043,7 @@ publicShortLinkRoutes.get("/:code", async (c) => {
         name: `${row.name} (short-link download)`,
         key: tokenHash,
         keySecretHash: row.keySecretHash,
-        maxUsage: 1,
+        maxUsage: CHILD_ENROLLMENT_KEY_MAX_USAGE,
         expiresAt: freshChildExpiresAt(),
         createdBy: null,
         installerPlatform: row.installerPlatform,
