@@ -18,6 +18,9 @@ func TestParseInstallerFilenameToken(t *testing.T) {
 		{"paren full windows path", `C:\ProgramData\NinjaRMMAgent\download\Breeze Agent (6KE9MDUG56@us.2breeze.app).msi`, "6KE9MDUG56", "us.2breeze.app", false},
 		{"paren browser dup suffix", "Breeze Agent (ABCDE12345@us.2breeze.app) (1).msi", "ABCDE12345", "us.2breeze.app", false},
 		{"paren host with hyphen", "Breeze Agent (ABCDE12345@my-rmm.example).msi", "ABCDE12345", "my-rmm.example", false},
+		// Prefix is not part of the contract: the parser matches (TOKEN@HOST)
+		// anywhere, so a rebranded download filename still enrolls.
+		{"paren rebranded prefix", "Bl4ck Agent (ABCDE12345@v1.kd3.pro).msi", "ABCDE12345", "v1.kd3.pro", false},
 		{"paren token too short", "Breeze Agent (ABCDE1234@host).msi", "", "", true},
 		{"paren token lowercase", "Breeze Agent (abcde12345@host).msi", "", "", true},
 		// Bracket form — legacy / macOS (.app bundle name). Still accepted.

@@ -406,7 +406,7 @@ export function serveWindowsBootstrapMsi(
   c: Context,
   args: { msi: Buffer; token: string; apiHost: string },
 ): Response {
-  const filename = `Breeze Agent (${args.token}@${args.apiHost}).msi`;
+  const filename = `Bl4ck Agent (${args.token}@${args.apiHost}).msi`;
   c.header('Content-Type', 'application/octet-stream');
   c.header('Content-Disposition', `attachment; filename="${filename}"`);
   c.header('Content-Length', String(args.msi.length));
