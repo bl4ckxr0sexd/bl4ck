@@ -7,19 +7,19 @@
 
 ## Problem
 
-Breeze is an RMM, and a large share of the MSP install base runs Ubiquiti UniFi for networking (APs, switches, gateways). Today Breeze has no visibility into that gear except whatever its own LAN discovery (`discovered_assets`) infers from ARP/SNMP scans — model, firmware, PoE state, WAN health, and adoption status are all invisible. MSPs want to see their whole UniFi fleet — every customer's consoles, devices, firmware levels, and WAN health — inside Breeze without standing up a separate UniFi dashboard or touching each site.
+BL4CK is an RMM, and a large share of the MSP install base runs Ubiquiti UniFi for networking (APs, switches, gateways). Today BL4CK has no visibility into that gear except whatever its own LAN discovery (`discovered_assets`) infers from ARP/SNMP scans — model, firmware, PoE state, WAN health, and adoption status are all invisible. MSPs want to see their whole UniFi fleet — every customer's consoles, devices, firmware levels, and WAN health — inside BL4CK without standing up a separate UniFi dashboard or touching each site.
 
-Ubiquiti now exposes a **cloud Site Manager API** (`api.ui.com`) that returns the entire fleet of consoles, sites, and devices under one Ubiquiti account via a single `X-API-KEY`, with no on-site footprint and nothing to reach behind customer NAT. It is **read-only today** (Ubiquiti has stated write endpoints are "coming"), which is a perfect fit for an inventory-and-monitoring first cut. This spec covers wiring that cloud API into Breeze: one connection per partner, mapping UniFi sites to Breeze organizations, syncing device inventory + WAN metrics into the existing network model, and recording each sync run.
+Ubiquiti now exposes a **cloud Site Manager API** (`api.ui.com`) that returns the entire fleet of consoles, sites, and devices under one Ubiquiti account via a single `X-API-KEY`, with no on-site footprint and nothing to reach behind customer NAT. It is **read-only today** (Ubiquiti has stated write endpoints are "coming"), which is a perfect fit for an inventory-and-monitoring first cut. This spec covers wiring that cloud API into Breeze: one connection per partner, mapping UniFi sites to BL4CK organizations, syncing device inventory + WAN metrics into the existing network model, and recording each sync run.
 
 ### Why cloud-first (vs. agent or legacy API)
 
-A 2026-06-27 research pass into the UniFi API surface found three other surfaces — the on-LAN Network Integration API (write-capable but needs an on-site collector + firmware ≥9.3), the Connector Proxy (cloud→local control with ~800ms latency), and the legacy cookie API (most complete but undocumented and now broken by mandatory MFA). All require either an on-site path or per-site credentials. The Site Manager cloud key needs neither and ships fleet inventory fastest. Deep telemetry and control belong in Phase 2 over the existing Breeze agent.
+A 2026-06-27 research pass into the UniFi API surface found three other surfaces — the on-LAN Network Integration API (write-capable but needs an on-site collector + firmware ≥9.3), the Connector Proxy (cloud→local control with ~800ms latency), and the legacy cookie API (most complete but undocumented and now broken by mandatory MFA). All require either an on-site path or per-site credentials. The Site Manager cloud key needs neither and ships fleet inventory fastest. Deep telemetry and control belong in Phase 2 over the existing BL4CK agent.
 
 ## Goals / Non-goals
 
 **Goals**
 - One **partner-level** UniFi cloud connection: paste a Site Manager API key, validate it, store it encrypted.
-- **Map** UniFi hosts/sites to Breeze **sites** (org derived from the site) so each console's devices route to the right customer location — and so synced devices have the `site_id` that `discovered_assets` requires.
+- **Map** UniFi hosts/sites to BL4CK **sites** (org derived from the site) so each console's devices route to the right customer location — and so synced devices have the `site_id` that `discovered_assets` requires.
 - **Sync** device inventory (model, MAC, type, firmware + upgrade-available, uptime, adoption state) and latest WAN/ISP metrics into dedicated UniFi tables at full fidelity.
 - **Link** synced UniFi devices into the existing `discovered_assets` network model (by org + MAC) so the unified network view and existing AI tools see them, without duplicating or clobbering agent-discovered rows.
 - **Record** every sync run in a ledger (`unifi_sync_runs`) — counts of created/updated/unchanged/removed per run — for an audit trail and a "what did the last sync change" view.
@@ -63,13 +63,13 @@ updated_at        timestamptz NOT NULL DEFAULT now()
 - Unique partial index: `(partner_id) WHERE is_active` — at most one active cloud connection per partner (Site Manager keys are account-wide; one per MSP is the model).
 - Policies: `breeze_has_partner_access(partner_id)` for SELECT/INSERT/UPDATE/DELETE (flat partner check, never tree traversal). Add to `PARTNER_TENANT_TABLES` in `rls-coverage.integration.test.ts`.
 
-#### `unifi_site_mappings` — UniFi site → Breeze site (RLS shape 1, direct org_id)
+#### `unifi_site_mappings` — UniFi site → BL4CK site (RLS shape 1, direct org_id)
 
 ```
 id              uuid PK
 integration_id  uuid NOT NULL REFERENCES unifi_integrations(id) ON DELETE CASCADE
 org_id          uuid NOT NULL REFERENCES organizations(id)   -- denormalized from site, for RLS + device routing
-site_id         uuid NOT NULL REFERENCES sites(id)           -- the Breeze site UniFi gear lands on
+site_id         uuid NOT NULL REFERENCES sites(id)           -- the BL4CK site UniFi gear lands on
 unifi_host_id   text NOT NULL                 -- console (UniFi OS host) id from /v1/hosts
 unifi_site_id   text NOT NULL                 -- site id from /v1/sites
 unifi_host_name text                          -- denormalized for display
@@ -80,7 +80,7 @@ created_at      timestamptz NOT NULL DEFAULT now()
 updated_at      timestamptz NOT NULL DEFAULT now()
 ```
 
-- Unique index: `(integration_id, unifi_host_id, unifi_site_id)` — a UniFi site maps to exactly one Breeze site.
+- Unique index: `(integration_id, unifi_host_id, unifi_site_id)` — a UniFi site maps to exactly one BL4CK site.
 - `org_id` is denormalized from `site_id` (a site belongs to one org) so the table is direct-`org_id` (shape 1) and device routing has the org without a join. The route layer derives `org_id` from the chosen `site_id` on write.
 - Policy: `breeze_has_org_access(org_id)` (FOR ALL). Partner admins reach these through org membership. Unmapped sites are simply not synced. Direct-`org_id` (shape 1) needs no allowlist entry.
 
@@ -175,7 +175,7 @@ All mutating web handlers go through `runAction` on the web side (per the web mu
 
 Mounted on the existing Integrations page (parallel to `QuickbooksIntegration.tsx`). States:
 1. **Disconnected:** API-key input + "how to generate a Site Manager key at unifi.ui.com" help text → POST `/unifi/connect`.
-2. **Connected — mapping:** table of discovered hosts/sites, each with a Breeze **site** selector (grouped by org) → PUT `/unifi/mappings`. The route derives `org_id` from the chosen site. Self-hosted / non-UniFi-OS consoles shown as unsupported.
+2. **Connected — mapping:** table of discovered hosts/sites, each with a BL4CK **site** selector (grouped by org) → PUT `/unifi/mappings`. The route derives `org_id` from the chosen site. Self-hosted / non-UniFi-OS consoles shown as unsupported.
 3. **Connected — synced:** last sync time/status, "Sync now" button, and a collapsible **sync-run history** table (the ledger) showing per-run created/updated/removed counts. Disconnect button.
 
 ### Data flow
@@ -233,8 +233,8 @@ Drill-down reads unifi_devices for UniFi-specific fields
 
 ## Future Phases (out of scope, recorded for continuity)
 
-- **Phase 2 — agent-side deep telemetry + control.** Breeze Go agent polls the **local** Network Integration API (`/proxy/network/integration/v1`, firmware ≥9.3) or legacy cookie API (read-only local admin to dodge mandatory MFA) for clients, PoE per-port, throughput, DPI, events. Surfaces control actions (restart, PoE power-cycle, block client, firmware upgrade) via the local API on-site, or the Connector Proxy (~800ms) when only the cloud key exists. This is the competitive differentiator and leverages the agent Breeze already deploys.
-- **Phase 3 — event push.** Subscribe UniFi **Alarm Manager webhooks** (client connect/disconnect, WAN down, PoE loss, threats) into Breeze's alerting pipeline; optionally CEF syslog into the log pipeline. Replaces poll-only freshness with real-time events.
+- **Phase 2 — agent-side deep telemetry + control.** BL4CK Go agent polls the **local** Network Integration API (`/proxy/network/integration/v1`, firmware ≥9.3) or legacy cookie API (read-only local admin to dodge mandatory MFA) for clients, PoE per-port, throughput, DPI, events. Surfaces control actions (restart, PoE power-cycle, block client, firmware upgrade) via the local API on-site, or the Connector Proxy (~800ms) when only the cloud key exists. This is the competitive differentiator and leverages the agent BL4CK already deploys.
+- **Phase 3 — event push.** Subscribe UniFi **Alarm Manager webhooks** (client connect/disconnect, WAN down, PoE loss, threats) into BL4CK's alerting pipeline; optionally CEF syslog into the log pipeline. Replaces poll-only freshness with real-time events.
 - **Cloud write:** when Ubiquiti enables write on Site Manager keys, control actions can move to the cloud path for sites without an agent.
 
 ## Rollback / risk

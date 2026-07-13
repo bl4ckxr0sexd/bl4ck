@@ -103,7 +103,7 @@ export function VulnEmptyState({
           <ScanSearch aria-hidden="true" className="mx-auto h-8 w-8" />
           <p className="mt-3 text-base font-semibold text-foreground">No vulnerability findings yet</p>
           <p className="mt-1">
-            Breeze checks each device&apos;s software and OS inventory against known CVEs and queues anything that
+            BL4CK checks each device&apos;s software and OS inventory against known CVEs and queues anything that
             needs patching, mitigation, or risk acceptance here.
           </p>
           <p className="mt-2">

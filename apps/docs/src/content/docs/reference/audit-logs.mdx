@@ -1,6 +1,6 @@
 ---
 title: Audit Logs
-description: Track every action across your Breeze environment with comprehensive audit trails, agent diagnostics, and event logs.
+description: Track every action across your BL4CK environment with comprehensive audit trails, agent diagnostics, and event logs.
 sidebar:
   order: 6
   label: Audit Logs
@@ -8,21 +8,21 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze RMM provides three distinct logging systems that together give you full visibility into platform activity, agent health, and device-level events. Each system serves a different purpose and is stored in its own database table with dedicated API endpoints.
+BL4CK RMM provides three distinct logging systems that together give you full visibility into platform activity, agent health, and device-level events. Each system serves a different purpose and is stored in its own database table with dedicated API endpoints.
 
 ## Log Types Overview
 
 | Log Type | Purpose | Source | Database Table |
 |---|---|---|---|
 | **Platform Audit Logs** | Track user, API key, agent, and system actions across the platform | API server | `audit_logs` |
-| **Agent Diagnostic Logs** | Capture internal agent runtime diagnostics (debug, info, warn, error) | Breeze agent | `agent_logs` |
+| **Agent Diagnostic Logs** | Capture internal agent runtime diagnostics (debug, info, warn, error) | BL4CK agent | `agent_logs` |
 | **Device Event Logs** | Collect OS-level event logs from managed devices (security, hardware, application, system) | Managed devices | `device_event_logs` |
 
 ---
 
 ## Platform Audit Logs
 
-Platform audit logs record every significant action taken within your Breeze environment. They are the primary compliance and security trail.
+Platform audit logs record every significant action taken within your BL4CK environment. They are the primary compliance and security trail.
 
 ### Audit Log Fields
 
@@ -50,13 +50,13 @@ Each audit log entry contains the following fields:
 
 ### Actor Types
 
-Breeze tracks four types of actors:
+BL4CK tracks four types of actors:
 
 | Actor Type | Description | Example Actions |
 |---|---|---|
 | `user` | A human user authenticated via JWT | Logging in, updating a device, exporting data |
 | `api_key` | An API key (prefix `brz_`) used for programmatic access | Automated script execution, integrations |
-| `agent` | A Breeze agent running on a managed device | Submitting event logs, heartbeat updates |
+| `agent` | A BL4CK agent running on a managed device | Submitting event logs, heartbeat updates |
 | `system` | Internal platform operations with no human actor | Scheduled cleanups, automated policy evaluations |
 
 When a non-UUID actor ID is provided (e.g., an agent string identifier), the system stores a zero UUID as the `actorId` and preserves the original value in the `details` JSONB field under the key `rawActorId`. The same treatment applies to non-UUID `resourceId` values, stored as `rawResourceId` in details.
@@ -152,7 +152,7 @@ Audit log retention is configured per organization in the `audit_retention_polic
 
 ## Agent Diagnostic Logs
 
-Agent diagnostic logs capture internal runtime information from the Breeze agent running on managed devices. These are useful for troubleshooting agent connectivity, update failures, and component-level issues.
+Agent diagnostic logs capture internal runtime information from the BL4CK agent running on managed devices. These are useful for troubleshooting agent connectivity, update failures, and component-level issues.
 
 ### Agent Log Fields
 
@@ -278,7 +278,7 @@ Query stored event logs for a device via `GET /devices/:id/eventlogs`:
 
 ### Live Event Log Queries
 
-For real-time inspection, Breeze can query the Windows Event Log (or equivalent) directly on a device by sending commands through the agent. These are available under both the `/system-tools/` and `/devices/` route namespaces.
+For real-time inspection, BL4CK can query the Windows Event Log (or equivalent) directly on a device by sending commands through the agent. These are available under both the `/system-tools/` and `/devices/` route namespaces.
 
 #### List Available Event Logs
 

@@ -18,7 +18,7 @@ interface Props {
 
 /**
  * VNC remote desktop via tunnel relay. Creates a TCP tunnel to the device's
- * VNC server (localhost:5900) and launches the Breeze viewer in VNC mode
+ * VNC server (localhost:5900) and launches the BL4CK viewer in VNC mode
  * or falls back to an in-browser noVNC viewer.
  */
 export default function ConnectVncButton({

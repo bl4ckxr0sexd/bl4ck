@@ -1,5 +1,5 @@
 /**
- * Auto-scroll pinning logic for the Breeze AI chat panel (#1713).
+ * Auto-scroll pinning logic for the BL4CK AI chat panel (#1713).
  *
  * Standard chat UX: keep the viewport anchored to the bottom while new messages
  * stream in, but stop yanking the user down once they scroll up to read history.

@@ -5,9 +5,9 @@ description: Browse files, manage processes and services, edit the Windows regis
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-System Tools provide a suite of remote administration capabilities that let technicians inspect and manage managed devices directly from the Breeze dashboard. You access System Tools from a device's detail page by opening the **Remote Tools** panel, which organizes all tools into a tabbed interface.
+System Tools provide a suite of remote administration capabilities that let technicians inspect and manage managed devices directly from the BL4CK dashboard. You access System Tools from a device's detail page by opening the **Remote Tools** panel, which organizes all tools into a tabbed interface.
 
-Every operation is dispatched to the Breeze agent running on the target device via the command queue. All mutating actions (killing processes, starting/stopping services, editing the registry, uploading files, running/enabling/disabling scheduled tasks) are recorded in the audit log.
+Every operation is dispatched to the BL4CK agent running on the target device via the command queue. All mutating actions (killing processes, starting/stopping services, editing the registry, uploading files, running/enabling/disabling scheduled tasks) are recorded in the audit log.
 
 <Aside>
   System Tools require authentication with MFA and a role that includes the `devices.read` permission for read operations or `devices.execute` for mutating operations.
@@ -171,7 +171,7 @@ The **Services** tab lists all system services with their current status. Use it
 - **View services.** Each service shows its name, display name, status (Running, Stopped, Paused, Starting, Stopping), startup type (Automatic, Manual, Disabled), and service account.
 - **Search and filter.** Search by service name and filter by status (e.g., show only running services or only stopped services).
 - **Start, stop, or restart.** Click the corresponding action button next to a service. The action is sent to the agent and the service list refreshes automatically.
-- **Agent service detection.** If you restart the Breeze agent service itself, the UI displays a "Agent Restarting" banner and automatically polls until the agent reconnects.
+- **Agent service detection.** If you restart the BL4CK agent service itself, the UI displays a "Agent Restarting" banner and automatically polls until the agent reconnects.
 
 <Aside>
   The Services tab appears only on Windows devices in the Remote Tools panel. On Linux and macOS, service management is available through the Terminal tab using systemctl or launchctl.

@@ -89,7 +89,7 @@ export function VulnBulkActionModal({
     ? `Installs the approved patch for each CVE on ${plural(deviceCount, 'device')} (${plural(count, 'finding')}). Findings without an approved, applicable patch are skipped.`
     : isAccept
       ? `Hides ${plural(count, 'finding')} on ${plural(deviceCount, 'device')} from the open queue until the date you set. They do not reopen automatically — expiring acceptances surface in the “Accepted, expiring soon” card.`
-      : `Marks ${plural(count, 'finding')} on ${plural(deviceCount, 'device')} mitigated, with your note recorded as the compensating control. Breeze does not change the devices.`;
+      : `Marks ${plural(count, 'finding')} on ${plural(deviceCount, 'device')} mitigated, with your note recorded as the compensating control. BL4CK does not change the devices.`;
 
   return (
     <Dialog

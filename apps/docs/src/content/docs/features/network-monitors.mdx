@@ -9,13 +9,13 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Overview
 
-Network Monitors let you define recurring checks against IP addresses, hostnames, ports, HTTP endpoints, and DNS records. Breeze dispatches each check through a connected agent in the same organization via WebSocket, records the result, and updates the monitor's status. Monitors can optionally be linked to a discovered asset so that availability data appears alongside the asset's SNMP and discovery information.
+Network Monitors let you define recurring checks against IP addresses, hostnames, ports, HTTP endpoints, and DNS records. BL4CK dispatches each check through a connected agent in the same organization via WebSocket, records the result, and updates the monitor's status. Monitors can optionally be linked to a discovered asset so that availability data appears alongside the asset's SNMP and discovery information.
 
 All monitor operations require authentication and one of the `organization`, `partner`, or `system` scopes. Organization-scoped users are automatically restricted to monitors within their own organization.
 
 ## Monitor Types
 
-Breeze supports four monitor types, stored in the `monitor_type` PostgreSQL enum:
+BL4CK supports four monitor types, stored in the `monitor_type` PostgreSQL enum:
 
 | Type | DB Value | What It Checks |
 |---|---|---|

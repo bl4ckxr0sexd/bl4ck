@@ -1,6 +1,6 @@
 ---
 title: Enrollment Keys
-description: Create, scope, rotate, and manage enrollment keys for onboarding agents into Breeze RMM.
+description: Create, scope, rotate, and manage enrollment keys for onboarding agents into BL4CK RMM.
 sidebar:
   order: 6
   label: Enrollment Keys
@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Enrollment keys are short-lived, usage-limited tokens that authorize new agents to register with the Breeze API. Each key is scoped to an organization and optionally pinned to a specific site, ensuring that agents land in the correct place in the multi-tenant hierarchy without exposing long-lived credentials.
+Enrollment keys are short-lived, usage-limited tokens that authorize new agents to register with the BL4CK API. Each key is scoped to an organization and optionally pinned to a specific site, ensuring that agents land in the correct place in the multi-tenant hierarchy without exposing long-lived credentials.
 
 ---
 
@@ -333,7 +333,7 @@ Every enrollment key operation is recorded in the audit log:
 
 ## Multi-Tenant Access Control
 
-Enrollment key management respects the Breeze multi-tenant hierarchy:
+Enrollment key management respects the BL4CK multi-tenant hierarchy:
 
 | User Scope | Behavior |
 |------------|----------|

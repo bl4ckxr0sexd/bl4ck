@@ -1,8 +1,8 @@
-# Breeze RMM User Guide
+# BL4CK RMM User Guide
 
 > **Note: Screenshots are being updated and may not display correctly.**
 
-Welcome to Breeze RMM, your modern Remote Monitoring and Management platform. This guide will help you get started and make the most of all the features available to manage your IT infrastructure.
+Welcome to BL4CK RMM, your modern Remote Monitoring and Management platform. This guide will help you get started and make the most of all the features available to manage your IT infrastructure.
 
 ---
 
@@ -22,9 +22,9 @@ Welcome to Breeze RMM, your modern Remote Monitoring and Management platform. Th
 
 ### Logging In
 
-To access Breeze RMM:
+To access BL4CK RMM:
 
-1. Open your web browser and navigate to your Breeze RMM URL
+1. Open your web browser and navigate to your BL4CK RMM URL
 2. Enter your email address and password
 3. Click **Sign In**
 
@@ -105,7 +105,7 @@ We strongly recommend enabling MFA to secure your account. Here is how:
 
 ## 2. Device Management
 
-Devices are the endpoints (computers, servers, workstations) that have the Breeze agent installed and are being monitored.
+Devices are the endpoints (computers, servers, workstations) that have the BL4CK agent installed and are being monitored.
 
 ### Viewing Devices
 
@@ -200,7 +200,7 @@ Devices are automatically added based on rules you define. For example:
 
 ### Hardware and Software Inventory
 
-Breeze automatically collects detailed inventory information from all managed devices.
+BL4CK automatically collects detailed inventory information from all managed devices.
 
 **Hardware Inventory:**
 Access comprehensive hardware details including CPU specifications, memory, storage, and serial numbers. This is invaluable for:
@@ -250,7 +250,7 @@ Navigate to **Scripts** to access your script library.
 
 The library contains:
 
-- **System Scripts** - Pre-built scripts provided by Breeze for common tasks
+- **System Scripts** - Pre-built scripts provided by BL4CK for common tasks
 - **Organization Scripts** - Custom scripts created by your team
 - **Categories** - Scripts organized by purpose (Maintenance, Security, Inventory, etc.)
 
@@ -478,7 +478,7 @@ To create an escalation policy:
 
 ## 5. Remote Access
 
-Breeze provides secure remote access to your managed devices for troubleshooting and administration.
+BL4CK provides secure remote access to your managed devices for troubleshooting and administration.
 
 ### Remote Terminal Sessions
 
@@ -632,7 +632,7 @@ Available events:
 
 ### Policy Compliance
 
-Policies define the desired state for your devices. Breeze monitors compliance and can automatically remediate issues.
+Policies define the desired state for your devices. BL4CK monitors compliance and can automatically remediate issues.
 
 Navigate to **Policies** to manage compliance policies.
 
@@ -809,8 +809,8 @@ If you have questions or need assistance:
 - **Support** - Contact your IT administrator or support team
 - **Keyboard Shortcuts** - Press `?` anywhere in the app to see available shortcuts
 
-Thank you for using Breeze RMM. We are here to help you manage your IT infrastructure efficiently and securely.
+Thank you for using BL4CK RMM. We are here to help you manage your IT infrastructure efficiently and securely.
 
 ---
 
-*This documentation is for Breeze RMM. For technical documentation and API reference, please see the developer documentation.*
+*This documentation is for BL4CK RMM. For technical documentation and API reference, please see the developer documentation.*

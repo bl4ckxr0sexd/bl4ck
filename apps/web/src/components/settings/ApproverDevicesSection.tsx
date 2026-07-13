@@ -12,7 +12,7 @@ import { showToast } from '../shared/Toast';
 import { formatAbsolute, formatRelative } from '../account/relativeTime';
 
 /**
- * Profile "Approval security" section (Breeze Authenticator Phase 2).
+ * Profile "Approval security" section (BL4CK Authenticator Phase 2).
  *
  * Mirrors the ProfilePage passkey list + MobileDevicesPage revoke/confirm
  * pattern, but swaps the data source to the typed `stores/authenticator`
@@ -141,7 +141,7 @@ export default function ApproverDevicesSection() {
         <h2 className="text-lg font-semibold">Approval security</h2>
         <p className="text-sm text-muted-foreground">
           These devices can confirm high-risk approvals (privileged access, AI actions) with a
-          biometric. Your phone registers itself automatically when you sign in to the Breeze mobile
+          biometric. Your phone registers itself automatically when you sign in to the BL4CK mobile
           app; you can also register this browser with Windows Hello or Touch ID. All of this is
           optional — approvals still work without it.
         </p>
@@ -172,7 +172,7 @@ export default function ApproverDevicesSection() {
             data-testid="approver-devices-empty"
             className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground"
           >
-            No approver devices registered yet. Sign in to the Breeze mobile app on your phone and it
+            No approver devices registered yet. Sign in to the BL4CK mobile app on your phone and it
             appears here automatically, or register this browser below to approve with a biometric.
           </div>
         ) : (

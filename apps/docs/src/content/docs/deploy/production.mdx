@@ -1,6 +1,6 @@
 ---
 title: Production Deployment
-description: Deploy Breeze RMM to production with Docker Compose and automatic TLS.
+description: Deploy BL4CK RMM to production with Docker Compose and automatic TLS.
 sidebar:
   order: 1
   label: Production Deploy
@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze ships as pre-built Docker images on GitHub Container Registry. A single `docker compose up -d` brings up a fully working production stack with automatic TLS.
+BL4CK ships as pre-built Docker images on GitHub Container Registry. A single `docker compose up -d` brings up a fully working production stack with automatic TLS.
 
 ## What Gets Deployed
 
@@ -78,13 +78,13 @@ The customer portal is served under the `/portal` path on your main domain (for 
    # Self-hosted by default. Set to "true" only if you're running the hosted SaaS edition.
    IS_HOSTED=false
 
-   # Trust anchor (raw base64 Ed25519 public key) for the official Breeze GitHub
+   # Trust anchor (raw base64 Ed25519 public key) for the official BL4CK GitHub
    # releases. This is a public key — also embedded in the agent and CI — so it is
    # safe to commit. Leave the default below unless you build and sign your own binaries.
    RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS=yzx8ftmcls6uBetFC5SYnZhBo+cbur3IX50TbBthTso=
    ```
 
-   If Breeze is behind a reverse proxy, also set `TRUST_PROXY_HEADERS=true` and list the proxy's CIDRs in `TRUSTED_PROXY_CIDRS`. See [Environment Variables](/deploy/environment/) for details.
+   If BL4CK is behind a reverse proxy, also set `TRUST_PROXY_HEADERS=true` and list the proxy's CIDRs in `TRUSTED_PROXY_CIDRS`. See [Environment Variables](/deploy/environment/) for details.
 
 4. **Configure TURN server**
 

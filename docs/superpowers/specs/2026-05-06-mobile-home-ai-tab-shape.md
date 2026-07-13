@@ -4,9 +4,9 @@
 
 ## 1. Feature Summary
 
-The Home tab is the daily-use surface of Breeze Mobile. A single-thread AI conversation: text in, AI response out, with structured **inline blocks** (device cards, fleet-status rows) that render as the AI invokes tools. Status pill at the top reinforces ambient trust — connected, nothing critical pending. The composer is thumb-zone anchored. Avatar opens settings as a side sheet, never a separate tab.
+The Home tab is the daily-use surface of BL4CK Mobile. A single-thread AI conversation: text in, AI response out, with structured **inline blocks** (device cards, fleet-status rows) that render as the AI invokes tools. Status pill at the top reinforces ambient trust — connected, nothing critical pending. The composer is thumb-zone anchored. Avatar opens settings as a side sheet, never a separate tab.
 
-This is the same AI agent the Breeze Helper desktop app talks to today; mobile just consumes the existing SSE protocol and renders selected `tool_result` events as visual blocks instead of inline markdown.
+This is the same AI agent the BL4CK Helper desktop app talks to today; mobile just consumes the existing SSE protocol and renders selected `tool_result` events as visual blocks instead of inline markdown.
 
 ## 2. Primary User Action
 
@@ -64,7 +64,7 @@ Per-surface override: nothing visually overrides DESIGN.md; this is the canonica
   2. *"Show fleet status"* (queries device aggregate)
   3. *"What ran via MCP today?"* (queries audit log)
 - Chips are Surface 2 fill, Body Medium type, rounded.lg, 1px transparent border that becomes brand-teal on press. Tap a chip → it lifts into the composer (replaces the placeholder with the chip text), then sends. Subtle haptic.tap on press.
-- A muted single line above the chips: *"Ask Breeze."* in Text Medium. No more.
+- A muted single line above the chips: *"Ask BL4CK."* in Text Medium. No more.
 
 ### Streaming
 - The user message renders immediately on send (optimistic).
@@ -137,7 +137,7 @@ Per-surface override: nothing visually overrides DESIGN.md; this is the canonica
 - Default: brand-teal 6px dot, no text. (Glanceable trust without literal "Connected".)
 
 **Cold-open lead line** (single line above the chip row):
-- *"Ask Breeze."*
+- *"Ask BL4CK."*
 
 **Cold-open chip labels:**
 - *"What broke last night?"*
@@ -145,7 +145,7 @@ Per-surface override: nothing visually overrides DESIGN.md; this is the canonica
 - *"What ran via MCP today?"*
 
 **Composer placeholder:**
-- Default: *"Ask Breeze."*
+- Default: *"Ask BL4CK."*
 - Offline: *"Reconnect to ask."*
 
 **Streaming captions (mid-stream tool indicators):**

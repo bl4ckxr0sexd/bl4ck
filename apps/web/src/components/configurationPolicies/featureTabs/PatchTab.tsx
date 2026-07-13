@@ -427,11 +427,11 @@ export default function PatchTab({ policyId, existingLink, onLinkChanged, linked
         <h3 className="text-sm font-semibold">Windows Update Source</h3>
         <div className="mt-2 flex items-center justify-between rounded-md border bg-background px-4 py-3">
           <div className="pr-4">
-            <p className="text-sm font-medium">Manage Windows Update exclusively through Breeze</p>
+            <p className="text-sm font-medium">Manage Windows Update exclusively through BL4CK</p>
             <p className="text-xs text-muted-foreground">
               Suppresses the endpoint&apos;s native Windows Update automatic-install channel so updates only
-              flow through Breeze&apos;s approval rings — preventing unexpected reboots and patches outside
-              your schedule. Windows-only; Breeze&apos;s own scan/approve/install path is unaffected. Reverts
+              flow through BL4CK&apos;s approval rings — preventing unexpected reboots and patches outside
+              your schedule. Windows-only; BL4CK&apos;s own scan/approve/install path is unaffected. Reverts
               cleanly when disabled (a pre-existing admin Group Policy is left untouched).
             </p>
           </div>

@@ -49,16 +49,16 @@ Incidents progress through five statuses with enforced transitions:
 
 The Incidents view shows a single feed that mixes two kinds of rows:
 
-- **Tracked incidents** — full incident records created and managed inside Breeze, following the lifecycle described above.
-- **EDR findings** — raw detections surfaced read-only from a connected EDR provider (Huntress or SentinelOne). These aren't Breeze incidents yet — they're detections your EDR reported that haven't been brought into Breeze's incident workflow.
+- **Tracked incidents** — full incident records created and managed inside BL4CK, following the lifecycle described above.
+- **EDR findings** — raw detections surfaced read-only from a connected EDR provider (Huntress or SentinelOne). These aren't BL4CK incidents yet — they're detections your EDR reported that haven't been brought into BL4CK's incident workflow.
 
 Both row types are sorted together by severity and detection time. Each EDR finding shows which provider it came from and **links out to the originating console** — clicking a Huntress finding opens that detection in Huntress; clicking a SentinelOne finding opens it in the SentinelOne console.
 
 ### Promoting a finding to a tracked incident
 
-Findings are read-only until you decide one is worth tracking. Click **Promote to Incident** on a finding row to create a real tracked incident from it — the new incident references the originating finding (via `sourceType` / `sourceRef`, see [Creating an Incident](#creating-an-incident)) so Breeze knows it's already been handled.
+Findings are read-only until you decide one is worth tracking. Click **Promote to Incident** on a finding row to create a real tracked incident from it — the new incident references the originating finding (via `sourceType` / `sourceRef`, see [Creating an Incident](#creating-an-incident)) so BL4CK knows it's already been handled.
 
-Promoting the same finding a second time is blocked — Breeze returns a conflict ("This finding has already been promoted to an incident") instead of creating a duplicate. If you see this, look for the existing tracked incident in the feed rather than retrying.
+Promoting the same finding a second time is blocked — BL4CK returns a conflict ("This finding has already been promoted to an incident") instead of creating a duplicate. If you see this, look for the existing tracked incident in the feed rather than retrying.
 
 ### Who sees what
 
@@ -102,7 +102,7 @@ Authorization: Bearer <token>
 
 The incident is created with status `detected` and an initial timeline entry.
 
-Setting `sourceType` and `sourceRef` together is how a finding is promoted into a tracked incident — it's what the **Promote to Incident** button in the feed does under the hood. Breeze only lets a given finding be promoted once: submitting the same `sourceType`/`sourceRef` pair again returns `409 Conflict` rather than creating a second incident for the same finding.
+Setting `sourceType` and `sourceRef` together is how a finding is promoted into a tracked incident — it's what the **Promote to Incident** button in the feed does under the hood. BL4CK only lets a given finding be promoted once: submitting the same `sourceType`/`sourceRef` pair again returns `409 Conflict` rather than creating a second incident for the same finding.
 
 ---
 

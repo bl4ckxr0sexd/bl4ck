@@ -181,7 +181,7 @@ Replace lines 608-749 (the entire function, from `// enrollDevice handles ...` t
 
 ```go
 // enrollDevice handles the enrollment process to register this agent with
-// the Breeze server. Respects --force (re-enroll over existing config) and
+// the BL4CK server. Respects --force (re-enroll over existing config) and
 // --quiet (suppress stdout progress, errors still go to stderr). Writes
 // structured logs to the agent log file so MSI-initiated enrollments leave
 // the same diagnostic trail as service-initiated ones.
@@ -1052,7 +1052,7 @@ EOF
 **Prerequisites:**
 - A clean (never-enrolled) Windows VM. Windows Server 2022 AND Windows 11 both, if possible.
 - `%ProgramData%\Breeze\` empty or absent.
-- A reachable Breeze server with a valid enrollment key.
+- A reachable BL4CK server with a valid enrollment key.
 - `dist\breeze-agent.msi` built with all changes from Tasks 1-6 applied.
 
 **Files:** None (validation only).
@@ -1097,7 +1097,7 @@ Get-Content "$env:ProgramData\Breeze\logs\agent.log" | Select-String "enrollment
 
 Expected: multiple structured log lines including `starting enrollment`, `sending enrollment request`, and `enrollment successful`. This is the big diagnostic improvement over today — MSI-initiated enrollments now leave a trace in `agent.log`.
 
-- [ ] **Step 5: Verify the device appears in the Breeze dashboard**
+- [ ] **Step 5: Verify the device appears in the BL4CK dashboard**
 
 Open the web dashboard → Devices → confirm the new device appears and its status is online. Heartbeat should update within ~60s.
 

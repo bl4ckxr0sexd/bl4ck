@@ -35,7 +35,7 @@ describe('OrgApprovalSecurityTab', () => {
     }
   });
 
-  it('does not offer assurance levels below the Breeze floor (raise-only)', async () => {
+  it('does not offer assurance levels below the BL4CK floor (raise-only)', async () => {
     render(<OrgApprovalSecurityTab />);
     await waitFor(() => screen.getByTestId('level-critical'));
     // critical floor is L4 → the only option offered is 4

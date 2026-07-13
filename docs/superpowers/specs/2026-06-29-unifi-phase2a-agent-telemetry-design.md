@@ -4,13 +4,13 @@
 **Status:** Design — awaiting spec review
 **Branch:** `feat/unifi-network-integration` (continues the Phase 1 work)
 **Builds on:** `docs/superpowers/specs/2026-06-28-unifi-network-integration-design.md` (Phase 1, shipped)
-**Scope:** Phase 2a only — **read-only** deep telemetry collected by the Breeze agent from the on-site UniFi controller. Control/write actions (restart, PoE power-cycle, block client, firmware upgrade) are **Phase 2b** and out of scope here. Event push (Alarm Manager webhooks) remains **Phase 3**.
+**Scope:** Phase 2a only — **read-only** deep telemetry collected by the BL4CK agent from the on-site UniFi controller. Control/write actions (restart, PoE power-cycle, block client, firmware upgrade) are **Phase 2b** and out of scope here. Event push (Alarm Manager webhooks) remains **Phase 3**.
 
 ## Problem
 
-Phase 1 wired Ubiquiti's **cloud** Site Manager API (`api.ui.com`) into Breeze: a partner pastes one API key, maps UniFi hosts/sites to Breeze sites, and Breeze syncs fleet **inventory** (model, MAC, firmware, uptime, adoption) plus latest WAN/ISP metrics. That cloud key is read-only and deliberately shallow — it cannot see per-port PoE state, throughput, or the **clients** (stations) attached to each device. Those live only on the on-site controller's local API.
+Phase 1 wired Ubiquiti's **cloud** Site Manager API (`api.ui.com`) into Breeze: a partner pastes one API key, maps UniFi hosts/sites to BL4CK sites, and BL4CK syncs fleet **inventory** (model, MAC, firmware, uptime, adoption) plus latest WAN/ISP metrics. That cloud key is read-only and deliberately shallow — it cannot see per-port PoE state, throughput, or the **clients** (stations) attached to each device. Those live only on the on-site controller's local API.
 
-The competitive opening for Breeze is that it **already deploys an agent** at most of these sites. That agent can reach the local UniFi controller behind customer NAT and pull the deep, per-port, per-client telemetry the cloud key can't — without standing up a separate collector or asking the customer to expose anything. Phase 2a does exactly that, read-only: a designated agent polls the controller's official **Network Integration API** and pushes device + client telemetry into Breeze, linked to the network model Phase 1 already populates.
+The competitive opening for BL4CK is that it **already deploys an agent** at most of these sites. That agent can reach the local UniFi controller behind customer NAT and pull the deep, per-port, per-client telemetry the cloud key can't — without standing up a separate collector or asking the customer to expose anything. Phase 2a does exactly that, read-only: a designated agent polls the controller's official **Network Integration API** and pushes device + client telemetry into BL4CK, linked to the network model Phase 1 already populates.
 
 ### Why agent-side + official Network Integration API
 
@@ -22,7 +22,7 @@ A 2026-06-27 research pass found four UniFi surfaces. The **cloud Site Manager A
 - **One collector per UniFi console/host.** A console runs a single local controller serving all its sites, so deep telemetry is configured **once per console**, attached to the Phase 1 `unifi_site_mappings` for that host.
 - **Designate a collector agent** (an online `devices` row at that site) to do the polling, chosen via the network-proxy "bridge-agent picker" UX.
 - **Read-only poll** of the local Network Integration API for: per-device port/PoE detail, device health (uptime, cpu/mem, tx/rx counters, client count), and currently-associated clients.
-- **Push batched telemetry** up to Breeze, reconcile into **current-state** tables (snapshot semantics: upsert seen, mark disappeared stale — identical to Phase 1's device handling).
+- **Push batched telemetry** up to BL4CK, reconcile into **current-state** tables (snapshot semantics: upsert seen, mark disappeared stale — identical to Phase 1's device handling).
 - **Link** clients to the existing `discovered_assets` network model by `(org_id, mac)` **only when a row already exists** (enrich, never create), so the unified view and AI tools see them without flooding `discovered_assets` with phones/IoT.
 - Strict tenant isolation: org-axis RLS on all three new tables, enforced at the DB layer per the RLS contract; the local API key encrypted at rest.
 
@@ -42,7 +42,7 @@ Three new tables, one new agent Go package, one agent ingest route + BullMQ work
 UniFi console (firmware ≥9.3, local API key)
       ▲  read-only GETs (/proxy/network/integration/v1/...)
       │
-[ Breeze agent: agent/internal/unifi ]  ── collector_device_id chosen per console
+[ BL4CK agent: agent/internal/unifi ]  ── collector_device_id chosen per console
       │  POST /agent/unifi-telemetry  (agent-role auth, batched payload)
       ▼
 [ API route ] → enqueue (runOutsideDbContext) → BullMQ `unifi-telemetry`
@@ -56,7 +56,7 @@ UniFi console (firmware ≥9.3, local API key)
 
 ### Onboarding & config model
 
-`unifi_collectors` is the new config row, **one per `(integration_id, unifi_host_id)`**. The local controller is identified by the Phase 1 `unifi_host_id` (console id); the Breeze org/site for any polled device or client is resolved through the existing `unifi_site_mappings` (`unifi_host_id` + `unifi_site_id`). The operator enables deep telemetry for a console from the Phase 1 mapping panel: pick a collector agent (online `devices` row at that site), enter the controller URL + local API key, save.
+`unifi_collectors` is the new config row, **one per `(integration_id, unifi_host_id)`**. The local controller is identified by the Phase 1 `unifi_host_id` (console id); the BL4CK org/site for any polled device or client is resolved through the existing `unifi_site_mappings` (`unifi_host_id` + `unifi_site_id`). The operator enables deep telemetry for a console from the Phase 1 mapping panel: pick a collector agent (online `devices` row at that site), enter the controller URL + local API key, save.
 
 The server pushes the collector config (controller URL, **decrypted** local key, poll interval) to the chosen agent over the existing agent config channel — the local key into `secrets.yaml` (locked perms), the URL + schedule into `agent.yaml`. The key crossing to a trusted agent matches how existing backup S3 / SNMP secrets are delivered.
 
@@ -70,7 +70,7 @@ All migrations idempotent (`IF NOT EXISTS`, `DO $$` guards, `pg_policies` existe
 id                    uuid PK default gen_random_uuid()
 integration_id        uuid NOT NULL REFERENCES unifi_integrations(id) ON DELETE CASCADE
 org_id                uuid NOT NULL REFERENCES organizations(id)        -- denormalized for RLS
-site_id               uuid NOT NULL REFERENCES sites(id)                -- the Breeze site this console serves
+site_id               uuid NOT NULL REFERENCES sites(id)                -- the BL4CK site this console serves
 unifi_host_id         text NOT NULL                                     -- Phase 1 console id
 collector_device_id   uuid NOT NULL REFERENCES devices(id)             -- the agent that polls
 controller_url        text NOT NULL                                     -- e.g. https://192.168.1.1
@@ -88,7 +88,7 @@ updated_at            timestamptz NOT NULL DEFAULT now()
 UNIQUE (integration_id, unifi_host_id)
 ```
 
-> `org_id`/`site_id` are denormalized onto the collector for org-axis RLS and routing. They are the **collector agent's** org/site — the agent (`collector_device_id`) physically lives at one site, so the config row is scoped to that org. Individual devices/clients resolve their **own** site/org per row via `unifi_site_mappings` (so a console whose UniFi sites map to several Breeze sites — even several orgs — still routes each telemetry row correctly; only the config row is anchored to the collector agent's org).
+> `org_id`/`site_id` are denormalized onto the collector for org-axis RLS and routing. They are the **collector agent's** org/site — the agent (`collector_device_id`) physically lives at one site, so the config row is scoped to that org. Individual devices/clients resolve their **own** site/org per row via `unifi_site_mappings` (so a console whose UniFi sites map to several BL4CK sites — even several orgs — still routes each telemetry row correctly; only the config row is anchored to the collector agent's org).
 
 #### `unifi_device_telemetry` — latest per-device telemetry (RLS shape 1, org-axis)
 
@@ -201,6 +201,6 @@ Additive to `apps/web/src/components/integrations/UnifiIntegration.tsx`:
 
 ## Future Phases (recorded for continuity)
 
-- **Phase 2b — control actions.** restart device, PoE port power-cycle, block/unblock client, firmware upgrade — issued through the agent to the same local API, governed by `requireMfa` + `requirePermission(DEVICES_EXECUTE)` + audit (and, when wired, Breeze Authenticator step-up), using the synchronous `http_request`/`agentCommandAwait` request-response path. This is the write counterpart to 2a's reads.
-- **Phase 3 — event push.** UniFi Alarm Manager webhooks (client connect/disconnect, WAN down, PoE loss, threats) into Breeze alerting; optional CEF syslog into the log pipeline. Replaces poll-only freshness with real-time events.
+- **Phase 2b — control actions.** restart device, PoE port power-cycle, block/unblock client, firmware upgrade — issued through the agent to the same local API, governed by `requireMfa` + `requirePermission(DEVICES_EXECUTE)` + audit (and, when wired, BL4CK Authenticator step-up), using the synchronous `http_request`/`agentCommandAwait` request-response path. This is the write counterpart to 2a's reads.
+- **Phase 3 — event push.** UniFi Alarm Manager webhooks (client connect/disconnect, WAN down, PoE loss, threats) into BL4CK alerting; optional CEF syslog into the log pipeline. Replaces poll-only freshness with real-time events.
 - **Cloud write / no-agent fallback.** When Ubiquiti enables write on Site Manager keys, or via the Connector Proxy, control + telemetry can reach sites with no agent.

@@ -1,10 +1,10 @@
-# Breeze AI for Office — Plan 1: Foundation (schema, Entra auth, tenancy, policy)
+# BL4CK AI for Office — Plan 1: Foundation (schema, Entra auth, tenancy, policy)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the control-plane foundation for the Excel add-in: client tenancy tables with RLS, Entra ID token exchange with auto-provisioned portal users, Redis-backed client sessions, per-org policy storage + enforcement, and partner-facing admin routes for tenant mapping and policy.
 
-**Architecture:** A new `/client-ai` route namespace (separate from technician `/ai` and `/portal`) authenticates Excel add-in users by verifying Entra ID tokens against Microsoft's common JWKS, mapping `tid` → Breeze org via `client_ai_tenant_mappings`, and upserting the user into the existing `portal_users` table. Sessions are Redis-backed bearer tokens mirroring the portal session pattern; a dedicated middleware attaches `{clientUserId, orgId}` and wraps handlers in an org-scoped `withDbAccessContext`. All new tables ship with RLS policies in the same migration (shape 1 for the three org-scoped tables, dual-axis for `client_ai_prompt_templates`).
+**Architecture:** A new `/client-ai` route namespace (separate from technician `/ai` and `/portal`) authenticates Excel add-in users by verifying Entra ID tokens against Microsoft's common JWKS, mapping `tid` → BL4CK org via `client_ai_tenant_mappings`, and upserting the user into the existing `portal_users` table. Sessions are Redis-backed bearer tokens mirroring the portal session pattern; a dedicated middleware attaches `{clientUserId, orgId}` and wraps handlers in an org-scoped `withDbAccessContext`. All new tables ship with RLS policies in the same migration (shape 1 for the three org-scoped tables, dual-axis for `client_ai_prompt_templates`).
 
 **Tech Stack:** Hono, Drizzle, PostgreSQL RLS, jose (JWT/JWKS), Redis, Vitest
 
@@ -107,7 +107,7 @@ Naming: two `2026-06-12-a-*` files already exist (`-a-huntress-partner-mapping`,
 
 ```sql
 -- 2026-06-12-b-client-ai-foundation.sql
--- Breeze AI for Office, Plan 1 (Foundation).
+-- BL4CK AI for Office, Plan 1 (Foundation).
 -- Spec: docs/superpowers/specs/2026-06-12-breeze-ai-for-office-design.md §3, §7, §8, §10, §12.
 --
 -- 1. portal_users: Entra identity columns + partial unique identity index.
@@ -464,7 +464,7 @@ import { organizations, partners } from './orgs';
 import { portalUsers } from './portal';
 
 /**
- * Breeze AI for Office — client-AI control-plane tables.
+ * BL4CK AI for Office — client-AI control-plane tables.
  * Spec: docs/superpowers/specs/2026-06-12-breeze-ai-for-office-design.md §3, §7, §8, §10, §12.
  *
  * RLS lives in apps/api/migrations/2026-06-12-b-client-ai-foundation.sql:
@@ -474,7 +474,7 @@ import { portalUsers } from './portal';
  *    have org_id NULL. See the custom_field_definitions lesson (2026-06-11-i).
  */
 
-/** Entra tenant GUID → Breeze org. The tenant-isolation linchpin (spec §3). */
+/** Entra tenant GUID → BL4CK org. The tenant-isolation linchpin (spec §3). */
 export const clientAiTenantMappings = pgTable('client_ai_tenant_mappings', {
   id: uuid('id').primaryKey().defaultRandom(),
   orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
@@ -935,7 +935,7 @@ git commit -m "test(client-ai): functional breeze_app dual-axis RLS test for pro
 Insert after the `M365_ENABLED` block:
 
 ```ts
-// Breeze AI for Office (Excel add-in / client AI). The Entra application
+// BL4CK AI for Office (Excel add-in / client AI). The Entra application
 // (client) ID of the multi-tenant add-in app registration. Empty = the whole
 // /client-ai surface is dark (exchange and admin routes return 404), mirroring
 // the M365_ENABLED gating style.
@@ -948,7 +948,7 @@ Insert after the `ANTHROPIC_API_KEY=` line (keep the generic placeholder — NEV
 
 ```bash
 # --------------------------------------------
-# Breeze AI for Office (Excel add-in)
+# BL4CK AI for Office (Excel add-in)
 # --------------------------------------------
 # Entra application (client) ID of the multi-tenant add-in app registration.
 # Leave empty to disable the /client-ai surface entirely.
@@ -1204,7 +1204,7 @@ import {
 } from 'jose';
 
 /**
- * Entra ID (Azure AD) access-token verification for Breeze AI for Office.
+ * Entra ID (Azure AD) access-token verification for BL4CK AI for Office.
  *
  * The Excel add-in acquires a token via Office SSO / NAA in the END CUSTOMER's
  * tenant and posts it to POST /client-ai/auth/exchange (spec §3). This service
@@ -1539,7 +1539,7 @@ import { db } from '../db';
 import { clientAiOrgPolicies } from '../db/schema/clientAi';
 
 /**
- * Per-org policy for Breeze AI for Office (spec §7).
+ * Per-org policy for BL4CK AI for Office (spec §7).
  *
  * One row per org in client_ai_org_policies; ABSENCE of a row means
  * "disabled, defaults" — defaultClientAiPolicy() materialises that so callers
@@ -2090,7 +2090,7 @@ import {
 } from './schemas';
 
 /**
- * POST /client-ai/auth/exchange — Entra ID token → Breeze client-AI session.
+ * POST /client-ai/auth/exchange — Entra ID token → BL4CK client-AI session.
  * Spec §3. Pre-auth route: tenant context comes FROM the verified token (tid →
  * client_ai_tenant_mappings), so DB work runs under system scope. One fast DB
  * block; Redis work stays outside it (#1105).
@@ -3003,7 +3003,7 @@ import { getOrgPolicy } from '../../services/clientAiPolicy';
 import { putPolicySchema, putTenantMappingSchema } from './schemas';
 
 /**
- * MSP-facing admin surface for Breeze AI for Office (spec §9, consumed by the
+ * MSP-facing admin surface for BL4CK AI for Office (spec §9, consumed by the
  * Plan-4 dashboard): tenant mapping + per-org policy. Mirrors routes/m365.ts:
  * group authMiddleware, feature 404 gate, ORGS_READ/ORGS_WRITE permissions,
  * MFA on the isolation-critical mapping mutations, writeRouteAudit on writes.
@@ -3028,7 +3028,7 @@ clientAiAdminRoutes.use('*', authMiddleware);
 // Whole group is dark unless the add-in app registration is configured.
 clientAiAdminRoutes.use('*', async (c, next) => {
   if (!CLIENT_AI_ENTRA_CLIENT_ID) {
-    return c.json({ error: 'Breeze AI for Office is not enabled' }, 404);
+    return c.json({ error: 'BL4CK AI for Office is not enabled' }, 404);
   }
   await next();
 });
@@ -3210,7 +3210,7 @@ import { clientAiAuthRoutes } from './auth';
 import { clientAiAdminRoutes } from './admin';
 
 /**
- * /client-ai — Breeze AI for Office namespace (spec §2).
+ * /client-ai — BL4CK AI for Office namespace (spec §2).
  *  - /auth/exchange        pre-auth Entra token exchange (auth.ts)
  *  - /admin/orgs/:orgId/*  MSP admin surface (admin.ts, authMiddleware inside)
  * Plan 2 adds /sessions/* here behind clientAiAuthMiddleware +

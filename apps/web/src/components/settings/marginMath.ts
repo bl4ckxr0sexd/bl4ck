@@ -1,5 +1,5 @@
 // Shared margin/markup helpers for the distributor catalog-import panels.
-// "Margin" in Breeze's catalog is stored as `markupPercent` (markup OVER COST),
+// "Margin" in BL4CK's catalog is stored as `markupPercent` (markup OVER COST),
 // so the default applies as a markup. We surface BOTH figures in the UI so the
 // number is unambiguous when adding an item:
 //   markup% = profit / cost   (drives the sell price from cost)

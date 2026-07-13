@@ -180,7 +180,7 @@ failure to a friendly modal state (see Error Handling).
 
 ## Scope guardrails (YAGNI — explicitly out of v1)
 
-- Web technician AI Agent only (Breeze Helper and Excel client-ai deferred).
+- Web technician AI Agent only (BL4CK Helper and Excel client-ai deferred).
 - Button-triggered only — the agent does **not** autonomously offer to create a ticket.
 - No auto-population of category / assignee / SLA — the tech sets those on the ticket afterward.
 - No editing/attaching to an existing ticket from chat — create-only.

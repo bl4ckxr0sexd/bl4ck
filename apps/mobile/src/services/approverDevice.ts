@@ -1,5 +1,5 @@
 /**
- * Breeze Authenticator (Phase 3) — mobile hardware-key approver client.
+ * BL4CK Authenticator (Phase 3) — mobile hardware-key approver client.
  *
  * Bridges the device's biometric-gated {@link HardwareSigner} to the server
  * approver endpoints. The phone holds a non-exportable RSA key in the Secure

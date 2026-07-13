@@ -6,7 +6,7 @@
 
 ## Why this exists
 
-Breeze owns the full billing lifecycle (catalog → quotes → invoices → contracts → Stripe payments) and a native PSA (tickets → time entries / parts → invoice lines). MSPs keep their **books** in QuickBooks Online (Xero next). Today there is no bridge: invoices issued in Breeze must be re-keyed into QBO by hand, and payments recorded in QBO never reflect back. This program builds that bridge with Breeze as the system of record.
+BL4CK owns the full billing lifecycle (catalog → quotes → invoices → contracts → Stripe payments) and a native PSA (tickets → time entries / parts → invoice lines). MSPs keep their **books** in QuickBooks Online (Xero next). Today there is no bridge: invoices issued in BL4CK must be re-keyed into QBO by hand, and payments recorded in QBO never reflect back. This program builds that bridge with BL4CK as the system of record.
 
 The billing architecture overview pre-committed the shape of this work and laid down hard rules we inherit:
 - External integration is **always** via dedicated **connection** tables + external-ref **mapping** tables — the `psaConnections`/`psaTicketMappings` pattern in `schema/integrations.ts`.
@@ -16,9 +16,9 @@ The billing architecture overview pre-committed the shape of this work and laid 
 
 ## Decisions locked in brainstorm
 
-1. **Sync model: one-way push + payment pull-back.** Breeze is the source of truth. Push Customers, Items, and Invoices **to** QBO; pull payment/paid-status **back**. No bidirectional merge.
-2. **v1 entity scope: all four** — Customers (orgs → QBO Customer), Items (catalog → QBO Item), Invoices (issued → QBO Invoice), Payment pull-back (QBO → Breeze).
-3. **Reconciliation: suggest-match, require confirm.** Breeze proposes matches against existing QBO entities by name/email; nothing is written to QBO until the user confirms each mapping or chooses "create new." Protects books MSPs already maintain.
+1. **Sync model: one-way push + payment pull-back.** BL4CK is the source of truth. Push Customers, Items, and Invoices **to** QBO; pull payment/paid-status **back**. No bidirectional merge.
+2. **v1 entity scope: all four** — Customers (orgs → QBO Customer), Items (catalog → QBO Item), Invoices (issued → QBO Invoice), Payment pull-back (QBO → BL4CK).
+3. **Reconciliation: suggest-match, require confirm.** BL4CK proposes matches against existing QBO entities by name/email; nothing is written to QBO until the user confirms each mapping or chooses "create new." Protects books MSPs already maintain.
 4. **Invoice push trigger: auto-on-issue, partner-configurable.** Default auto (BullMQ, retried); a per-partner setting switches to manual-only.
 5. **Payment pull-back: QBO webhooks (real-time) + CDC reconciliation, with a scheduled CDC backstop sweep** for dropped/duplicate events.
 6. **Architecture: provider-abstraction seam (Approach 1).** A narrow `AccountingProvider` interface; QuickBooks Online is implementation #1, Xero is a second implementation behind the same interface. Both providers are a known committed requirement, so the abstraction is justified, not speculative.
@@ -26,9 +26,9 @@ The billing architecture overview pre-committed the shape of this work and laid 
 ## Scope boundaries
 
 - **Ticketing is covered transitively, not directly.** Ticket time entries and ticket parts already become invoice lines (`sourceType = time_entries | ticket_parts`), so they reach QBO **through the invoice push** with full description/qty/rate. QBO has no ticket object — there is **no** separate ticket→QBO sync. Raw billable-time export independent of invoices is explicitly out of scope.
-- **Breeze stays the system of record.** No editing QBO-origin data; no two-way merge.
+- **BL4CK stays the system of record.** No editing QBO-origin data; no two-way merge.
 - **Corrections:** v1 handles **void** (push Void to QBO). **CreditMemo** mapping is deferred until Billing v1.1 **E4** (credit notes) lands, then becomes a follow-on.
-- **Multi-currency deferred.** v1 assumes the partner's Breeze currency matches their QBO home currency; a mismatch is detected at connect and **blocks push with a clear error** rather than guessing.
+- **Multi-currency deferred.** v1 assumes the partner's BL4CK currency matches their QBO home currency; a mismatch is detected at connect and **blocks push with a clear error** rather than guessing.
 - **No external-ref columns on core tables** — all mapping lives in the dedicated mapping table.
 
 ## Program decomposition
@@ -51,7 +51,7 @@ Phase C · Invoice push
         │
 Phase D · Payment pull-back
    QBO webhook endpoint (verifier token) + CDC reconciliation,
-   periodic CDC backstop sweep, reflect payment/status onto Breeze invoice.
+   periodic CDC backstop sweep, reflect payment/status onto BL4CK invoice.
         │
 Phase E · Xero  (later, follow-on spec)
    second AccountingProvider impl + Xero OAuth quirks. No core rework.
@@ -72,7 +72,7 @@ access_token_expires_at, refresh_token_expires_at,
 environment ('sandbox' | 'production'),
 home_currency,                  -- realm currency captured at connect; guards mismatch
 default_income_account_ref,     -- required to create QBO Items
-default_tax_code_ref,           -- maps Breeze tax onto a QBO TaxCode
+default_tax_code_ref,           -- maps BL4CK tax onto a QBO TaxCode
 push_mode ('auto' | 'manual'),  -- the partner-configurable trigger
 webhook_verifier_token_encrypted,
 cdc_cursor,                     -- last CDC "changedSince" watermark (backstop sweep)
@@ -98,7 +98,7 @@ last_synced_at, last_error, created_at, updated_at
 
 Constraints:
 - Unique on `(integration_id, breeze_entity_type, breeze_entity_id)` **and** `(integration_id, remote_entity_type, remote_entity_id)` → idempotency in both directions; prevents double-create and double-link.
-- Composite FK `(integration_id, partner_id) → accounting_connections(id, partner_id)`, plus partner-guarded FKs on the Breeze entity where it carries `partner_id` (the Pax8 cross-partner-leak prevention pattern), so a mapping cannot cross partners.
+- Composite FK `(integration_id, partner_id) → accounting_connections(id, partner_id)`, plus partner-guarded FKs on the BL4CK entity where it carries `partner_id` (the Pax8 cross-partner-leak prevention pattern), so a mapping cannot cross partners.
 - Cascade-delete with the connection (and the partner-deletion path); added to the cascade contract in the same PR.
 
 ## The `AccountingProvider` interface
@@ -124,7 +124,7 @@ interface AccountingProvider {
 
 ## OAuth & token model (QBO specifics that bite if missed)
 
-- **App-level credentials in env** (`QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`). Breeze is one published Intuit app; partners click "Connect to QuickBooks" and complete OAuth — unlike Pax8, where each partner pastes their own credentials.
+- **App-level credentials in env** (`QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`). BL4CK is one published Intuit app; partners click "Connect to QuickBooks" and complete OAuth — unlike Pax8, where each partner pastes their own credentials.
 - Access token **expires in 60 minutes**; refresh inline with a 5-minute buffer (the `pax8Client.getAccessToken` pattern), and **persist the rotated refresh token every time** — permanently dropping it breaks the connection.
 - Refresh token lives ~100 days; on expiry → `status = 'reauth_required'`, surfaced in the UI as "Reconnect QuickBooks."
 - All `*_encrypted` columns registered in `encryptedColumnRegistry` and handled via `secretCrypto`.
@@ -141,27 +141,27 @@ Same reconcile→confirm flow. Creating a QBO Item **requires an income account*
 
 ### Push: Invoice (Phase C)
 1. Invoice transitions to issued → if `push_mode = 'auto'`, enqueue a retried BullMQ push job; if `'manual'`, wait for the button (per-invoice or bulk). Dependency order: confirmed customer pushed first, then each line's item.
-2. `pushInvoice` builds the QBO Invoice: `DocNumber ← invoiceNumber`, `TxnDate ← issueDate`, `DueDate`, `CustomerRef`, one `SalesItemLineDetail` per Breeze line (including hidden bundle components — accounting view sees all).
+2. `pushInvoice` builds the QBO Invoice: `DocNumber ← invoiceNumber`, `TxnDate ← issueDate`, `DueDate`, `CustomerRef`, one `SalesItemLineDetail` per BL4CK line (including hidden bundle components — accounting view sees all).
 3. **DocNumber collision / custom-numbering off:** if QBO rejects a duplicate DocNumber or the realm auto-numbers, store QBO's assigned `DocNumber` back on the mapping and surface it; do not fail the push.
 4. Result recorded on the invoice mapping (`sync_status`); failures land in the per-invoice **Accounting Sync panel** — never a silent no-op.
-5. **Void:** voiding a Breeze invoice enqueues `voidInvoice` (QBO Void) using the stored `remote_sync_token`.
+5. **Void:** voiding a BL4CK invoice enqueues `voidInvoice` (QBO Void) using the stored `remote_sync_token`.
 
 ### Pull-back: Payment (Phase D) — webhook-primary, CDC-backstop
 1. QBO posts to `/webhooks/qbo` (unauthenticated, like the Stripe webhook route). `verifyWebhook` validates the Intuit verifier-token HMAC.
-2. Webhook payloads are thin ("Invoice 42 changed"), so Breeze then calls `reconcileChanges` (CDC) to fetch the actual Payment/Invoice state, match `remote_entity_id` → Breeze invoice, record an `invoicePayments` row, and recompute status via the existing `recomputeInvoiceStatus`. All in **system DB context** (no request user).
+2. Webhook payloads are thin ("Invoice 42 changed"), so BL4CK then calls `reconcileChanges` (CDC) to fetch the actual Payment/Invoice state, match `remote_entity_id` → BL4CK invoice, record an `invoicePayments` row, and recompute status via the existing `recomputeInvoiceStatus`. All in **system DB context** (no request user).
 3. **Backstop:** a scheduled BullMQ worker (~every 15 min, the Pax8/Huntress cadence) runs `reconcileChanges` from `cdc_cursor` to catch dropped/duplicate webhooks, then advances the cursor. Idempotency via the unique payment mapping — a payment reflected twice is a no-op.
 
 ## Tax handling (the sharp edge)
 
-Breeze computes its own `taxRate`/`taxTotal`. QBO's **Automated Sales Tax (AST)** wants to compute its own and can override line numbers. To keep **Breeze as source of truth**, v1 pushes the Breeze-computed tax as an **invoice-level `TxnTaxDetail` override** against the connection's `default_tax_code_ref`, honoring each line's `taxable` flag. Breeze's total is what lands in QBO.
+BL4CK computes its own `taxRate`/`taxTotal`. QBO's **Automated Sales Tax (AST)** wants to compute its own and can override line numbers. To keep **BL4CK as source of truth**, v1 pushes the Breeze-computed tax as an **invoice-level `TxnTaxDetail` override** against the connection's `default_tax_code_ref`, honoring each line's `taxable` flag. BL4CK's total is what lands in QBO.
 
-**Known v1 limitation (documented, not silently wrong):** in AST-enabled US realms, QBO may still re-derive tax for some line/jurisdiction combinations. If QBO's computed tax diverges from Breeze's beyond a one-cent tolerance, mark the push `synced_with_tax_variance` and flag it in the panel rather than pretending it matched. Per-jurisdiction tax mapping is a v2 concern.
+**Known v1 limitation (documented, not silently wrong):** in AST-enabled US realms, QBO may still re-derive tax for some line/jurisdiction combinations. If QBO's computed tax diverges from BL4CK's beyond a one-cent tolerance, mark the push `synced_with_tax_variance` and flag it in the panel rather than pretending it matched. Per-jurisdiction tax mapping is a v2 concern.
 
 ## Other known limitations (stated up front)
 
 - Multi-currency deferred — currency mismatch blocks push with a clear error.
 - CreditMemo deferred to Billing v1.1 E4; v1 handles void only.
-- Partial / over-payments already supported by Breeze's multiple-`invoicePayments` model.
+- Partial / over-payments already supported by BL4CK's multiple-`invoicePayments` model.
 - A QBO-side customer/invoice we created being deleted → mapping flips to `error` / `reauth_required`, surfaced in the panel, never auto-resurrected.
 
 ## Multi-tenancy / RLS

@@ -34,9 +34,9 @@ Instead, please report them responsibly:
 
 The following are in scope:
 
-- Breeze API server (`apps/api`)
-- Breeze web dashboard (`apps/web`)
-- Breeze agent (`agent/`)
+- BL4CK API server (`apps/api`)
+- BL4CK web dashboard (`apps/web`)
+- BL4CK agent (`agent/`)
 - Authentication and authorization flows
 - Multi-tenant data isolation
 - Agent-to-server communication
@@ -66,7 +66,7 @@ We follow coordinated disclosure. Once a fix is released, we will:
 2. Publish a security advisory via GitHub Security Advisories
 3. Release a patched version
 
-Thank you for helping keep Breeze and its users safe.
+Thank you for helping keep BL4CK and its users safe.
 
 ## Sensitive Data Discovery Safeguards
 

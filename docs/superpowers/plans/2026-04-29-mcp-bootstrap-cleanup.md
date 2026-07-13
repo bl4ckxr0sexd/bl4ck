@@ -1040,7 +1040,7 @@ Use this content:
 
 ## The flow (so you know what you're watching)
 
-User clicks **Add Connector** in Claude.ai. Claude opens an OAuth tab to Breeze. The login screen offers **Sign In** or **Create Account**. They click Create Account, fill the signup form, hit submit. On hosted, the new partner lands at `status='pending'` — the OAuth consent screen sees that and redirects to `BILLING_URL`. The user completes payment in breeze-billing (separate tab/service). breeze-billing flips `status='active'` and returns the user to `/oauth/consent`. They click **Approve**. Claude.ai stores the access token and queries `tools/list` — the full ~30-tool surface appears. Done.
+User clicks **Add Connector** in Claude.ai. Claude opens an OAuth tab to BL4CK. The login screen offers **Sign In** or **Create Account**. They click Create Account, fill the signup form, hit submit. On hosted, the new partner lands at `status='pending'` — the OAuth consent screen sees that and redirects to `BILLING_URL`. The user completes payment in breeze-billing (separate tab/service). breeze-billing flips `status='active'` and returns the user to `/oauth/consent`. They click **Approve**. Claude.ai stores the access token and queries `tools/list` — the full ~30-tool surface appears. Done.
 
 **No prompt yet.** That happens after auth.
 

@@ -5,7 +5,7 @@ description: AI-powered script generation and editing with natural language, con
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Script Builder AI is an inline AI assistant embedded in the Breeze script editor. It uses a conversational interface to help you write, modify, and test scripts through natural language. The assistant has access to your device fleet, existing script library, alert data, and script execution history -- giving it the context it needs to generate scripts tailored to your environment.
+The Script Builder AI is an inline AI assistant embedded in the BL4CK script editor. It uses a conversational interface to help you write, modify, and test scripts through natural language. The assistant has access to your device fleet, existing script library, alert data, and script execution history -- giving it the context it needs to generate scripts tailored to your environment.
 
 Script Builder AI sessions stream responses via Server-Sent Events (SSE), support tool approval workflows for device execution, and can directly apply code and metadata changes to the editor without copy-paste.
 
@@ -27,7 +27,7 @@ The Script Builder AI maintains a conversational session with full context about
 
 ### Session Types
 
-Script Builder sessions are distinct from general Breeze AI sessions. They are scoped to the `script_builder` type and have access to a curated set of tools specific to script authoring.
+Script Builder sessions are distinct from general BL4CK AI sessions. They are scoped to the `script_builder` type and have access to a curated set of tools specific to script authoring.
 
 | Attribute | Value |
 |-----------|-------|
@@ -72,7 +72,7 @@ The AI can infer and set script parameters with these types:
 ### Starting a Session
 
 <Steps>
-1. Open the **Script Editor** in the Breeze dashboard.
+1. Open the **Script Editor** in the BL4CK dashboard.
 2. Click the **AI Assistant** button to open the Script Builder panel.
 3. A new session is created automatically. If you are editing an existing script, the editor context is attached to the session.
 4. Type your request in natural language. For example: "Write a PowerShell script to clean up temp files older than 30 days on Windows endpoints."

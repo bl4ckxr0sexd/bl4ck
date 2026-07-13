@@ -130,7 +130,7 @@ export default function AcceptInvitePage() {
         <div className="space-y-1 text-center">
           <h2 className="text-lg font-semibold">
             {greetingName ? `Hi ${greetingName}, ` : ''}
-            {target ? `you're invited to ${target}` : "you're invited to Breeze"}
+            {target ? `you're invited to ${target}` : "you're invited to BL4CK"}
           </h2>
           {preview?.email && (
             <p className="text-sm text-muted-foreground">

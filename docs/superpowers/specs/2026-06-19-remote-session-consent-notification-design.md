@@ -35,7 +35,7 @@ This design adds three end-user-facing surfaces, all policy-configurable:
 ## 3. Hard architectural constraints (from the code)
 
 - **The agent cannot draw UI.** It runs as SYSTEM / session 0. Every end-user
-  surface is rendered by the **Breeze Helper** (Tauri) over IPC
+  surface is rendered by the **BL4CK Helper** (Tauri) over IPC
   (`agent/internal/heartbeat/handlers_user.go:24` — fails with "no user helper
   connected" when absent). There is **no native-OS fallback**. Consequence: both
   the notice and the consent prompt require the Helper installed and a user
@@ -441,13 +441,13 @@ export function SessionBanner({ label, startedAt }: { label: string; startedAt: 
 - View-only vs input-control wording in the prompt/banner.
 - End-user "End session" control from the banner.
 - Native-OS notification fallback when the Helper is absent.
-- Mobile / Breeze Authenticator integration for remote-session consent.
+- Mobile / BL4CK Authenticator integration for remote-session consent.
 
 ## 14. Implementation notes (deviations discovered during build)
 
 ### 14.1 Helper topology / routing
 
-The spec described a single "Breeze Helper" surface. During build, the helper
+The spec described a single "BL4CK Helper" surface. During build, the helper
 layer splits into two distinct processes with separate IPC scopes:
 
 - **Go user-helper** (`notify` scope) — handles native OS notifications.
@@ -485,7 +485,7 @@ visible (no opaque background frame). On macOS this requires Tauri's
 - Enabled in `src-tauri/Cargo.toml` under `[features]`.
 - `macOSPrivateApi: true` in `tauri.conf.json`.
 
-This is safe because the Breeze Helper is self-distributed (not App Store), so
+This is safe because the BL4CK Helper is self-distributed (not App Store), so
 the App Store prohibition on private API usage does not apply.
 
 ### 14.4 Helper component unit tests

@@ -1,4 +1,4 @@
-# Breeze AI for Office — Manual Test Checklist
+# BL4CK AI for Office — Manual Test Checklist
 
 Playwright cannot drive Excel (spec §13) — the in-host behavior is verified by hand against a Plan 1–4 capable API. Work through the numbered list in order on BOTH hosts where marked; record results in the PR description.
 
@@ -16,7 +16,7 @@ Add the add-in origin (`https://localhost:3000`) to the API's `CORS_ALLOWED_ORIG
 ## Checklist
 
 - [ ] **0. CORS prerequisite** — add the add-in origin (`https://localhost:3000`) to the API's `CORS_ALLOWED_ORIGINS` and restart it. Sanity: a browser-tab fetch from the pane origin to `GET <api>/health` succeeds.
-- [ ] **1. Sideload — Excel desktop** — `pnpm dev`, sideload `manifest.xml` (README instructions). Ribbon shows the Breeze AI button; the pane opens and renders past "Connecting to Breeze…".
+- [ ] **1. Sideload — Excel desktop** — `pnpm dev`, sideload `manifest.xml` (README instructions). Ribbon shows the BL4CK AI button; the pane opens and renders past "Connecting to BL4CK…".
 - [ ] **2. Sideload — Excel on the web** — upload the same manifest. Pane loads over https with no mixed-content/CORS console errors.
 - [ ] **3. Silent SSO** — in a tenant with admin consent + the Office client app pre-authorized: open the pane → lands directly in chat with **no** sign-in UI. Verify a `client_ai.auth.exchange` success audit row.
 - [ ] **4. MSAL popup fallback** — in a consented tenant WITHOUT Office-client pre-authorization (or a fresh sideload where `getAccessToken` 13012s): pane shows the sign-in screen; the button opens the MSAL popup; completing it lands in chat.
@@ -29,7 +29,7 @@ Add the add-in origin (`https://localhost:3000`) to the API's `CORS_ALLOWED_ORIG
 - [ ] **11. Readonly org** — set `writeMode='readonly'`: ask for a write → NO `tool_request` for mutating tools ever arrives (Plan 2 removes write tools from the toolset); the model answers in text only; no approval card renders.
 - [ ] **12. Template insert** — with an empty thread, the template picker lists the seeded template; clicking inserts its body into the composer (not auto-sent).
 - [ ] **13. DLP block banner** — add a `block`-action DLP rule (e.g. credit cards), put a matching value in a cell, ask the model to read it: `tool_completed` arrives with `blockReason`, the purple "Blocked by your IT provider's data policy" banner renders, and the redaction badge appears on redact-action rules.
-- [ ] **14. 401 mid-session re-exchange** — delete the Breeze session token key from Redis while the pane is open, then send a message: the single-flight re-exchange runs silently (one new exchange audit row) and the message succeeds with no visible interruption.
+- [ ] **14. 401 mid-session re-exchange** — delete the BL4CK session token key from Redis while the pane is open, then send a message: the single-flight re-exchange runs silently (one new exchange audit row) and the message succeeds with no visible interruption.
 - [ ] **15. Network-loss reconnect** — kill the API (or drop the network) mid-turn, restore within ~30s: the stream reconnects with backoff, history resyncs via `GET /sessions/:id` (no duplicated/garbled thread), and chat continues.
 - [ ] **16. Idle ping keepalive** — leave the pane idle 3+ minutes: `ping` frames keep the SSE connection alive (network tab), no error banner, and the next message streams without reconnecting.
 

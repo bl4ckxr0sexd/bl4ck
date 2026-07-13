@@ -9,7 +9,7 @@ Add a "Generate Link" feature to the Add Device modal that creates a public, sha
 
 ## Motivation
 
-Currently, downloading an installer requires being logged into the Breeze web UI. MSPs need to share installer links with on-site technicians or customers who don't have Breeze accounts. A public link tied to an enrollment key solves this without compromising security.
+Currently, downloading an installer requires being logged into the BL4CK web UI. MSPs need to share installer links with on-site technicians or customers who don't have BL4CK accounts. A public link tied to an enrollment key solves this without compromising security.
 
 ## Design
 

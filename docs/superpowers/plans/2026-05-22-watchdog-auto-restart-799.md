@@ -726,7 +726,7 @@ Watchdog: WatchdogConfig{
 
 - [ ] **Step 2: Register the `max_heartbeat_staleness_sec` alias**
 
-Find the `Load` function in `agent/internal/config/config.go` (around line 215). After the `viper.SetEnvPrefix("BREEZE")` line and before `viper.ReadInConfig()`, add:
+Find the `Load` function in `agent/internal/config/config.go` (around line 215). After the `viper.SetEnvPrefix("BL4CK")` line and before `viper.ReadInConfig()`, add:
 
 ```go
 // Accept watchdog.max_heartbeat_staleness_sec (in seconds) as documented in

@@ -41,7 +41,7 @@ export const fetchOne = createAsyncThunk('approvals/fetchOne', async (id: string
 });
 
 export const approve = createAsyncThunk('approvals/approve', async (id: string) => {
-  // Breeze Authenticator (Phase 3) — opt-in hardware step-up. Best-effort: a
+  // BL4CK Authenticator (Phase 3) — opt-in hardware step-up. Best-effort: a
   // signed proof upgrades the recorded decision to L2 (mobile_hw_key); a device
   // without a registered key yields null and approves at L1 (Phase 3 never
   // blocks — enforcement is Phase 4). A cancelled biometric prompt DOES throw,

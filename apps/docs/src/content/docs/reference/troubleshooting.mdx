@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Common issues and solutions for Breeze RMM deployments.
+description: Common issues and solutions for BL4CK RMM deployments.
 sidebar:
   order: 3
   label: Troubleshooting
@@ -27,7 +27,7 @@ GRAFANA_ADMIN_PASSWORD
 
 **Cause**: This variable is the trust anchor that the API uses to verify signed release manifests before serving binaries (so a compromised GitHub release alone can't deliver tampered binaries). It is **required in production** for both `BINARY_SOURCE=github` and `BINARY_SOURCE=local`. Older `.env` templates shipped it empty, so upgrades can surface this on first boot.
 
-**Fix**: For the official Breeze releases, use the published trust anchor:
+**Fix**: For the official BL4CK releases, use the published trust anchor:
 
 ```bash
 RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS=yzx8ftmcls6uBetFC5SYnZhBo+cbur3IX50TbBthTso=

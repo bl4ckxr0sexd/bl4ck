@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-Breeze can discover, back up, and restore SQL Server databases directly — no third-party SQL backup tool required. The agent runs native `sqlcmd` commands to produce standard `.bak` and `.trn` backup files.
+BL4CK can discover, back up, and restore SQL Server databases directly — no third-party SQL backup tool required. The agent runs native `sqlcmd` commands to produce standard `.bak` and `.trn` backup files.
 
 ---
 
@@ -43,7 +43,7 @@ SQL Server supports three backup types that work together for point-in-time reco
 | **Differential** | Changes since last full backup | `.bak` | Daily (typical) |
 | **Transaction Log** | Log entries since last log backup | `.trn` | Every 15–60 min (typical) |
 
-Breeze tracks the **LSN (Log Sequence Number) chain** across backups so you can restore to any point in time covered by the chain.
+BL4CK tracks the **LSN (Log Sequence Number) chain** across backups so you can restore to any point in time covered by the chain.
 
 ### Backup Chain View
 

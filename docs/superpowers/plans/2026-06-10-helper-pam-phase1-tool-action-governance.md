@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Model mutating Breeze Helper tool invocations as PAM `elevation_requests` (new `flow_type='ai_tool_action'`), decide them through `pamRuleEngine` tool-action rules (fail-safe to pending), approve them only via the existing separate-identity `POST /pam/elevation-requests/:id/respond`, and bridge the decision back to `ai_tool_executions.status` so `waitForApproval` unblocks unchanged — then re-enable mutating Helper tools under this governance.
+**Goal:** Model mutating BL4CK Helper tool invocations as PAM `elevation_requests` (new `flow_type='ai_tool_action'`), decide them through `pamRuleEngine` tool-action rules (fail-safe to pending), approve them only via the existing separate-identity `POST /pam/elevation-requests/:id/respond`, and bridge the decision back to `ai_tool_executions.status` so `waitForApproval` unblocks unchanged — then re-enable mutating Helper tools under this governance.
 
 **Architecture:** The hook point is the per-step approval branch of `createSessionPreToolUse` (`services/aiAgentSdk.ts`), which already inserts the pending `ai_tool_executions` row and blocks on `waitForApproval`. When `session.auth.helperDeviceId` is set, a new service (`pamToolActionGovernance.ts`) creates the elevation row, runs tool-action rules (`matchToolName`/`matchRiskTier`, new columns on `pam_rules`), and mirrors auto verdicts onto the execution row. Manual approvals flow through the existing `/respond` handler, which gains an in-transaction mirror keyed on the new `elevation_requests.execution_id`. `pamBridge` (executable-shaped) is deliberately skipped.
 
@@ -529,7 +529,7 @@ async function decideInContext(params: ToolActionParams): Promise<ToolActionDeci
       flowType: 'ai_tool_action',
       subjectUserId: null,
       subjectUsername: params.subjectUsername,
-      reason: `Breeze Helper requested AI tool '${params.toolName}' (tier ${params.riskTier})`,
+      reason: `BL4CK Helper requested AI tool '${params.toolName}' (tier ${params.riskTier})`,
       status: decision,
       requestedAt: now,
       approvedAt: decision === 'auto_approved' ? now : null,

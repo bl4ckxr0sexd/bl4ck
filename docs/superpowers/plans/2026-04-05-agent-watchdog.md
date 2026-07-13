@@ -2523,7 +2523,7 @@ var version = "dev"
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "breeze-watchdog",
-		Short: "Breeze Agent Watchdog Service",
+		Short: "BL4CK Agent Watchdog Service",
 	}
 
 	rootCmd.AddCommand(runCmd())
@@ -2896,7 +2896,7 @@ func statusCmd() *cobra.Command {
 			statePath := state.PathInDir(config.ConfigDir())
 			agentState, _ := state.Read(statePath)
 
-			fmt.Println("=== Breeze Watchdog Status ===")
+			fmt.Println("=== BL4CK Watchdog Status ===")
 			fmt.Printf("Watchdog version:  %s\n", version)
 
 			if agentState != nil {
@@ -3135,7 +3135,7 @@ const (
 )
 
 const watchdogUnit = `[Unit]
-Description=Breeze RMM Agent Watchdog
+Description=BL4CK RMM Agent Watchdog
 After=breeze-agent.service
 StartLimitIntervalSec=300
 StartLimitBurst=10
@@ -3271,8 +3271,8 @@ func serviceCmd() *cobra.Command {
 				watchdogWindowsServiceName,
 				exePath,
 				mgr.Config{
-					DisplayName:  "Breeze RMM Watchdog",
-					Description:  "Monitors and recovers the Breeze RMM Agent",
+					DisplayName:  "BL4CK RMM Watchdog",
+					Description:  "Monitors and recovers the BL4CK RMM Agent",
 					StartType:    mgr.StartAutomatic,
 					ErrorControl: mgr.ErrorNormal,
 				},

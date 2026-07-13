@@ -896,7 +896,7 @@ No commit for this step — verification only.
 
 ## Notes for the Engineer
 
-- **Context:** This is an additive change to the Breeze RMM partner settings page (`/settings/partner`). Partners are the top-level tenant in Breeze's multi-tenant hierarchy. Company identity info is being surfaced for the first time in the settings UI.
+- **Context:** This is an additive change to the BL4CK RMM partner settings page (`/settings/partner`). Partners are the top-level tenant in BL4CK's multi-tenant hierarchy. Company identity info is being surfaced for the first time in the settings UI.
 - **No DB migration** is required. The `address` field lives inside the existing `partners.settings` JSONB column.
 - **Partner name** already lives on `partners.name` (top-level column). The `PATCH /orgs/partners/me` endpoint already accepts a top-level `name` field — no route or validator changes there.
 - **Existing patterns** to follow when in doubt: `PartnerBrandingTab.tsx` (presentational tab component with `{ data, onChange }`-style props), `PartnerSettingsPage.test.tsx` (Vitest + RTL mocking `fetchWithAuth` and `useOrgStore`).

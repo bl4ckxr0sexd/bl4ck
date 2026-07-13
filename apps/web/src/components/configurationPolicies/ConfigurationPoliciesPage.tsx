@@ -124,7 +124,7 @@ export default function ConfigurationPoliciesPage() {
             className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted"
           >
             <Layers className="h-4 w-4" />
-            Breeze Defaults
+            BL4CK Defaults
           </a>
           <a
             href="/configuration-policies/new"

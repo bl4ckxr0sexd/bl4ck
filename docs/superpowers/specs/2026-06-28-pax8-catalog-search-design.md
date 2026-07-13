@@ -6,7 +6,7 @@
 
 ## Summary
 
-Let partners search the Pax8 product catalog and import products into the Breeze
+Let partners search the Pax8 product catalog and import products into the BL4CK
 catalog as catalog items, mirroring the existing TD SYNNEX import-into-catalog
 flow. Reachable from three entry points: the catalog add flow, the quote editor,
 and the contract editor.

@@ -103,7 +103,7 @@ export function OnboardingScreen({ onComplete }: Props) {
           <Copy
             eyebrow="ASK THE FLEET"
             headline="Your fleet, in one chat."
-            body="Ask Breeze about your devices, alerts, or recent activity. The AI runs the queries and shows you the answer inline."
+            body="Ask BL4CK about your devices, alerts, or recent activity. The AI runs the queries and shows you the answer inline."
           />
         </Page>
 
@@ -383,7 +383,7 @@ function ChatPreview() {
           paddingHorizontal: spacing[5],
         }}
       >
-        <Text style={[type.body, { color: theme.textLo, flex: 1 }]}>Ask Breeze.</Text>
+        <Text style={[type.body, { color: theme.textLo, flex: 1 }]}>Ask BL4CK.</Text>
         <View
           style={{
             width: 28,

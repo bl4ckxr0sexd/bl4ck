@@ -37,7 +37,7 @@ describe('HelperTab', () => {
     expect(checkboxes.length).toBe(3);
     // ...but disabled until deploy is enabled, with a hint explaining why.
     expect(checkboxes.every((c) => c.disabled)).toBe(true);
-    expect(screen.getByText(/Enable "Deploy Breeze Assist to devices" above/i)).toBeTruthy();
+    expect(screen.getByText(/Enable "Deploy BL4CK Assist to devices" above/i)).toBeTruthy();
   });
 
   it('shows a "Saved (not deployed)" badge when a link exists but deploy is off', () => {

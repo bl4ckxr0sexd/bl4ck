@@ -1,6 +1,6 @@
 ---
 title: Antivirus Exceptions
-description: Required antivirus and security software exclusions for the Breeze agent when using unsigned binaries.
+description: Required antivirus and security software exclusions for the BL4CK agent when using unsigned binaries.
 sidebar:
   order: 6
   label: Antivirus Exceptions
@@ -8,7 +8,7 @@ sidebar:
 
 import { Tabs, TabItem, Steps, Aside } from '@astrojs/starlight/components';
 
-When deploying the Breeze agent **without code-signed binaries**, endpoint protection software may flag, quarantine, or block the agent. This guide covers the exclusions needed for each platform.
+When deploying the BL4CK agent **without code-signed binaries**, endpoint protection software may flag, quarantine, or block the agent. This guide covers the exclusions needed for each platform.
 
 <Aside type="caution">
   Unsigned binaries are common during development, self-hosted builds, and early deployments. For production fleets, consider signing your binaries to avoid the need for broad AV exclusions. See [Building from Source](/agents/building/) for build instructions.
@@ -16,10 +16,10 @@ When deploying the Breeze agent **without code-signed binaries**, endpoint prote
 
 ## Why Exclusions Are Needed
 
-The Breeze agent is a single Go binary that:
+The BL4CK agent is a single Go binary that:
 
 - Runs as a **system service** with elevated privileges
-- Opens **persistent WebSocket connections** to your Breeze server
+- Opens **persistent WebSocket connections** to your BL4CK server
 - Executes **scripts and commands** on behalf of remote administrators
 - Spawns **child processes** (terminal sessions, user helper, discovery scans)
 - Reads **hardware and software inventory** from the system
@@ -203,7 +203,7 @@ For managed fleets, deploy a configuration profile to suppress Gatekeeper and TC
 ```
 
 <Aside type="tip">
-  A better approach is to deploy a **PPPC (Privacy Preferences Policy Control)** profile that pre-approves the Breeze binary. See the [macOS Permissions section](/agents/installation/#macos-permissions) of the installation guide.
+  A better approach is to deploy a **PPPC (Privacy Preferences Policy Control)** profile that pre-approves the BL4CK binary. See the [macOS Permissions section](/agents/installation/#macos-permissions) of the installation guide.
 </Aside>
 
 ## Linux

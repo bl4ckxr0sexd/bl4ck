@@ -19,7 +19,7 @@ Each item represents one thing you sell. Items can be billed **one-time** (a pie
 1. Go to **Settings → Product Catalog**.
 2. Click **Add item**.
 3. Enter a name, choose the item type, and set whether it's one-time or recurring.
-4. Set the price -- enter a **unit price** directly, or enter your **cost** and a **markup %** and let Breeze calculate the sell price.
+4. Set the price -- enter a **unit price** directly, or enter your **cost** and a **markup %** and let BL4CK calculate the sell price.
 5. Optionally add a **SKU**, a **unit of measure** (each, seat, device, month…), and mark the item **taxable**.
 6. Save.
 </Steps>
@@ -42,9 +42,9 @@ The list view shows each item's **margin** at a glance, with a negative margin c
 
 ### AI Auto-fill
 
-When creating or editing a catalog item, type a product name or SKU into the **Auto-fill from web** field and click **Auto-fill**. Breeze AI drafts the item's name, description, type, unit of measure, and taxability. A market-estimate price **range** is shown as guidance only -- you always enter your own sell price before saving.
+When creating or editing a catalog item, type a product name or SKU into the **Auto-fill from web** field and click **Auto-fill**. BL4CK AI drafts the item's name, description, type, unit of measure, and taxability. A market-estimate price **range** is shown as guidance only -- you always enter your own sell price before saving.
 
-Set an **AI product copy style** in **Settings → Billing** to shape the tone Breeze AI uses when it drafts names and descriptions -- for catalog auto-fill and for quotes. Leave it blank to use the default voice.
+Set an **AI product copy style** in **Settings → Billing** to shape the tone BL4CK AI uses when it drafts names and descriptions -- for catalog auto-fill and for quotes. Leave it blank to use the default voice.
 
 <Aside type="note">
   AI auto-fill requires catalog write access. No MFA step is needed.
@@ -57,7 +57,7 @@ Each catalog item can carry a product image that appears on quotes. Images are s
 To add an image, open the item editor and use the **Product image** field:
 
 - **Upload** — select a file from your computer.
-- **Import from URL** — paste a public image URL and Breeze fetches and stores a copy.
+- **Import from URL** — paste a public image URL and BL4CK fetches and stores a copy.
 
 The image is displayed on quote previews and PDFs when the quote line item references this catalog item.
 
@@ -91,7 +91,7 @@ In the catalog list, a bundle row expands in place to show its components and th
 Items you no longer sell can be **archived** rather than deleted, so historical invoices and contracts that reference them stay intact. Switch the catalog to the **Archived** view to see them, and **Restore** an item to bring it back into active use.
 
 <Aside>
-  An item that is still attached to an active contract or a deployed deployment can't be removed outright -- Breeze returns a clear conflict message instead of an error. Archive it to retire it while preserving history.
+  An item that is still attached to an active contract or a deployed deployment can't be removed outright -- BL4CK returns a clear conflict message instead of an error. Archive it to retire it while preserving history.
 </Aside>
 
 ## Importing from distributor catalogs
@@ -100,7 +100,7 @@ Rather than typing in hardware by hand, you can pull products straight from a co
 
 ### Default markup
 
-Partners can set a **Default markup (%)** in **Settings → Billing**. When you import a product from a distributor, Breeze automatically calculates the sell price by applying this markup to the distributor cost — so the unit price field is pre-populated rather than blank. You can override the calculated price on any individual item before saving or at any time afterward. Per-item markup overrides always take precedence over the partner default.
+Partners can set a **Default markup (%)** in **Settings → Billing**. When you import a product from a distributor, BL4CK automatically calculates the sell price by applying this markup to the distributor cost — so the unit price field is pre-populated rather than blank. You can override the calculated price on any individual item before saving or at any time afterward. Per-item markup overrides always take precedence over the partner default.
 
 ### TD SYNNEX EC Express (live pricing)
 
@@ -108,7 +108,7 @@ TD SYNNEX **EC Express** looks up real-time price and availability by SKU so the
 
 <Steps>
 
-1. On the TD SYNNEX pricing settings panel, enter your EC Express credentials (customer number, email, password, and region) and save. These are entered in Breeze and stored encrypted -- they are not server environment variables.
+1. On the TD SYNNEX pricing settings panel, enter your EC Express credentials (customer number, email, password, and region) and save. These are entered in BL4CK and stored encrypted -- they are not server environment variables.
 2. Use **Test connection** to confirm your credentials work.
 3. Look up a product by its TD SYNNEX SKU or manufacturer part number. Results show your cost, MSRP, total availability, and a per-warehouse breakdown.
 4. Enter your **sell price** for a result and **import to catalog**. The item is added as a one-time hardware item with its cost basis and source details retained.
@@ -116,7 +116,7 @@ TD SYNNEX **EC Express** looks up real-time price and availability by SKU so the
 </Steps>
 
 <Aside type="note">
-  EC Express is the live price-and-availability connector for TD SYNNEX. It complements the earlier Digital Bridge catalog import and is the recommended way to bring TD SYNNEX products into Breeze.
+  EC Express is the live price-and-availability connector for TD SYNNEX. It complements the earlier Digital Bridge catalog import and is the recommended way to bring TD SYNNEX products into BL4CK.
 </Aside>
 
 ### Pax8

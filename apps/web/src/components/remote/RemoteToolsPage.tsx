@@ -893,7 +893,7 @@ export default function RemoteToolsPage({
             <div>
               <h3 className="font-medium text-blue-700">Agent Restarting</h3>
               <p className="text-sm text-blue-600">
-                The Breeze agent is restarting. The device will reconnect automatically...
+                The BL4CK agent is restarting. The device will reconnect automatically...
               </p>
             </div>
           </div>

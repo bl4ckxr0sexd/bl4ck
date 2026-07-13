@@ -68,7 +68,7 @@ describe('VulnBulkActionModal', () => {
       <VulnBulkActionModal kind="mitigate" count={1} deviceCount={1} busy={false} onCancel={() => {}} onSubmit={() => {}} />,
     );
     expect(screen.getByTestId('vuln-bulk-consequence')).toHaveTextContent(
-      'Marks 1 finding on 1 device mitigated, with your note recorded as the compensating control. Breeze does not change the devices.',
+      'Marks 1 finding on 1 device mitigated, with your note recorded as the compensating control. BL4CK does not change the devices.',
     );
   });
 

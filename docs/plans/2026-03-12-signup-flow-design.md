@@ -109,7 +109,7 @@ When a Starter user tries to enroll device #4:
 
 ## Changes by Repo
 
-### Breeze (OSS)
+### BL4CK (OSS)
 
 | File | Change |
 |------|--------|

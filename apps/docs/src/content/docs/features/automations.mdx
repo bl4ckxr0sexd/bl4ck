@@ -7,7 +7,7 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Automations let you define rules that execute automatically when something happens across your managed environment. A trigger — a scheduled time, a platform event, an inbound webhook from an external system, or an explicit manual request — causes the automation to run one or more actions against a set of target devices or platform services.
 
-You manage automations from the **Automations** page in the Breeze dashboard. From there you can create new automations, enable or disable existing ones, run them on demand, and review their execution history.
+You manage automations from the **Automations** page in the BL4CK dashboard. From there you can create new automations, enable or disable existing ones, run them on demand, and review their execution history.
 
 An automation normally belongs to a single organization, but a partner-scoped user with access to every organization can instead create one **partner-wide** ("All orgs") -- see [Partner-wide Automations](#partner-wide-automations-all-organizations) below.
 
@@ -111,7 +111,7 @@ Use the status filter dropdown to narrow results to Success, Failed, Partial, or
 |------|--------------|
 | `run_script` | Executes a script from the library on target devices |
 | `send_notification` | Sends a message to a notification channel |
-| `create_alert` | Creates a Breeze alert with configured severity and message |
+| `create_alert` | Creates a BL4CK alert with configured severity and message |
 | `execute_command` | Runs a shell command on target devices |
 | `deploy_software` | Installs the latest catalog version of a software item on target devices, automatically skipping devices that are already current or on an unsupported OS |
 
@@ -283,7 +283,7 @@ Actions run in the order they are defined. Each action has a `type` and type-spe
 
 ### run_script
 
-Executes a script from the Breeze script library on each target device.
+Executes a script from the BL4CK script library on each target device.
 
 ```json
 {
@@ -323,7 +323,7 @@ Sends a message to a configured notification channel. The channel must be config
 
 ### create_alert
 
-Creates a Breeze alert record directly from the automation, without requiring a monitoring rule to fire first.
+Creates a BL4CK alert record directly from the automation, without requiring a monitoring rule to fire first.
 
 ```json
 {
@@ -359,7 +359,7 @@ Runs a raw shell command on each target device.
 
 ### deploy_software
 
-Installs a catalog software item on each target device. Breeze checks whether the device already has the latest version installed and skips it if so. Devices running an OS not supported by the package are also skipped, and the skips are recorded in the run log.
+Installs a catalog software item on each target device. BL4CK checks whether the device already has the latest version installed and skips it if so. Devices running an OS not supported by the package are also skipped, and the skips are recorded in the run log.
 
 The only field you configure is which catalog item to deploy:
 

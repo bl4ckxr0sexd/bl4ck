@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a partner-level UniFi (Ubiquiti) cloud integration that syncs device inventory and WAN health from the Site Manager API into Breeze's network model, read-only.
+**Goal:** Add a partner-level UniFi (Ubiquiti) cloud integration that syncs device inventory and WAN health from the Site Manager API into BL4CK's network model, read-only.
 
 **Architecture:** Mirrors the SentinelOne connector (partner-level encrypted credential) and the accounting connect/settings UI. Four new tables (`unifi_integrations`, `unifi_site_mappings`, `unifi_devices`, `unifi_sync_runs`), a thin HTTP client, a connection service with a `DbExecutor` seam, a sync service that reconciles into `discovered_assets`, a BullMQ worker, partner-scoped Hono routes, and a React integration component. No agent changes, no write/control actions, no webhooks (those are Phases 2–3).
 
@@ -1679,7 +1679,7 @@ Expected: `ERROR: new row violates row-level security policy for table "unifi_in
 
 - [ ] **Step 4: Manual smoke (optional, needs a real Ubiquiti account)**
 
-Connect with a real Site Manager key, map one UniFi site to a Breeze site, trigger a sync, and confirm devices appear in `unifi_devices` and linked rows in `discovered_assets`, plus a `unifi_sync_runs` row with sane counts.
+Connect with a real Site Manager key, map one UniFi site to a BL4CK site, trigger a sync, and confirm devices appear in `unifi_devices` and linked rows in `discovered_assets`, plus a `unifi_sync_runs` row with sane counts.
 
 ---
 

@@ -99,7 +99,7 @@ explanatory comment so nobody silently re-hardens it.
 
 ```ini
 [Unit]
-Description=Breeze RMM Agent
+Description=BL4CK RMM Agent
 Documentation=https://github.com/breeze-rmm/breeze
 After=network-online.target
 Wants=network-online.target

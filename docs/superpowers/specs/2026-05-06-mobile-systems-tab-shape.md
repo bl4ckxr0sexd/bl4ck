@@ -4,7 +4,7 @@
 
 ## 1. Feature Summary
 
-The Systems tab is the fleet-health surface of Breeze Mobile. A single scrollable view: bold one-line health summary at the top, the active issues that demand attention next, then context (orgs, recent activity). The job is "what's broken, where, and what just happened" in two glances. Drilldown lifts the existing detail screens for now; redesign comes after.
+The Systems tab is the fleet-health surface of BL4CK Mobile. A single scrollable view: bold one-line health summary at the top, the active issues that demand attention next, then context (orgs, recent activity). The job is "what's broken, where, and what just happened" in two glances. Drilldown lifts the existing detail screens for now; redesign comes after.
 
 This is the surface that lets a tech tap once on the bus and trust the answer to *"is anything on fire?"*.
 
@@ -84,7 +84,7 @@ Single scrollable surface. No tabs-within-tab, no bottom nav inside the tab. Hie
 
 ### Empty (no devices in the user's org)
 - Hero: *"No devices yet."*
-- Below: *"Pair your first device from the Breeze web portal."* in Text Medium Body.
+- Below: *"Pair your first device from the BL4CK web portal."* in Text Medium Body.
 - No CTA button — the user has to go to the web portal anyway, so the copy is the directive. Keep it small; this is a rare state.
 
 ### Refreshing (pull-to-refresh in flight)

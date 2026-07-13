@@ -132,7 +132,7 @@ export function LoginScreen({ navigation }: Props) {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.header}>
-            <Text style={[type.display, { color: theme.textHi }]}>Breeze</Text>
+            <Text style={[type.display, { color: theme.textHi }]}>BL4CK</Text>
             <Text
               style={[
                 type.body,

@@ -5,7 +5,7 @@ description: Monitor network infrastructure devices using SNMP templates, custom
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-SNMP Monitoring lets you poll network infrastructure devices — routers, switches, printers, UPS units, and anything else that speaks SNMP — directly through the Breeze agent. You define which OIDs to collect via reusable templates, assign those templates to monitored assets, and the platform handles scheduled polling, metric storage, and dashboard aggregation. All SNMP data flows through the same agent WebSocket channel used for other commands, so no additional firewall rules or sidecar processes are required.
+SNMP Monitoring lets you poll network infrastructure devices — routers, switches, printers, UPS units, and anything else that speaks SNMP — directly through the BL4CK agent. You define which OIDs to collect via reusable templates, assign those templates to monitored assets, and the platform handles scheduled polling, metric storage, and dashboard aggregation. All SNMP data flows through the same agent WebSocket channel used for other commands, so no additional firewall rules or sidecar processes are required.
 
 The system supports SNMP v1, v2c, and v3 (including SNMPv3 authentication and privacy protocols). Metrics are stored with a configurable retention window (default 7 days) and are automatically pruned by a background worker.
 
@@ -267,7 +267,7 @@ The SNMP polling system is built on BullMQ with Redis as the message broker. It 
 
 1. **Scheduler** -- A repeatable BullMQ job runs every 60 seconds, scanning the `snmp_devices` table for active devices whose `pollingInterval` has elapsed since their `lastPolled` timestamp (or that have never been polled).
 
-2. **Poll dispatch** -- For each due device, the scheduler enqueues a `poll-device` job. The worker loads the device's template OIDs, finds an online Breeze agent in the same organization, and sends an `snmp_poll` command over the agent's WebSocket connection.
+2. **Poll dispatch** -- For each due device, the scheduler enqueues a `poll-device` job. The worker loads the device's template OIDs, finds an online BL4CK agent in the same organization, and sends an `snmp_poll` command over the agent's WebSocket connection.
 
 3. **Result processing** -- When the agent returns SNMP metric results, a `process-poll-results` job writes each metric row to the `snmp_metrics` table and updates the device's `lastPolled` timestamp and `lastStatus`.
 
@@ -436,7 +436,7 @@ The following legacy endpoints return `410 Gone` with a migration message:
 ## Troubleshooting
 
 **No metrics appearing after enabling SNMP on an asset.**
-The polling scheduler runs every 60 seconds. After enabling SNMP, wait at least one full polling interval (default 300 seconds) plus the 60-second scheduler cycle. Confirm the device has a template assigned with at least one OID -- the worker skips devices with no OIDs configured. Also verify that at least one Breeze agent in the same organization is online, since the poll command is dispatched over the agent WebSocket.
+The polling scheduler runs every 60 seconds. After enabling SNMP, wait at least one full polling interval (default 300 seconds) plus the 60-second scheduler cycle. Confirm the device has a template assigned with at least one OID -- the worker skips devices with no OIDs configured. Also verify that at least one BL4CK agent in the same organization is online, since the poll command is dispatched over the agent WebSocket.
 
 **Poll status stuck on `offline` or `unknown`.**
 This means the SNMP poll command was sent to the agent but no results were returned. Common causes: the target IP is unreachable from the agent's network, the SNMP port is blocked by a firewall, or the community string / SNMPv3 credentials are incorrect. Test connectivity from the agent host using `snmpwalk` or `snmpget` directly.

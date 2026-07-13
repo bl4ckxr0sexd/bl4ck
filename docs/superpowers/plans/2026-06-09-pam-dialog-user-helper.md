@@ -2,7 +2,7 @@
 
 **Issue:** LanternOps/breeze#1152
 **Pairs with:** #959 (ETW subscriber — the trigger source), #1150 (account manager — runs on approve), #960 (actuator), #1163 (remote-approval alternative).
-**Design sources:** issue #1152; [Discussion #858 §5 step 2](https://github.com/LanternOps/breeze/discussions/858) (Breeze dialog on the user desktop while consent.exe idles); [Q2 ruling](https://github.com/LanternOps/breeze/discussions/858#discussioncomment-17033668) (broker stays in-agent).
+**Design sources:** issue #1152; [Discussion #858 §5 step 2](https://github.com/LanternOps/breeze/discussions/858) (BL4CK dialog on the user desktop while consent.exe idles); [Q2 ruling](https://github.com/LanternOps/breeze/discussions/858#discussioncomment-17033668) (broker stays in-agent).
 **Status:** Draft, ready for pickup. Author: triage pass 2026-06-09.
 
 ---
@@ -80,7 +80,7 @@ Tasks 1→2→3→4 in order (each depends on the prior); 5–6 throughout. Effo
 ## Risks / watch-items
 
 - **Native windowing is greenfield** — `MessageBoxW` MVP de-risks it; don't block the flow on the branded window.
-- **Secure-desktop vs user-desktop** — the Breeze dialog renders on the **user's** desktop (correct: that's where the user is looking); consent.exe sits on the secure desktop. Do not try to render the Breeze dialog on WINLOGON.
+- **Secure-desktop vs user-desktop** — the BL4CK dialog renders on the **user's** desktop (correct: that's where the user is looking); consent.exe sits on the secure desktop. Do not try to render the BL4CK dialog on WINLOGON.
 - **CVE-2026-20824 / N-able deadlock** (§858 §5) — vet the dialog→actuate timing against the documented consent.exe hardening + N-able interaction before broad rollout.
 - **Two approval routes** — keep the local dialog (#1152) and remote mobile/web approval (#1163/#1159) cleanly separated; policy decides which applies.
 

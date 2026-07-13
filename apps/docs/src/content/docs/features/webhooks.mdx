@@ -5,7 +5,7 @@ description: Send real-time event notifications to external systems when devices
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Webhooks let you push real-time event notifications from Breeze to any external HTTP endpoint. When a device enrolls, an alert fires, a script completes, or any other tracked event occurs, Breeze sends a signed JSON payload to each webhook configured for that event type. Webhooks are scoped to an organization and support custom headers, HMAC-SHA256 signature verification, automatic retries with exponential backoff, and a full delivery history with per-delivery status tracking.
+Webhooks let you push real-time event notifications from BL4CK to any external HTTP endpoint. When a device enrolls, an alert fires, a script completes, or any other tracked event occurs, BL4CK sends a signed JSON payload to each webhook configured for that event type. Webhooks are scoped to an organization and support custom headers, HMAC-SHA256 signature verification, automatic retries with exponential backoff, and a full delivery history with per-delivery status tracking.
 
 ---
 
@@ -70,7 +70,7 @@ Webhooks follow the standard multi-tenant access model:
 
 ## Event Types
 
-Webhooks subscribe to events emitted by the Breeze event bus. Pass one or more event type strings in the `events` array when creating or updating a webhook.
+Webhooks subscribe to events emitted by the BL4CK event bus. Pass one or more event type strings in the `events` array when creating or updating a webhook.
 
 ### Device Events
 
@@ -142,7 +142,7 @@ Webhooks subscribe to events emitted by the Breeze event bus. Pass one or more e
 
 ## Delivery Mechanism
 
-When an event is emitted on the Breeze event bus, the webhook delivery system routes it to all active webhooks in the same organization that are subscribed to that event type. Each delivery follows this sequence:
+When an event is emitted on the BL4CK event bus, the webhook delivery system routes it to all active webhooks in the same organization that are subscribed to that event type. Each delivery follows this sequence:
 
 <Steps>
 1. The event bus fires the event. The `initializeWebhookDelivery` subscriber matches the event type against all configured webhooks for the organization.
@@ -254,7 +254,7 @@ After all retries are exhausted, the delivery job is moved to a dead letter queu
 
 ## Signature Verification
 
-When a webhook has a signing secret, every delivery includes an HMAC-SHA256 signature in the `X-Breeze-Signature` header. Use this to verify that the payload was sent by Breeze and has not been tampered with.
+When a webhook has a signing secret, every delivery includes an HMAC-SHA256 signature in the `X-Breeze-Signature` header. Use this to verify that the payload was sent by BL4CK and has not been tampered with.
 
 ### How the Signature Is Computed
 
@@ -424,7 +424,7 @@ Content-Type: application/json
 {
   "event": "webhook.test",
   "payload": {
-    "message": "Hello from Breeze RMM"
+    "message": "Hello from BL4CK RMM"
   }
 }
 ```
@@ -490,7 +490,7 @@ DELETE /webhooks/:id
 
 ## URL Safety Validation
 
-Breeze validates webhook URLs at both creation time and delivery time to prevent SSRF (Server-Side Request Forgery) attacks.
+BL4CK validates webhook URLs at both creation time and delivery time to prevent SSRF (Server-Side Request Forgery) attacks.
 
 **At creation and update time**, the API performs synchronous validation including DNS resolution:
 

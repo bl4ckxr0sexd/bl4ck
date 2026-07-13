@@ -5,7 +5,7 @@ description: Establish subnet baselines and detect new, changed, disappeared, or
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Network Baselines let you snapshot the devices on a subnet and continuously compare future scans against that snapshot. When something changes -- a new device appears, a known device disappears, a host swaps MAC address, or an unauthorized device joins the network -- Breeze records a change event and optionally raises an alert. Baselines are scoped to a specific organization, site, and CIDR subnet, and they integrate directly with the Network Discovery engine so that scan results automatically feed into baseline comparisons.
+Network Baselines let you snapshot the devices on a subnet and continuously compare future scans against that snapshot. When something changes -- a new device appears, a known device disappears, a host swaps MAC address, or an unauthorized device joins the network -- BL4CK records a change event and optionally raises an alert. Baselines are scoped to a specific organization, site, and CIDR subnet, and they integrate directly with the Network Discovery engine so that scan results automatically feed into baseline comparisons.
 
 Each baseline stores a list of known devices with their IP, MAC, hostname, asset type, manufacturer, and first/last-seen timestamps. A background worker (BullMQ) periodically rescans the subnet on a configurable schedule, compares the results, deduplicates events within a 24-hour window, and updates the known-device list. Alerts are created using the platform's alert template system with severity mapped to event type, and events are published to the real-time event bus.
 

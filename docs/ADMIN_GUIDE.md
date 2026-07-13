@@ -1,6 +1,6 @@
-# Breeze RMM Administrator Guide
+# BL4CK RMM Administrator Guide
 
-This comprehensive guide covers all administrative functions in the Breeze RMM platform, including organization management, user administration, roles and permissions, SSO configuration, API keys, and audit compliance.
+This comprehensive guide covers all administrative functions in the BL4CK RMM platform, including organization management, user administration, roles and permissions, SSO configuration, API keys, and audit compliance.
 
 ---
 
@@ -21,7 +21,7 @@ This comprehensive guide covers all administrative functions in the Breeze RMM p
 
 ## 1. Organization Setup
 
-Breeze RMM uses a multi-tenant hierarchy designed for MSPs (Managed Service Providers) and enterprise IT teams. Understanding this structure is essential for proper platform administration.
+BL4CK RMM uses a multi-tenant hierarchy designed for MSPs (Managed Service Providers) and enterprise IT teams. Understanding this structure is essential for proper platform administration.
 
 ### 1.1 Multi-Tenant Hierarchy
 
@@ -49,7 +49,7 @@ Partners can be configured with different types based on their business model:
 |------|-------------|----------|
 | `msp` | Managed Service Provider | External IT companies managing multiple customers |
 | `enterprise` | Enterprise IT | Large organizations with internal IT departments |
-| `internal` | Internal | Breeze platform administrators |
+| `internal` | Internal | BL4CK platform administrators |
 
 ### 1.3 Plan Types
 
@@ -327,7 +327,7 @@ Content-Type: application/json
 
 ## 3. Roles & Permissions
 
-Breeze RMM uses a comprehensive Role-Based Access Control (RBAC) system with support for both system-defined and custom roles.
+BL4CK RMM uses a comprehensive Role-Based Access Control (RBAC) system with support for both system-defined and custom roles.
 
 ### 3.1 Understanding the RBAC System
 
@@ -337,7 +337,7 @@ Roles exist at different scopes in the hierarchy:
 
 | Scope | Description | Applies To |
 |-------|-------------|------------|
-| `system` | Platform-wide roles | Breeze administrators |
+| `system` | Platform-wide roles | BL4CK administrators |
 | `partner` | Partner-level roles | MSP/Enterprise users |
 | `organization` | Organization-level roles | Customer organization users |
 
@@ -345,7 +345,7 @@ Roles exist at different scopes in the hierarchy:
 
 | Type | Description | Can Modify |
 |------|-------------|------------|
-| System Roles | Built-in roles provided by Breeze | No |
+| System Roles | Built-in roles provided by BL4CK | No |
 | Custom Roles | Roles created by administrators | Yes |
 
 ### 3.2 System Roles Overview
@@ -518,7 +518,7 @@ Roles do not inherit permissions from other roles. Each role explicitly defines 
 
 ## 4. SSO Configuration
 
-Breeze RMM supports Single Sign-On (SSO) via OpenID Connect (OIDC), with pre-configured presets for popular identity providers.
+BL4CK RMM supports Single Sign-On (SSO) via OpenID Connect (OIDC), with pre-configured presets for popular identity providers.
 
 ### 4.1 Supported Providers
 
@@ -610,9 +610,9 @@ Authorization: Bearer <token>
 
 ### 4.4 Attribute Mapping
 
-Map identity provider attributes to Breeze user fields:
+Map identity provider attributes to BL4CK user fields:
 
-| Breeze Field | Description | Common IdP Attributes |
+| BL4CK Field | Description | Common IdP Attributes |
 |--------------|-------------|----------------------|
 | `email` | User email address | `email`, `mail`, `upn` |
 | `name` | Display name | `name`, `displayName` |
@@ -634,7 +634,7 @@ Default mapping:
 
 When `autoProvision` is enabled:
 
-1. Users authenticating via SSO are automatically created in Breeze
+1. Users authenticating via SSO are automatically created in BL4CK
 2. New users are assigned the `defaultRoleId` role
 3. Users are added to the organization associated with the SSO provider
 
@@ -713,7 +713,7 @@ Content-Type: application/json
 2. System redirects to IdP authorization URL with PKCE challenge
 3. User authenticates with IdP
 4. IdP redirects back with authorization code
-5. Breeze exchanges code for tokens
+5. BL4CK exchanges code for tokens
 6. User info is retrieved and mapped
 7. User is created/updated and logged in
 
@@ -741,18 +741,18 @@ Response:
 
 ## 5. API Keys
 
-API keys enable programmatic access to the Breeze RMM API for integrations, automation scripts, and third-party applications.
+API keys enable programmatic access to the BL4CK RMM API for integrations, automation scripts, and third-party applications.
 
 ### 5.1 API Key Format
 
-Breeze API keys follow this format:
+BL4CK API keys follow this format:
 ```
 brz_<32-character-random-string>
 ```
 
 Example: `brz_Ab3dEf6gHi9jKlMnOpQrStUvWxYz12`
 
-The prefix `brz_` identifies it as a Breeze API key, and the first 12 characters are stored as a key prefix for identification.
+The prefix `brz_` identifies it as a BL4CK API key, and the first 12 characters are stored as a key prefix for identification.
 
 ### 5.2 Creating API Keys
 
@@ -916,7 +916,7 @@ Revocation is immediate and permanent. The key status changes to `revoked`.
 
 ## 6. Audit & Compliance
 
-Breeze RMM maintains comprehensive audit logs for security and compliance purposes.
+BL4CK RMM maintains comprehensive audit logs for security and compliance purposes.
 
 ### 6.1 Understanding Audit Logs
 
@@ -944,7 +944,7 @@ Every significant action in the system is logged with:
 |------|-------------|----------|
 | `user` | Human user via web UI | Login, create device group |
 | `api_key` | Programmatic via API key | Integration sync, automated script |
-| `agent` | Breeze agent on endpoint | Heartbeat, metrics upload |
+| `agent` | BL4CK agent on endpoint | Heartbeat, metrics upload |
 | `system` | Automated system process | Scheduled cleanup, alert trigger |
 
 ### 6.3 Common Actions
@@ -1120,7 +1120,7 @@ For compliance audits, generate reports covering:
 
 ### 6.10 Event Log Audit Baselines
 
-Breeze supports audit-policy baselines for Windows, macOS, and Linux to continuously verify endpoint audit controls.
+BL4CK supports audit-policy baselines for Windows, macOS, and Linux to continuously verify endpoint audit controls.
 
 #### Baseline APIs
 
@@ -1252,7 +1252,7 @@ Actions are tracked in `pending_approval → queued → in_progress → complete
 
 ### 7.1 Global Settings
 
-Global settings affect the entire Breeze deployment:
+Global settings affect the entire BL4CK deployment:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
@@ -1394,7 +1394,7 @@ Default rate limits protect the API from abuse:
 
 ## 10. Incident Response Operations
 
-Breeze includes incident lifecycle workflows under `/api/v1/incidents` for structured triage, containment, evidence collection, and closure.
+BL4CK includes incident lifecycle workflows under `/api/v1/incidents` for structured triage, containment, evidence collection, and closure.
 
 ### 10.1 Incident Lifecycle
 
@@ -1584,7 +1584,7 @@ curl https://api.breeze.local/api/v1/agents/health
 When contacting support, provide:
 
 1. **Environment details:**
-   - Breeze version
+   - BL4CK version
    - Deployment type (cloud/self-hosted)
    - Browser/OS version
 
@@ -1804,4 +1804,4 @@ Sensitive data discovery helps find probable PII/PCI/PHI/credential/financial ex
 ---
 
 *Last updated: February 2026*
-*Breeze RMM Documentation*
+*BL4CK RMM Documentation*

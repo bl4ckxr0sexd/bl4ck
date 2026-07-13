@@ -157,7 +157,7 @@ export default function OrgsTab({ onOpenPolicy }: OrgsTabProps) {
         data-testid="ai-office-not-enabled"
       >
         <p className="font-medium text-foreground">
-          Breeze AI for Office is not enabled on this instance.
+          BL4CK AI for Office is not enabled on this instance.
         </p>
         <p className="mt-1">
           Set <code className="rounded bg-muted px-1">CLIENT_AI_ENTRA_CLIENT_ID</code> (the Entra
@@ -500,7 +500,7 @@ function OnboardingWizard({
       {step === 2 && (
         <div className="mt-5 space-y-3" data-testid="ai-office-wizard-step-2">
           <p className="text-sm text-muted-foreground">
-            A Microsoft 365 admin of the client tenant must grant admin consent to the Breeze AI
+            A Microsoft 365 admin of the client tenant must grant admin consent to the BL4CK AI
             for Office app. Send them this link (or open it yourself if you hold Global Admin in
             the client tenant):
           </p>
@@ -541,7 +541,7 @@ function OnboardingWizard({
                 </a>
               </div>
               <p className="text-xs text-muted-foreground">
-                After granting, Microsoft redirects to a Breeze confirmation page. Consent shows as
+                After granting, Microsoft redirects to a BL4CK confirmation page. Consent shows as
                 granted here once the first user signs in from Excel — there is no live poll
                 against Microsoft (Plan-4 decision 1).
               </p>
@@ -606,7 +606,7 @@ function OnboardingWizard({
             </li>
             <li>
               Choose <span className="font-medium text-foreground">Upload custom apps</span> →
-              Office add-in → provide the Breeze AI for Office manifest URL from your Breeze
+              Office add-in → provide the BL4CK AI for Office manifest URL from your BL4CK
               instance.
             </li>
             <li>

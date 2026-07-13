@@ -5,7 +5,7 @@ description: Establish audit policy baselines, detect configuration drift, and e
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Audit Baselines let you define the expected audit policy configuration for your managed devices, automatically detect when devices drift from those expectations, and remediate non-compliant systems through an approval-gated workflow. Breeze ships with built-in CIS Level 1 and Level 2 templates for Windows, macOS, and Linux, and supports fully custom baselines for organizations with their own compliance requirements.
+Audit Baselines let you define the expected audit policy configuration for your managed devices, automatically detect when devices drift from those expectations, and remediate non-compliant systems through an approval-gated workflow. BL4CK ships with built-in CIS Level 1 and Level 2 templates for Windows, macOS, and Linux, and supports fully custom baselines for organizations with their own compliance requirements.
 
 The system works in three phases: first, baselines define what the audit policy should look like. Second, the agent periodically collects the actual audit policy state from each device and reports it to the API. Third, a background drift evaluator compares the collected state against the active baseline for that OS type, scores the result, and publishes compliance events. When deviations are found, administrators can review the specific settings that drifted and, for Windows devices, push the baseline directly to the device through an approval-gated apply workflow.
 
@@ -69,7 +69,7 @@ Each entry in the `deviations` array contains:
 
 ## Built-in Templates
 
-Breeze includes six CIS-aligned templates that are seeded for each organization. These provide sensible defaults and can be activated as-is or used as a starting point for custom baselines.
+BL4CK includes six CIS-aligned templates that are seeded for each organization. These provide sensible defaults and can be activated as-is or used as a starting point for custom baselines.
 
 <Tabs>
 <TabItem label="Windows">

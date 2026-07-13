@@ -974,10 +974,10 @@ cd agent && git add -A && git commit -m "test(agent/pam): green race + windows c
 
 Run on a throwaway Windows VM with the agent installed as a SYSTEM service and a user logged into the interactive console (so a `pam`-scoped user helper is connected). For each, watch agent diagnostic logs (`component=pam` / `etwlua`).
 
-- [ ] **Auto-approved path:** Configure a PAM rule/software-policy that auto-approves a chosen signed exe. Trigger its UAC prompt. Expect: Breeze dialog appears on the user desktop within ~1s → click Approve → `~breeze_elev` is promoted → creds typed onto consent.exe → consent closes (app elevates) → `~breeze_elev` demoted. Confirm the account is disabled again afterward (`net user ~breeze_elev`).
-- [ ] **End-user deny:** Same rule; click Deny on the Breeze dialog. Expect: consent.exe is dismissed via Escape (prompt closes, app does not elevate); log shows `dismiss_success=true`.
-- [ ] **Policy hard-deny:** Configure a blocklist rule for an exe. Trigger it. Expect: **no** Breeze dialog; consent.exe dismissed immediately; log `reason=policy_denied`.
-- [ ] **Require-approval / await_remote:** Configure a rule with no auto-decision (→ `pending`). Trigger it, approve the Breeze dialog. Expect: log `awaiting remote technician approval`; consent.exe stays up; approve from the web/mobile surface (#1159) → server sends `actuate_elevation` → promote/type/demote completes. (This exercises the seam with #1254's server-side mobile bridge once that lands.)
+- [ ] **Auto-approved path:** Configure a PAM rule/software-policy that auto-approves a chosen signed exe. Trigger its UAC prompt. Expect: BL4CK dialog appears on the user desktop within ~1s → click Approve → `~breeze_elev` is promoted → creds typed onto consent.exe → consent closes (app elevates) → `~breeze_elev` demoted. Confirm the account is disabled again afterward (`net user ~breeze_elev`).
+- [ ] **End-user deny:** Same rule; click Deny on the BL4CK dialog. Expect: consent.exe is dismissed via Escape (prompt closes, app does not elevate); log shows `dismiss_success=true`.
+- [ ] **Policy hard-deny:** Configure a blocklist rule for an exe. Trigger it. Expect: **no** BL4CK dialog; consent.exe dismissed immediately; log `reason=policy_denied`.
+- [ ] **Require-approval / await_remote:** Configure a rule with no auto-decision (→ `pending`). Trigger it, approve the BL4CK dialog. Expect: log `awaiting remote technician approval`; consent.exe stays up; approve from the web/mobile surface (#1159) → server sends `actuate_elevation` → promote/type/demote completes. (This exercises the seam with #1254's server-side mobile bridge once that lands.)
 - [ ] **Dedupe:** Trigger the same exe twice within 30s. Expect: a single dialog (re-fired ETW events deduped), no stacked dialogs.
 - [ ] **No helper connected:** Lock the workstation / no console user. Trigger a prompt. Expect: log `no capable user-helper session`; agent does not crash; consent.exe times out on its own.
 

@@ -120,7 +120,7 @@ export function ServerSelectScreen({ initialUrl, onSelected }: Props) {
                 { color: theme.textMd, marginTop: spacing[2] },
               ]}
             >
-              Pick the Breeze region you sign in to.
+              Pick the BL4CK region you sign in to.
             </Text>
           </View>
 
@@ -235,7 +235,7 @@ export function ServerSelectScreen({ initialUrl, onSelected }: Props) {
                 >
                   {showCustomError
                     ? 'Enter a valid http(s):// URL.'
-                    : 'Use the full https:// URL for your Breeze server.'}
+                    : 'Use the full https:// URL for your BL4CK server.'}
                 </Text>
               </View>
             )}

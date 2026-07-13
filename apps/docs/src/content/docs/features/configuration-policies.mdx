@@ -10,7 +10,7 @@ Configuration Policies let you bundle device settings — patches, alerts, maint
 Policies are **hierarchical**: settings cascade from the broadest scope down to the most specific, and more specific assignments always win.
 
 ```
-Breeze Defaults  (lowest priority — read-only, always present)
+BL4CK Defaults  (lowest priority — read-only, always present)
   └── Partner
         └── Organization
               └── Site
@@ -90,7 +90,7 @@ Open the policy detail editor and click the tab for the feature you want to conf
 | **Auto-approve** | Automatically approve patches matching the configured criteria |
 | **Schedule** | Frequency (daily/weekly/monthly) and time of day for patch runs |
 | **Reboot policy** | How to handle required reboots after patching |
-| **Manage Windows Update exclusively through Breeze** | Windows-only. Off by default. When on, the agent suppresses the device's native Windows Update automatic-install channel (it sets the `NoAutoUpdate` registry value under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU`) so that device only receives updates through Breeze's schedule and approval rings — no surprise reboots or out-of-band patches. Turning it back off returns update control to native Windows Update. |
+| **Manage Windows Update exclusively through BL4CK** | Windows-only. Off by default. When on, the agent suppresses the device's native Windows Update automatic-install channel (it sets the `NoAutoUpdate` registry value under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU`) so that device only receives updates through BL4CK's schedule and approval rings — no surprise reboots or out-of-band patches. Turning it back off returns update control to native Windows Update. |
 
 Patch Management is available on partner-wide (all organizations) policies — an [update ring](/features/update-rings/) can be linked directly, and the policy patches devices across every organization you manage. Behind the scenes, deployments are still tracked per organization: creating a deployment job from a partner-wide policy produces one job per organization with matching devices, so each customer's patch history and compliance reporting stay separate even though the schedule and approval rules are defined once.
 
@@ -168,7 +168,7 @@ Configure security policy settings for **Security**; check intervals and targets
 
 The **Vulnerability** feature is a single on/off toggle that controls whether the devices in the policy's scope are scanned for CVEs. It is configured **inline** (the on/off state lives in the policy) and is **off by default** -- a device with no vulnerability policy is never scanned, and its Vulnerabilities tab stays empty.
 
-Open the policy's **Vulnerability** tab, switch **Enable vulnerability scanning** on, save, and assign the policy. Because resolution is closest-wins, a device- or group-level setting of *off* overrides an organization-wide *on*. Once a scope is enabled, Breeze correlates its software and OS inventory against the CVE feeds once a day. If a policy exists but no device resolves to *on*, the daily job is simply a no-op -- it never falls back to scanning everything. The findings themselves are reviewed and acted on in [Vulnerability Management](/features/vulnerability-management/), not on this tab.
+Open the policy's **Vulnerability** tab, switch **Enable vulnerability scanning** on, save, and assign the policy. Because resolution is closest-wins, a device- or group-level setting of *off* overrides an organization-wide *on*. Once a scope is enabled, BL4CK correlates its software and OS inventory against the CVE feeds once a day. If a policy exists but no device resolves to *on*, the daily job is simply a no-op -- it never falls back to scanning everything. The findings themselves are reviewed and acted on in [Vulnerability Management](/features/vulnerability-management/), not on this tab.
 
 ## Assigning a policy
 
@@ -200,11 +200,11 @@ The underlying endpoint is:
 GET /policies/compliance/device/:deviceId
 ```
 
-## Breeze Defaults baseline
+## BL4CK Defaults baseline
 
-Every Breeze deployment ships with a built-in set of **Breeze Defaults** that sit at the bottom of the resolution hierarchy. These defaults are read-only — you cannot edit or delete them — but every policy you create at any level overrides them.
+Every BL4CK deployment ships with a built-in set of **BL4CK Defaults** that sit at the bottom of the resolution hierarchy. These defaults are read-only — you cannot edit or delete them — but every policy you create at any level overrides them.
 
-To inspect the current defaults, navigate to **Configuration → Policies → Defaults** (or go directly to **/configuration-policies/defaults**). The page lists every setting that Breeze ships with, shows its current value, and indicates whether it is **Active** (in effect for devices with no overriding policy) or **Not enforced** (the feature is present in defaults but not turned on by default).
+To inspect the current defaults, navigate to **Configuration → Policies → Defaults** (or go directly to **/configuration-policies/defaults**). The page lists every setting that BL4CK ships with, shows its current value, and indicates whether it is **Active** (in effect for devices with no overriding policy) or **Not enforced** (the feature is present in defaults but not turned on by default).
 
 Examples of shipped defaults:
 
@@ -218,7 +218,7 @@ Each row on the Defaults page includes a **Create override policy** shortcut tha
 
 ### Defaults in the Effective Configuration tab
 
-When a device has no policy assigned for a particular feature, the **Effective Configuration** tab on the device page attributes that value to **Breeze Defaults** and shows a **Not enforced** badge next to it, making it clear that the setting comes from the built-in layer rather than an explicit policy.
+When a device has no policy assigned for a particular feature, the **Effective Configuration** tab on the device page attributes that value to **BL4CK Defaults** and shows a **Not enforced** badge next to it, making it clear that the setting comes from the built-in layer rather than an explicit policy.
 
 ## Viewing effective configuration
 
@@ -226,7 +226,7 @@ To see the merged settings a specific device will receive:
 
 1. Navigate to the device's detail page.
 2. Open the **Effective Configuration** tab.
-3. The page shows the resolved settings for each feature type and which policy in the inheritance chain provided each value — including **Breeze Defaults** for any feature not covered by an assigned policy.
+3. The page shows the resolved settings for each feature type and which policy in the inheritance chain provided each value — including **BL4CK Defaults** for any feature not covered by an assigned policy.
 
 ```
 GET /configuration-policies/effective/:deviceId
@@ -261,7 +261,7 @@ Request body:
 }
 ```
 
-For each device, Breeze checks:
+For each device, BL4CK checks:
 
 - Whether the device exists and is accessible — inaccessible devices are listed in `skipped.inaccessibleDeviceIds`
 - Whether the device is inside an active maintenance window with patching suppression — suppressed devices are listed in `skipped.maintenanceSuppressedDeviceIds`

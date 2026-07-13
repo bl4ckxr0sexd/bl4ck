@@ -5,7 +5,7 @@ description: CIS benchmark compliance scanning, scoring, and guided remediation 
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-CIS Hardening evaluates your managed devices against Center for Internet Security (CIS) benchmarks and produces compliance scores, per-check findings, and remediation recommendations. You define baselines that specify a CIS benchmark version, security level, and optional exclusions. Breeze then scans devices against those baselines, producing a compliance score and a detailed list of passed and failed checks. When checks fail, you can request remediation actions that go through an approval workflow before being dispatched to the agent for execution.
+CIS Hardening evaluates your managed devices against Center for Internet Security (CIS) benchmarks and produces compliance scores, per-check findings, and remediation recommendations. You define baselines that specify a CIS benchmark version, security level, and optional exclusions. BL4CK then scans devices against those baselines, producing a compliance score and a detailed list of passed and failed checks. When checks fail, you can request remediation actions that go through an approval workflow before being dispatched to the agent for execution.
 
 The system supports Windows, macOS, and Linux benchmarks at both Level 1 (essential security) and Level 2 (defense in depth) profiles, plus custom baselines with specific check exclusions. Scans can be triggered on demand or scheduled to run automatically at configurable intervals.
 
@@ -444,7 +444,7 @@ Each remediation action in the response includes the device hostname, baseline n
 
 ## macOS Sharing & Security Checks
 
-Breeze includes 15 CIS checks aligned with the **CIS Apple macOS Benchmark Level 1** sharing and security controls. These checks evaluate whether common macOS sharing services and firewall settings are configured securely. They run automatically as part of any macOS baseline scan.
+BL4CK includes 15 CIS checks aligned with the **CIS Apple macOS Benchmark Level 1** sharing and security controls. These checks evaluate whether common macOS sharing services and firewall settings are configured securely. They run automatically as part of any macOS baseline scan.
 
 | Check | What It Evaluates |
 |-------|-------------------|

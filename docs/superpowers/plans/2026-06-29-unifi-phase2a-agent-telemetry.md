@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A designated Breeze agent at each customer site polls the on-site UniFi controller's official Network Integration API (read-only) and pushes per-device PoE/health and current-client telemetry into Breeze, linked to the existing network model.
+**Goal:** A designated BL4CK agent at each customer site polls the on-site UniFi controller's official Network Integration API (read-only) and pushes per-device PoE/health and current-client telemetry into BL4CK, linked to the existing network model.
 
 **Architecture:** Extends the Phase 1 UniFi integration. A new per-console `unifi_collectors` config row (attached to the Phase 1 `unifi_site_mappings`) names a collector agent + local controller URL + encrypted local API key. The agent pulls its collector configs from a new agent-role endpoint, polls the controller on a schedule, and POSTs batched telemetry to a new agent-role ingest endpoint. The ingest route enqueues to a BullMQ worker that reconciles into three new current-state tables (snapshot semantics, org-axis RLS) and enriches `discovered_assets` by MAC. No control/write actions (Phase 2b), no time-series, no per-poll ledger.
 
@@ -1116,7 +1116,7 @@ unifiRoutes.put('/collectors', partnerScopes, writePerm, requireMfa(), zValidato
   if (!conn) return c.json({ success: false, message: 'Not connected' }, 400);
   const body = c.req.valid('json');
   const [site] = await db.select({ id: sites.id, orgId: sites.orgId }).from(sites).where(eq(sites.id, body.siteId)).limit(1);
-  if (!site) return c.json({ success: false, message: `Unknown Breeze site: ${body.siteId}` }, 400);
+  if (!site) return c.json({ success: false, message: `Unknown BL4CK site: ${body.siteId}` }, 400);
   if (!auth.canAccessOrg(site.orgId)) return c.json({ success: false, message: 'Access to target organization denied' }, 403);
   const [dev] = await db.select({ id: devices.id, orgId: devices.orgId }).from(devices).where(eq(devices.id, body.collectorDeviceId)).limit(1);
   if (!dev) return c.json({ success: false, message: 'Unknown collector agent' }, 400);
@@ -1457,12 +1457,12 @@ git commit -m "feat(agent): UniFi Network Integration API read-only client"
 - Modify: the agent entrypoint that starts periodic loops (grep for where other periodic collectors/heartbeat start, e.g. `agent/internal/agent/agent.go` or `agent/cmd/.../main.go`)
 
 **Interfaces:**
-- Consumes: `APIClient`, `Snapshot` (Task 8); the agent's authenticated HTTP transport to the Breeze API (the same one heartbeat/metrics use — grep how an existing periodic collector POSTs to the API with the agent token).
+- Consumes: `APIClient`, `Snapshot` (Task 8); the agent's authenticated HTTP transport to the BL4CK API (the same one heartbeat/metrics use — grep how an existing periodic collector POSTs to the API with the agent token).
 - Produces: `func StartCollectorLoop(ctx context.Context, deps CollectorDeps)` where `CollectorDeps` holds the API base URL, an authed `*http.Client`/poster, and a logger.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `agent/internal/unifi/collector_test.go` — exercise the payload assembly + upload against an `httptest` server standing in for both the controller and the Breeze API:
+Create `agent/internal/unifi/collector_test.go` — exercise the payload assembly + upload against an `httptest` server standing in for both the controller and the BL4CK API:
 
 ```go
 package unifi
@@ -1544,7 +1544,7 @@ type CollectorConfig struct {
 
 type CollectorDeps struct {
 	APIBaseURL string
-	HTTP       *http.Client // authed transport to the Breeze API (agent token attached)
+	HTTP       *http.Client // authed transport to the BL4CK API (agent token attached)
 	Logf       func(format string, args ...any)
 }
 

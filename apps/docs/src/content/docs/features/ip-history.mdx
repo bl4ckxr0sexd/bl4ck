@@ -5,7 +5,7 @@ description: Track IP address changes over time with interface-level detail, MAC
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-IP History automatically tracks every IP address assignment on every managed device, recording when addresses appear, change, and disappear. Each heartbeat, the Breeze agent scans all active network interfaces, detects new or changed IP assignments, and reports the delta to the API. The API maintains a complete timeline of IP assignments per device with first-seen/last-seen timestamps, MAC address correlation, subnet mask, gateway, DNS servers, and whether the address was assigned via DHCP, statically configured, or acquired through a VPN tunnel.
+IP History automatically tracks every IP address assignment on every managed device, recording when addresses appear, change, and disappear. Each heartbeat, the BL4CK agent scans all active network interfaces, detects new or changed IP assignments, and reports the delta to the API. The API maintains a complete timeline of IP assignments per device with first-seen/last-seen timestamps, MAC address correlation, subnet mask, gateway, DNS servers, and whether the address was assigned via DHCP, statically configured, or acquired through a VPN tunnel.
 
 This feature is essential for incident response (answering "which device had IP 10.0.5.42 at 2 PM on Tuesday?"), compliance auditing, and network troubleshooting. When a device moves between subnets, switches from DHCP to static, or connects to a VPN, the full history is preserved with interface-level granularity.
 

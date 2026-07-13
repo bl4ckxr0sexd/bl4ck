@@ -35,7 +35,7 @@ We want friendly, on-brand 404 and 500 pages consistent with the rest of the pro
      `/theme-bootstrap.js` external script (so theme class is set before paint).
    - **No `<ClientRouter />`** — error pages must not depend on view-transition JS.
    - Vertically + horizontally centered content area using Tailwind utilities.
-   - Renders the Breeze breeze-lines SVG logo + "Breeze" wordmark (same mark as
+   - Renders the BL4CK breeze-lines SVG logo + "BL4CK" wordmark (same mark as
      `AuthLayout.astro`).
    - Props: `title: string` (document title), `statusCode: number` (displayed large).
    - A `<slot>` for page-specific message + actions.

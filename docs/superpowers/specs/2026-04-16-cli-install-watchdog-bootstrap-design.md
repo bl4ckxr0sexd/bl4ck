@@ -12,7 +12,7 @@ Today, installation paths diverge:
 | macOS PKG | ✅ | ✅ (postinstall loads `com.breeze.watchdog.plist`) |
 | `breeze-agent service install` (CLI) | ✅ | ❌ |
 
-The one-liner install commands shown in the Breeze dashboard (`AddDeviceModal.tsx`, `EnrollDeviceStep.tsx`) and in the docs (`apps/docs/src/content/docs/agents/installation.mdx`) use the CLI path on Windows and Linux. The docs at `installation.mdx:107-114` already claim manual install includes the watchdog — that claim is currently false.
+The one-liner install commands shown in the BL4CK dashboard (`AddDeviceModal.tsx`, `EnrollDeviceStep.tsx`) and in the docs (`apps/docs/src/content/docs/agents/installation.mdx`) use the CLI path on Windows and Linux. The docs at `installation.mdx:107-114` already claim manual install includes the watchdog — that claim is currently false.
 
 CLI-installed devices therefore lack agent self-recovery (watchdog restarts the agent on crash / hang and drives watchdog-mediated upgrades). This is a reliability regression vs. MSI/PKG-installed devices.
 

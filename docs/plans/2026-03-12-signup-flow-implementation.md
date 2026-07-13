@@ -684,7 +684,7 @@ export async function cleanupStaleAccounts(): Promise<void> {
         .delete(billingSubscriptions)
         .where(eq(billingSubscriptions.partnerId, partnerId));
 
-      // Use raw SQL for tables only in the main Breeze schema
+      // Use raw SQL for tables only in the main BL4CK schema
       await db.execute(sql`DELETE FROM partner_users WHERE partner_id = ${partnerId}`);
       await db.execute(sql`DELETE FROM roles WHERE partner_id = ${partnerId}`);
       await db.execute(sql`
@@ -955,7 +955,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onSkip }: Props) {
       <div>
         <h3 className="text-lg font-semibold">Enroll Your First Device</h3>
         <p className="text-sm text-muted-foreground mt-1">
-          Install the Breeze agent on a device to start monitoring.
+          Install the BL4CK agent on a device to start monitoring.
         </p>
       </div>
 
@@ -1191,9 +1191,9 @@ git commit -m "feat: add upgrade modal shown when device limit reached"
 
 ---
 
-## Task 11: Add `PUBLIC_BILLING_URL` env var to Breeze web app
+## Task 11: Add `PUBLIC_BILLING_URL` env var to BL4CK web app
 
-The main Breeze web app needs to know the billing service URL for checkout redirects and upgrade flows.
+The main BL4CK web app needs to know the billing service URL for checkout redirects and upgrade flows.
 
 **Files:**
 - Modify: `apps/web/astro.config.mjs` or `.env` config (add `PUBLIC_BILLING_URL`)

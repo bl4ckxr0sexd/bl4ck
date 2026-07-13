@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `deploy_software` automation action that installs the latest catalog version of a chosen app on targeted devices, reusing Breeze's existing software-deployment subsystem.
+**Goal:** Add a `deploy_software` automation action that installs the latest catalog version of a chosen app on targeted devices, reusing BL4CK's existing software-deployment subsystem.
 
 **Architecture:** A fifth automation action type referencing a `softwareCatalog` entry. The deployment create+dispatch logic currently inline in `POST /deployments` is extracted into a reusable `createSoftwareDeployment()` service that both the route and the automation executor call. Because a software deployment is one-to-many (one deployment, many devices) while the existing action loop is per-device, `deploy_software` runs as a **batched pass** over the run's devices — one `softwareDeployments` row per action — rather than inside the per-device action loop. Idempotency: skip devices whose installed version is already ≥ the catalog's latest (`software_inventory`); unknown/unparseable installed version → deploy (safe default).
 

@@ -1,8 +1,8 @@
-# Breeze RMM - Codex Context
+# BL4CK RMM - Codex Context
 
 ## Project Overview
 
-Breeze is a fast, modern Remote Monitoring and Management (RMM) platform for MSPs and internal IT teams. Target: 10,000+ agents with enterprise features.
+BL4CK is a fast, modern Remote Monitoring and Management (RMM) platform for MSPs and internal IT teams. Target: 10,000+ agents with enterprise features.
 
 ## Tech Stack
 
@@ -305,7 +305,7 @@ docker compose -f docker-compose.yml -f docker-compose.override.yml.local-build 
 - This is the normal workflow — do not wait for branch protection rules to be satisfied
 
 ### GitHub Naming
-- Do not use the `codex/` branch prefix for Breeze work. This applies even when Codex creates the branch or PR.
+- Do not use the `codex/` branch prefix for BL4CK work. This applies even when Codex creates the branch or PR.
 - Follow the existing GitHub branch patterns: `fix/<issue>-<short-slug>`, `feat/<issue>-<short-slug>`, `docs/<short-slug>`, `chore/<short-slug>`, `ops/<short-slug>`, `hotfix/<short-slug>`, or `integration/<short-slug>`.
 - If there is no issue number, use the same prefix with a concise slug, e.g. `fix/<short-slug>` or `feat/<short-slug>`.
 - Use `pr-####` or `pr-####-review` only when the branch is specifically for inspecting or reviewing an existing PR.

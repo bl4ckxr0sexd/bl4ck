@@ -5,7 +5,7 @@ description: Track active user sessions, login/logout events, idle time, and act
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-User Sessions gives you real-time visibility into who is logged into every managed device, how they connected, and whether they are actively working or idle. The Breeze agent continuously monitors OS-level session events -- console logins, RDP connections, SSH sessions, lock/unlock transitions -- and reports them to the API every five minutes. Login and logout events are published to the event bus in real time so you can trigger automations, generate alerts, or feed session data into your SIEM.
+User Sessions gives you real-time visibility into who is logged into every managed device, how they connected, and whether they are actively working or idle. The BL4CK agent continuously monitors OS-level session events -- console logins, RDP connections, SSH sessions, lock/unlock transitions -- and reports them to the API every five minutes. Login and logout events are published to the event bus in real time so you can trigger automations, generate alerts, or feed session data into your SIEM.
 
 This feature is designed for security auditing, license compliance, and helpdesk workflows. When a technician needs to know if someone is actively using a workstation before pushing a reboot, they can check the session list. When compliance requires proof that only authorized users accessed a server, the session history provides timestamped evidence with per-session deduplication.
 
@@ -72,7 +72,7 @@ This feature is designed for security auditing, license compliance, and helpdesk
 
 1. **Agent starts the session collector**
 
-   When the Breeze agent starts, it initializes a `SessionCollector` that calls into the platform-specific `SessionDetector`. The detector uses native OS APIs to enumerate active sessions:
+   When the BL4CK agent starts, it initializes a `SessionCollector` that calls into the platform-specific `SessionDetector`. The detector uses native OS APIs to enumerate active sessions:
 
    <Tabs>
    <TabItem label="Windows">
@@ -103,9 +103,9 @@ This feature is designed for security auditing, license compliance, and helpdesk
 
 4. **Activity state mapping**
 
-   Raw OS session states are normalized to the Breeze activity state enum:
+   Raw OS session states are normalized to the BL4CK activity state enum:
 
-   | OS-Reported State | Breeze State |
+   | OS-Reported State | BL4CK State |
    |---|---|
    | `active`, `online` | `active` |
    | `idle` | `idle` |
@@ -141,7 +141,7 @@ This approach ensures that even if the agent restarts or misses a logout event, 
 
 ## Event Publishing
 
-Login and logout events are published to the Breeze event bus in real time, enabling downstream automations and integrations:
+Login and logout events are published to the BL4CK event bus in real time, enabling downstream automations and integrations:
 
 | Event Type | Published When |
 |---|---|

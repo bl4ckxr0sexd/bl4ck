@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let an MSP partner register an M365 shared mailbox, complete admin consent for Breeze's Graph app, and have Breeze store the per-partner tenant + mailbox so inbound (Plan 2) and outbound (Plan 3) can authenticate.
+**Goal:** Let an MSP partner register an M365 shared mailbox, complete admin consent for BL4CK's Graph app, and have BL4CK store the per-partner tenant + mailbox so inbound (Plan 2) and outbound (Plan 3) can authenticate.
 
-**Architecture:** A new partner-axis table `ticket_mailbox_connections` (Shape 3 RLS, no secret column — Breeze's app secret lives in env). An app-only token helper reuses the existing `c2cM365.ts` client-credentials primitives against a *new* Azure app. Connect/callback routes mirror the accounting OAuth pattern: signed-state JWT + CSRF cookie, callback unauthenticated at the middleware layer, writes under system DB context.
+**Architecture:** A new partner-axis table `ticket_mailbox_connections` (Shape 3 RLS, no secret column — BL4CK's app secret lives in env). An app-only token helper reuses the existing `c2cM365.ts` client-credentials primitives against a *new* Azure app. Connect/callback routes mirror the accounting OAuth pattern: signed-state JWT + CSRF cookie, callback unauthenticated at the middleware layer, writes under system DB context.
 
 **Tech Stack:** Hono, Drizzle ORM, PostgreSQL RLS, BullMQ (later plans), Vitest, Microsoft Graph (OAuth2 client-credentials).
 

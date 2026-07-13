@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `security_compliance_posture` report type that joins Breeze's existing security data (endpoint protection, encryption, firewall, password policy, local-admin exposure, patching, vulnerabilities, privileged-access/PAM, and security integrations) into per-device rows plus percent-implemented rollups an MSP can hand to a cyber-insurance application.
+**Goal:** Add a `security_compliance_posture` report type that joins BL4CK's existing security data (endpoint protection, encryption, firewall, password policy, local-admin exposure, patching, vulnerabilities, privileged-access/PAM, and security integrations) into per-device rows plus percent-implemented rollups an MSP can hand to a cyber-insurance application.
 
 **Architecture:** A new generator function `generateSecurityCompliancePostureReport(orgId, config, perms)` lives in its own service file (`securityComplianceReport.ts`), is wired into the existing `reportGenerationService.generateReport` dispatcher and `ReportType` union, and emits a `ReportResult` with both `rows` (CSV/Excel body) and `summary` (PDF rollups). It rides the run/snapshot/download plumbing from the downloadable-report-runs work unchanged. The report type is added to the `report_type` Postgres enum via migration, and surfaced in the web builder + templates. The PDF is rendered client-side from the stored snapshot.
 

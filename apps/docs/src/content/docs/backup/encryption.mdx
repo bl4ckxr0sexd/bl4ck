@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-Backup encryption protects your data at rest. Breeze manages encryption keys that are used when writing snapshots to storage. Each snapshot references the key it was encrypted with, so keys must be available for restore operations.
+Backup encryption protects your data at rest. BL4CK manages encryption keys that are used when writing snapshots to storage. Each snapshot references the key it was encrypted with, so keys must be available for restore operations.
 
 ---
 
@@ -72,4 +72,4 @@ Click **Deactivate** on a key to prevent it from being used for new backups. Dea
 - **In transit** — all backup data is transferred over HTTPS (TLS 1.2+)
 - **At rest** — snapshots are encrypted using the assigned key before being written to storage
 - Each snapshot stores a reference to its encryption key ID, so the correct key is used automatically during restore
-- Keys themselves are stored encrypted in the Breeze database with access scoped to the organization
+- Keys themselves are stored encrypted in the BL4CK database with access scoped to the organization

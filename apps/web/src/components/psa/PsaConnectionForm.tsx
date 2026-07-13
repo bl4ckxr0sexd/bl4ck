@@ -75,8 +75,8 @@ const syncIntervalLabels: Record<PsaConnectionFormValues['syncInterval'], string
 };
 
 const syncDirectionLabels: Record<PsaConnectionFormValues['syncDirection'], string> = {
-  inbound: 'PSA → Breeze',
-  outbound: 'Breeze → PSA',
+  inbound: 'PSA → BL4CK',
+  outbound: 'BL4CK → PSA',
   bidirectional: 'Bidirectional'
 };
 
@@ -202,7 +202,7 @@ export default function PsaConnectionForm({
               {...register('defaultQueue')}
             />
             <p className="text-xs text-muted-foreground">
-              Optional. Used when creating tickets from Breeze alerts.
+              Optional. Used when creating tickets from BL4CK alerts.
             </p>
           </div>
         </div>
@@ -409,7 +409,7 @@ export default function PsaConnectionForm({
               <div>
                 <span className="text-sm font-medium">Auto-close PSA tickets</span>
                 <p className="text-xs text-muted-foreground">
-                  Close linked tickets when Breeze alerts are resolved.
+                  Close linked tickets when BL4CK alerts are resolved.
                 </p>
               </div>
             </label>
@@ -424,7 +424,7 @@ export default function PsaConnectionForm({
               <div>
                 <span className="text-sm font-medium">Sync alert notes</span>
                 <p className="text-xs text-muted-foreground">
-                  Push Breeze comments and updates to the PSA ticket timeline.
+                  Push BL4CK comments and updates to the PSA ticket timeline.
                 </p>
               </div>
             </label>

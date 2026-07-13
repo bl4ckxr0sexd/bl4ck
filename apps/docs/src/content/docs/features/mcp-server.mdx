@@ -1,21 +1,21 @@
 ---
 title: MCP Server
-description: Connect Claude Desktop, Cursor, and other MCP-compatible AI clients to your Breeze fleet via the Model Context Protocol.
+description: Connect Claude Desktop, Cursor, and other MCP-compatible AI clients to your BL4CK fleet via the Model Context Protocol.
 ---
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze exposes a built-in **Model Context Protocol (MCP)** server that lets external AI clients -- Claude Desktop, Cursor, and any other MCP-compatible application -- interact directly with your fleet. Instead of copying data between dashboards and chat windows, you can ask an AI assistant to query devices, triage alerts, run scripts, and manage patches, all within the client you already use.
+BL4CK exposes a built-in **Model Context Protocol (MCP)** server that lets external AI clients -- Claude Desktop, Cursor, and any other MCP-compatible application -- interact directly with your fleet. Instead of copying data between dashboards and chat windows, you can ask an AI assistant to query devices, triage alerts, run scripts, and manage patches, all within the client you already use.
 
-The MCP server reuses the same tools, guardrails, and audit infrastructure as the built-in Breeze AI assistant, so every operation is scoped to your organization and governed by the same tiered permission model.
+The MCP server reuses the same tools, guardrails, and audit infrastructure as the built-in BL4CK AI assistant, so every operation is scoped to your organization and governed by the same tiered permission model.
 
 ---
 
 ## How MCP works
 
-The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard that defines how AI applications discover and invoke tools and resources hosted by external servers. A single MCP connection gives the AI client a live catalogue of everything it can do inside Breeze -- no custom plugin code required.
+The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard that defines how AI applications discover and invoke tools and resources hosted by external servers. A single MCP connection gives the AI client a live catalogue of everything it can do inside BL4CK -- no custom plugin code required.
 
-Breeze implements the **2024-11-05** protocol version with three capabilities:
+BL4CK implements the **2024-11-05** protocol version with three capabilities:
 
 | Capability | Description |
 |---|---|
@@ -29,7 +29,7 @@ On connection the server also returns an **`instructions`** string describing th
 
 ## Transport
 
-The Breeze MCP server uses the **SSE + HTTP POST** transport, which is the standard remote MCP transport for server-deployed instances.
+The BL4CK MCP server uses the **SSE + HTTP POST** transport, which is the standard remote MCP transport for server-deployed instances.
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -59,7 +59,7 @@ All MCP endpoints require an API key with `ai:*` scopes. Authentication is perfo
 
 <Steps>
 
-1. Navigate to **Settings > API Keys** in the Breeze dashboard.
+1. Navigate to **Settings > API Keys** in the BL4CK dashboard.
 
 2. Click **Create API Key**.
 
@@ -81,9 +81,9 @@ API keys follow the format `brz_<random>`. The server stores only a SHA-256 hash
 
 ### OAuth 2.1
 
-For AI clients that implement OAuth 2.1 with Dynamic Client Registration (DCR) and PKCE — including **Claude.ai** and **ChatGPT** — Breeze can authorize MCP connections through a real OAuth handshake instead of pasted API keys. The user pastes the tenant's `/mcp/sse` URL into the client, signs in to Breeze, grants the AI client a scoped session, and the assistant receives a refreshable access token bound to that user and organization. No API key is created or copied.
+For AI clients that implement OAuth 2.1 with Dynamic Client Registration (DCR) and PKCE — including **Claude.ai** and **ChatGPT** — BL4CK can authorize MCP connections through a real OAuth handshake instead of pasted API keys. The user pastes the tenant's `/mcp/sse` URL into the client, signs in to BL4CK, grants the AI client a scoped session, and the assistant receives a refreshable access token bound to that user and organization. No API key is created or copied.
 
-OAuth is enabled with the `MCP_OAUTH_ENABLED=true` server setting. Once enabled, Breeze acts as a standards-compliant authorization server and advertises the following endpoints (all discoverable automatically by the client — there is nothing to configure by hand):
+OAuth is enabled with the `MCP_OAUTH_ENABLED=true` server setting. Once enabled, BL4CK acts as a standards-compliant authorization server and advertises the following endpoints (all discoverable automatically by the client — there is nothing to configure by hand):
 
 | Endpoint | Purpose |
 |---|---|
@@ -114,9 +114,9 @@ API key authentication via the `X-API-Key` header continues to work for every cl
 
 1. Open Claude Desktop and go to **Settings > Developer > Edit Config** (or directly edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS).
 
-2. Add the Breeze MCP server to the `mcpServers` section:
+2. Add the BL4CK MCP server to the `mcpServers` section:
 
-3. Restart Claude Desktop. You should see the Breeze tools appear in the tool picker.
+3. Restart Claude Desktop. You should see the BL4CK tools appear in the tool picker.
 
 </Steps>
 
@@ -154,7 +154,7 @@ The config file on Windows is located at `%APPDATA%\Claude\claude_desktop_config
 </Tabs>
 
 <Aside>
-  Replace `your-breeze-instance.example.com` with your actual Breeze API hostname and `brz_your_api_key_here` with the API key you created.
+  Replace `your-breeze-instance.example.com` with your actual BL4CK API hostname and `brz_your_api_key_here` with the API key you created.
 </Aside>
 
 ---
@@ -169,7 +169,7 @@ The config file on Windows is located at `%APPDATA%\Claude\claude_desktop_config
 
 3. Enter the following configuration:
 
-4. Save and reload the window. Breeze tools will appear in Cursor's agent mode.
+4. Save and reload the window. BL4CK tools will appear in Cursor's agent mode.
 
 </Steps>
 
@@ -190,7 +190,7 @@ The config file on Windows is located at `%APPDATA%\Claude\claude_desktop_config
 
 ## Available tools
 
-Tools are the primary way AI clients interact with Breeze. Each tool maps to one or more fleet operations and is classified into a tier that determines how it executes. The MCP server filters the tool list based on the scopes attached to your API key -- you only see tools you are authorized to use.
+Tools are the primary way AI clients interact with BL4CK. Each tool maps to one or more fleet operations and is classified into a tier that determines how it executes. The MCP server filters the tool list based on the scopes attached to your API key -- you only see tools you are authorized to use.
 
 ### Device tools
 
@@ -336,7 +336,7 @@ Prompts don't bypass permissions or approvals: every tool a prompt drives is sti
 
 ## Scope-based access control
 
-The tools visible and callable through MCP are determined by the scopes on your API key. Breeze uses a four-scope model for AI operations:
+The tools visible and callable through MCP are determined by the scopes on your API key. BL4CK uses a four-scope model for AI operations:
 
 | Scope | Access level | Tools exposed |
 |---|---|---|
@@ -371,13 +371,13 @@ When a client calls `tools/call`, the server re-checks scopes before execution. 
 
 ### RBAC permission checks
 
-In addition to API key scopes, every tool call passes through the Breeze RBAC system. The user who created the API key must have the appropriate role-based permissions for the resource and action. For example, calling `run_script` requires the `scripts.execute` permission on the creator's role.
+In addition to API key scopes, every tool call passes through the BL4CK RBAC system. The user who created the API key must have the appropriate role-based permissions for the resource and action. For example, calling `run_script` requires the `scripts.execute` permission on the creator's role.
 
 ---
 
 ## Rate limiting
 
-Rate limiting is enforced at multiple levels to protect your fleet and the Breeze API.
+Rate limiting is enforced at multiple levels to protect your fleet and the BL4CK API.
 
 ### Transport-level limits
 
@@ -455,7 +455,7 @@ If any check fails, the request is rejected with an appropriate error before the
 
 ### Step-up approval (out-of-band)
 
-Beyond scope and RBAC checks, a sensitive tool call can require an explicit **out-of-band approval** before it executes. When step-up is required, Breeze creates an approval request, pushes it to the user's trusted mobile device, and blocks the action until the user decides on their phone:
+Beyond scope and RBAC checks, a sensitive tool call can require an explicit **out-of-band approval** before it executes. When step-up is required, BL4CK creates an approval request, pushes it to the user's trusted mobile device, and blocks the action until the user decides on their phone:
 
 - **Approved** — the tool call proceeds.
 - **Denied** or **expired** — the tool call fails with the recorded reason.
@@ -479,7 +479,7 @@ If the environment variable is unset or empty, all Tier 3+ tools are blocked in 
 
 ### Audit logging
 
-Every JSON-RPC request is recorded in the Breeze audit log with:
+Every JSON-RPC request is recorded in the BL4CK audit log with:
 
 - The API key ID as the actor
 - The JSON-RPC method (e.g., `mcp.tools.call`)
@@ -555,7 +555,7 @@ Returns server capabilities and metadata.
       "name": "breeze-rmm",
       "version": "1.0.0"
     },
-    "instructions": "You are connected to Breeze RMM — a multi-tenant RMM platform for MSPs. ..."
+    "instructions": "You are connected to BL4CK RMM — a multi-tenant RMM platform for MSPs. ..."
   }
 }
 ```

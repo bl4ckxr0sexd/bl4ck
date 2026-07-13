@@ -1,11 +1,11 @@
 ---
 title: Mobile App
-description: Monitor and manage your fleet on the go with the Breeze mobile app for iOS and Android.
+description: Monitor and manage your fleet on the go with the BL4CK mobile app for iOS and Android.
 ---
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Breeze mobile app gives technicians and administrators on-the-go access to device monitoring, alert management, and remote actions from their iOS or Android device. Built with React Native and Expo, the app connects to the same Breeze API used by the web dashboard through a dedicated set of mobile-optimized endpoints mounted at `/api/v1/mobile`. Push notifications keep you informed of critical alerts in real time, and biometric authentication provides a secure, convenient login experience.
+The BL4CK mobile app gives technicians and administrators on-the-go access to device monitoring, alert management, and remote actions from their iOS or Android device. Built with React Native and Expo, the app connects to the same BL4CK API used by the web dashboard through a dedicated set of mobile-optimized endpoints mounted at `/api/v1/mobile`. Push notifications keep you informed of critical alerts in real time, and biometric authentication provides a secure, convenient login experience.
 
 ---
 
@@ -142,7 +142,7 @@ The Settings screen in the app also provides local toggles for "Push Notificatio
 
 ## Approval Mode
 
-The mobile app acts as a **trusted-device approval surface** for sensitive actions. When an AI assistant or an MCP client (for example, Claude Desktop) requests a high-risk operation, Breeze can require an out-of-band approval from the user's phone before the action proceeds — a second factor for sensitive automation, similar in spirit to a push-based authenticator app.
+The mobile app acts as a **trusted-device approval surface** for sensitive actions. When an AI assistant or an MCP client (for example, Claude Desktop) requests a high-risk operation, BL4CK can require an out-of-band approval from the user's phone before the action proceeds — a second factor for sensitive automation, similar in spirit to a push-based authenticator app.
 
 The same approval surface also receives **Windows UAC elevation requests** from [Privileged Access Management](/features/pam/): when a managed device intercepts a UAC prompt that needs a human decision, the request is pushed to the phones of every technician eligible to approve it. The first technician to approve or deny on mobile decides it, and the request clears from the other approvers' inboxes.
 
@@ -171,7 +171,7 @@ A request moves through one of the following **statuses**:
 
 <Steps>
 
-1. A client — an AI assistant, MCP client, the Breeze Helper, or the Breeze agent intercepting a Windows UAC prompt — initiates an action that requires approval. Breeze creates a pending approval request and pushes a notification to the user's trusted devices. (For a UAC elevation, the request shows the agent as the requesting client and the device hostname as the requesting machine.)
+1. A client — an AI assistant, MCP client, the BL4CK Helper, or the BL4CK agent intercepting a Windows UAC prompt — initiates an action that requires approval. BL4CK creates a pending approval request and pushes a notification to the user's trusted devices. (For a UAC elevation, the request shows the agent as the requesting client and the device hostname as the requesting machine.)
 
 2. The user opens the notification. The approval screen shows the requesting client, the requesting machine (when known), a plain-language description of the action, and the risk tier.
 
@@ -225,7 +225,7 @@ Approval requests are stored in a shared `approval_requests` table (also written
 
 ### JWT-Based Login
 
-The mobile app authenticates through the core Breeze auth endpoints:
+The mobile app authenticates through the core BL4CK auth endpoints:
 
 <Steps>
 1. User enters email and password on the login screen.
@@ -365,7 +365,7 @@ Responses include a `pagination` object with `page`, `limit`, and `total` fields
 
 ## Multi-Tenant Access Control
 
-All mobile endpoints enforce the Breeze multi-tenant hierarchy:
+All mobile endpoints enforce the BL4CK multi-tenant hierarchy:
 
 - **Organization scope**: Users see only data within their own organization.
 - **Partner scope**: Users can access data across all organizations they manage. An optional `orgId` query parameter narrows results to a specific organization.
@@ -391,7 +391,7 @@ Stores registered mobile devices and their push notification configuration.
 | `platform` | `enum('ios', 'android')` | Device platform |
 | `model` | `varchar(255)` | Device model name |
 | `os_version` | `varchar(100)` | OS version string |
-| `app_version` | `varchar(50)` | Breeze app version |
+| `app_version` | `varchar(50)` | BL4CK app version |
 | `fcm_token` | `text` | Firebase Cloud Messaging token (Android) |
 | `apns_token` | `text` | Apple Push Notification Service token (iOS) |
 | `notifications_enabled` | `boolean` | Whether push notifications are active |

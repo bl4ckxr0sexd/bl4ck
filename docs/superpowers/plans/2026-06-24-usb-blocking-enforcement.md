@@ -895,7 +895,7 @@ git commit -m "feat(agent): Windows peripheral enforcer (USBSTOR gate, Deny_Writ
 
 - [ ] **Step 5: Manual integration verification on a Windows VM (REQUIRED before merge)**
 
-Build the agent for Windows, install it on a Windows 11 VM as SYSTEM, then from the Breeze web UI:
+Build the agent for Windows, install it on a Windows 11 VM as SYSTEM, then from the BL4CK web UI:
 1. Create a `storage` / `block` policy targeting the test device. Plug in a USB stick.
    - Expected: stick is removed/disabled (Device Manager shows it gone or with a problem code); the activity log event shows `eventType: blocked`, `details.enforcement: blocked`, `details.mechanism: pnputil` and/or `usbstor-start`. Verify a *newly* plugged stick is blocked after the next sync/reboot (USBSTOR gate).
 2. Add an allow-exception by serial for a second stick; re-sync.

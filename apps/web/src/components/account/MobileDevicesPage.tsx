@@ -118,7 +118,7 @@ export default function MobileDevicesPage() {
         </a>
         <h1 className="text-2xl font-semibold tracking-tight">Trusted devices</h1>
         <p className="text-sm text-muted-foreground">
-          Phones and tablets you've paired with the Breeze mobile app. These devices can approve
+          Phones and tablets you've paired with the BL4CK mobile app. These devices can approve
           high-risk MCP requests on your behalf. Revoke any device you no longer use.
         </p>
       </header>
@@ -155,7 +155,7 @@ export default function MobileDevicesPage() {
           <Smartphone className="mx-auto h-10 w-10 text-muted-foreground/40" aria-hidden />
           <h2 className="mt-4 text-base font-semibold">No paired devices</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Install the Breeze mobile app and sign in to pair a device. Approvals will then surface
+            Install the BL4CK mobile app and sign in to pair a device. Approvals will then surface
             on your phone.
           </p>
         </div>

@@ -8,7 +8,7 @@ sidebar:
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Breeze agent supports **120+ commands** organized into 30+ categories. Commands are sent from the API to agents over WebSocket, each with an `action` string and an optional JSON `payload`.
+The BL4CK agent supports **120+ commands** organized into 30+ categories. Commands are sent from the API to agents over WebSocket, each with an `action` string and an optional JSON `payload`.
 
 ## Command Flow
 
@@ -887,7 +887,7 @@ These commands require the user-mode helper process to be running in a user's se
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `title` | string | `"Breeze Agent"` | Notification title |
+| `title` | string | `"BL4CK Agent"` | Notification title |
 | `body` | string | Required | Notification body text |
 | `icon` | string | `""` | Icon path or identifier |
 | `urgency` | string | `"normal"` | Urgency level: `"low"`, `"normal"`, `"critical"` |
@@ -899,12 +899,12 @@ These commands require the user-mode helper process to be running in a user's se
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `status` | string | `"ok"` | Tray icon status indicator |
-| `tooltip` | string | `"Breeze Agent"` | Tooltip text |
+| `tooltip` | string | `"BL4CK Agent"` | Tooltip text |
 | `menuItems` | array | -- | Array of `{ id, label, enabled }` menu items |
 
 ---
 
-## Breeze Agent Service Management
+## BL4CK Agent Service Management
 
 ### Linux (systemd)
 

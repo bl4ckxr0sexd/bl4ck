@@ -1,6 +1,6 @@
-# Breeze RMM Developer Guide
+# BL4CK RMM Developer Guide
 
-A comprehensive guide for developers working on the Breeze Remote Monitoring and Management platform.
+A comprehensive guide for developers working on the BL4CK Remote Monitoring and Management platform.
 
 ---
 
@@ -22,7 +22,7 @@ A comprehensive guide for developers working on the Breeze Remote Monitoring and
 
 ### Monorepo Structure
 
-Breeze uses a monorepo architecture powered by **Turborepo** and **pnpm workspaces**:
+BL4CK uses a monorepo architecture powered by **Turborepo** and **pnpm workspaces**:
 
 ```
 breeze/
@@ -78,14 +78,14 @@ breeze/
                     ┌────────────────────────────────┘
                     │
         ┌───────────▼───────────┐
-        │    Breeze Agent       │  ← Heartbeat/Metrics
+        │    BL4CK Agent       │  ← Heartbeat/Metrics
         │   (Go - on devices)   │  → Commands/Scripts
         └───────────────────────┘
 ```
 
 ### Multi-Tenant Data Model
 
-Breeze implements a hierarchical multi-tenant architecture:
+BL4CK implements a hierarchical multi-tenant architecture:
 
 ```
 Partner (MSP)
@@ -104,7 +104,7 @@ Partner (MSP)
 - **Organization**: A customer or business unit
 - **Site**: A physical location within an organization
 - **Device Group**: Logical grouping of devices (static or dynamic)
-- **Device**: A managed endpoint with the Breeze agent
+- **Device**: A managed endpoint with the BL4CK agent
 
 **Access Scopes:**
 
@@ -493,7 +493,7 @@ async function getDevicesForAuth(auth: AuthContext) {
 
 ### Astro with React Islands
 
-Breeze uses [Astro](https://astro.build/) for the frontend with React components for interactive parts.
+BL4CK uses [Astro](https://astro.build/) for the frontend with React components for interactive parts.
 
 **Astro configuration:**
 

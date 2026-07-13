@@ -1,6 +1,6 @@
 # Upgrade Guide: v0.1 -> v0.2 (No Data Loss)
 
-This runbook upgrades Breeze in-place while preserving PostgreSQL and Redis state.
+This runbook upgrades BL4CK in-place while preserving PostgreSQL and Redis state.
 
 ## Downtime Expectation
 

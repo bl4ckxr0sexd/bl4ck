@@ -1,5 +1,5 @@
 {
-  "productName": "Breeze Viewer",
+  "productName": "BL4CK Viewer",
   "version": "0.13.14",
   "identifier": "com.breeze.viewer",
   "build": {
@@ -14,7 +14,7 @@
     },
     "windows": [
       {
-        "title": "Breeze Remote Desktop",
+        "title": "BL4CK Remote Desktop",
         "width": 500,
         "height": 340,
         "resizable": false,

@@ -1,6 +1,6 @@
-# Breeze RMM - Disaster Recovery Runbook
+# BL4CK RMM - Disaster Recovery Runbook
 
-This runbook provides step-by-step procedures for recovering the Breeze RMM platform from various failure scenarios. Keep a printed or offline copy accessible -- you may need it when your infrastructure is down.
+This runbook provides step-by-step procedures for recovering the BL4CK RMM platform from various failure scenarios. Keep a printed or offline copy accessible -- you may need it when your infrastructure is down.
 
 ---
 
@@ -34,11 +34,11 @@ These targets assume backups are current, tested, and accessible. Adjust based o
 
 ## 2. Infrastructure Overview
 
-Breeze RMM consists of the following services. Understand the dependency chain before attempting recovery.
+BL4CK RMM consists of the following services. Understand the dependency chain before attempting recovery.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Breeze Platform                       │
+│                    BL4CK Platform                       │
 │                                                         │
 │  ┌────────────┐  ┌────────────┐  ┌────────────────────┐ │
 │  │  Astro     │  │  Hono API  │  │  BullMQ Workers    │ │
@@ -324,7 +324,7 @@ psql "$DATABASE_URL" -c "SELECT count(*) FROM devices;"
 #### Option B: Restore from pg_dump (Data Loss Up to Last Backup)
 
 ```bash
-# 1. Stop all Breeze services
+# 1. Stop all BL4CK services
 systemctl stop breeze-api breeze-worker breeze-web
 
 # 2. Drop and recreate the database
@@ -368,7 +368,7 @@ systemctl start postgresql
 # 6. Verify recovery
 psql "$DATABASE_URL" -c "SELECT max(created_at) FROM audit_logs;"
 
-# 7. Restart Breeze services
+# 7. Restart BL4CK services
 systemctl start breeze-api breeze-worker breeze-web
 ```
 
@@ -727,7 +727,7 @@ If the attacker modified data, perform a targeted or full restore from a backup 
 
 **Service outage:**
 
-> Subject: [Breeze RMM] Service Disruption - [Date]
+> Subject: [BL4CK RMM] Service Disruption - [Date]
 >
 > We are currently experiencing a service disruption affecting [specific functionality]. Our team is actively working on restoration.
 >
@@ -739,7 +739,7 @@ If the attacker modified data, perform a targeted or full restore from a backup 
 
 **Security incident:**
 
-> Subject: [Breeze RMM] Security Notice - [Date]
+> Subject: [BL4CK RMM] Security Notice - [Date]
 >
 > We have identified and contained a security incident affecting [scope]. We are conducting a thorough investigation.
 >

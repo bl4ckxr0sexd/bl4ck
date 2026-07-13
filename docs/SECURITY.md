@@ -45,14 +45,14 @@ SentinelOne containment/remediation APIs are treated as high-risk operations.
 - If account-level routing is ambiguous, webhook ingestion requires an explicit integration id.
 
 ### Event Lifecycle
-The integration emits normalized events on the Breeze event bus:
+The integration emits normalized events on the BL4CK event bus:
 - `huntress.incident_created`
 - `huntress.incident_updated`
 - `huntress.agent_offline`
 
 ### Correlation and Triage
 1. Ingest Huntress agents and incidents.
-2. Correlate Huntress entities to Breeze devices by hostname matching.
+2. Correlate Huntress entities to BL4CK devices by hostname matching.
 3. Normalize severity and status fields.
 4. Persist incident state transitions.
 5. Emit integration events for downstream automation and response.

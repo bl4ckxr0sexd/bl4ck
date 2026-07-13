@@ -55,9 +55,9 @@ draft → pending → downloading → installing → completed
 
 ### Retry and Failure Handling
 
-**Retry configuration** controls how many times Breeze will automatically re-attempt a failed device and how long it waits between each attempt.
+**Retry configuration** controls how many times BL4CK will automatically re-attempt a failed device and how long it waits between each attempt.
 
-- `retryConfig.maxRetries` — integer from 0 to 10. When a device fails and the retry count is below this value, Breeze schedules another attempt automatically.
+- `retryConfig.maxRetries` — integer from 0 to 10. When a device fails and the retry count is below this value, BL4CK schedules another attempt automatically.
 - `retryConfig.backoffMinutes` — array of wait times in minutes. The first retry uses index 0, the second retry uses index 1, and so on. If the retry count exceeds the array length, the last value in the array is reused. Example: `[5, 15, 60]` means wait 5 minutes before the first retry, 15 minutes before the second, and 60 minutes before any subsequent retries.
 
 **Auto-pause thresholds** stop a staggered deployment automatically if failures are accumulating at an unexpected rate.
@@ -69,7 +69,7 @@ When a deployment auto-pauses, it enters a `paused` sub-state between batches. A
 
 ### Post-Install Detection (Software Deployments)
 
-For **Software** deployments, Breeze can verify what's actually installed on the device instead of just trusting the installer's exit code. Detection rules are authored **per software version**, in the Deployment Wizard, when you add or edit a version in the App Library — not per deployment.
+For **Software** deployments, BL4CK can verify what's actually installed on the device instead of just trusting the installer's exit code. Detection rules are authored **per software version**, in the Deployment Wizard, when you add or edit a version in the App Library — not per deployment.
 
 | Clause Type | UI Label | Checks |
 |-------------|----------|--------|
@@ -79,7 +79,7 @@ For **Software** deployments, Breeze can verify what's actually installed on the
 
 - A software version can have up to **20 detection clauses**.
 - When a version has more than one clause, **all clauses must pass (AND)** for the software to count as "detected" — there's no OR/any-match option.
-- **Registry key/value** and **MSI product code** clauses only work on Windows. If a clause type can't be evaluated on a device's platform (or no detection rules are configured at all), Breeze falls back to the installer's **exit code** to determine success — it never guesses at pass/fail for a clause type it can't check.
+- **Registry key/value** and **MSI product code** clauses only work on Windows. If a clause type can't be evaluated on a device's platform (or no detection rules are configured at all), BL4CK falls back to the installer's **exit code** to determine success — it never guesses at pass/fail for a clause type it can't check.
 
 With detection rules configured, two things change about how a Software deployment behaves:
 
@@ -89,7 +89,7 @@ With detection rules configured, two things change about how a Software deployme
 To reinstall regardless of what's already on the device, enable **Reinstall even if already present** when scheduling the Software deployment. This toggle (`forceReinstall`) bypasses the skip-if-present check for that deployment; the installer runs even if detection rules say the software is already there. It has no effect on versions with no detection rules configured.
 
 <Aside type="tip">
-  **Reboot-pending exit codes are now handled correctly.** Some installers exit with `3010` (`ERROR_SUCCESS_REBOOT_REQUIRED`) or `1641` (`ERROR_SUCCESS_REBOOT_INITIATED`) to report a successful install that needs a reboot to finish. Breeze now treats both codes as **success** for both `.exe` and `.msi` installers. Previously, an `.exe` installer returning `3010`, or an `.msi` installer returning `1641`, was incorrectly reported as a failed deployment.
+  **Reboot-pending exit codes are now handled correctly.** Some installers exit with `3010` (`ERROR_SUCCESS_REBOOT_REQUIRED`) or `1641` (`ERROR_SUCCESS_REBOOT_INITIATED`) to report a successful install that needs a reboot to finish. BL4CK now treats both codes as **success** for both `.exe` and `.msi` installers. Previously, an `.exe` installer returning `3010`, or an `.msi` installer returning `1641`, was incorrectly reported as a failed deployment.
 </Aside>
 
 ---

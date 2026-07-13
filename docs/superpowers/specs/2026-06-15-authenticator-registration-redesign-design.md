@@ -1,4 +1,4 @@
-# Breeze Authenticator — Registration & Assurance Redesign
+# BL4CK Authenticator — Registration & Assurance Redesign
 
 **Date:** 2026-06-15
 **Status:** Design — approved, pending implementation plan
@@ -7,7 +7,7 @@
 
 ## 1. Problem
 
-PR #1369 shipped the Breeze Authenticator (risk-tiered step-up approvals). The assurance ladder and the server guard are sound, but the **enrollment experience is wrong**:
+PR #1369 shipped the BL4CK Authenticator (risk-tiered step-up approvals). The assurance ladder and the server guard are sound, but the **enrollment experience is wrong**:
 
 1. **Registration is a separate ceremony.** A technician who has already installed the app, logged in, and enabled Face ID must *also* go to Settings → "Set Up Authenticator" → re-enter their password → tap Register → approve a biometric → set a PIN. That sheet was in fact never even wired into a screen (orphaned), but the deeper issue is that it *should not exist as a distinct step at all*.
 2. **The phone and the web are disconnected.** The web "Approval security" panel only registers *the current browser*; it never mentions or surfaces the phone. A user looking there sees "no option for the mobile app."

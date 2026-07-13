@@ -36,7 +36,7 @@ interface UnifiHostOption {
   model?: string | null;
   sites: Array<{ id: string; name: string }>;
 }
-// Breeze sites/orgs that a UniFi site can be mapped onto (from GET /orgs/*).
+// BL4CK sites/orgs that a UniFi site can be mapped onto (from GET /orgs/*).
 interface BreezeSiteOption { id: string; name: string; orgId: string }
 interface OrgOption { id: string; name: string }
 // Currently-saved mappings (from GET /unifi/mappings).
@@ -111,7 +111,7 @@ export default function UnifiIntegration() {
   const [status, setStatus] = useState<UnifiStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
   // Not-connected screen: choose between a UniFi cloud account vs a self-hosted
-  // controller polled by an on-network Breeze agent. Cloud is the default.
+  // controller polled by an on-network BL4CK agent. Cloud is the default.
   const [connectMode, setConnectMode] = useState<UnifiConnectionType>('cloud');
   const [accountLabel, setAccountLabel] = useState('');
   const [loading, setLoading] = useState(true);
@@ -157,7 +157,7 @@ export default function UnifiIntegration() {
     navigateTo(loginPathWithNext());
   }, []);
 
-  // Breeze sites grouped by organization, for the <optgroup> picker.
+  // BL4CK sites grouped by organization, for the <optgroup> picker.
   const sitesByOrg = useMemo(() => {
     const orgName = new Map(orgs.map((o) => [o.id, o.name]));
     // Key the group by orgId, not name — two orgs can share a display name in an
@@ -303,7 +303,7 @@ export default function UnifiIntegration() {
     }
   }, [onUnauthorized, loadHosts]);
 
-  // Self-hosted controller view: load the Breeze sites/orgs (for the pickers), agents
+  // Self-hosted controller view: load the BL4CK sites/orgs (for the pickers), agents
   // (for the collector select), registered controllers, saved mappings, and the
   // agent-discovered controller sites. No live api.ui.com /hosts call — sites come from
   // the on-network agent's poll (GET /unifi/controller-sites).
@@ -425,7 +425,7 @@ export default function UnifiIntegration() {
     }
   }, [controllerDraft, onUnauthorized, loadSelfHosted]);
 
-  // Map each agent-discovered controller site to a Breeze site via the shared
+  // Map each agent-discovered controller site to a BL4CK site via the shared
   // PUT /unifi/mappings, using the collector id as the sentinel unifiHostId.
   const handleSaveControllerMappings = useCallback(async () => {
     if (!controllerSites) return;
@@ -463,7 +463,7 @@ export default function UnifiIntegration() {
   const handleSaveCollector = useCallback(async (hostId: string) => {
     const draft = collectorDrafts[hostId];
     if (!draft?.siteId || !draft.collectorDeviceId || !draft.controllerUrl.trim() || !draft.apiKey.trim()) {
-      setLoadError('Pick a Breeze site, a collector agent, and enter the controller URL and local API key.');
+      setLoadError('Pick a BL4CK site, a collector agent, and enter the controller URL and local API key.');
       return;
     }
     setSavingCollector(hostId);
@@ -692,7 +692,7 @@ export default function UnifiIntegration() {
       {!isConnected && (
         <div className="rounded-lg border bg-card p-5" data-testid="unifi-disconnected">
           {/* Connection-type chooser: a UniFi cloud account (Site Manager API key) vs a
-              self-hosted Network controller polled directly by an on-network Breeze agent. */}
+              self-hosted Network controller polled directly by an on-network BL4CK agent. */}
           <div
             className="inline-flex rounded-md border bg-muted/40 p-1"
             role="radiogroup"
@@ -725,8 +725,8 @@ export default function UnifiIntegration() {
             <div data-testid="unifi-connect-cloud">
               <p className="mt-4 text-sm text-muted-foreground">
                 Connect your UniFi Site Manager account with a cloud API key to discover sites,
-                gateways, switches, and access points across your hosts. Breeze maps UniFi sites to
-                your Breeze sites and reconciles discovered network assets.
+                gateways, switches, and access points across your hosts. BL4CK maps UniFi sites to
+                your BL4CK sites and reconciles discovered network assets.
               </p>
               <label className="mt-4 block text-sm font-medium" htmlFor="unifi-api-key">
                 UniFi Site Manager API key
@@ -755,7 +755,7 @@ export default function UnifiIntegration() {
           ) : (
             <div data-testid="unifi-connect-self-hosted">
               <p className="mt-4 text-sm text-muted-foreground">
-                Connect a self-hosted UniFi Network controller. A Breeze agent on the controller&apos;s
+                Connect a self-hosted UniFi Network controller. A BL4CK agent on the controller&apos;s
                 network polls it directly — no UniFi cloud account needed.
               </p>
               <label className="mt-4 block text-sm font-medium" htmlFor="unifi-account-label">
@@ -863,7 +863,7 @@ export default function UnifiIntegration() {
         <div className="rounded-xl border bg-card p-5 shadow-xs" data-testid="unifi-controllers-card">
           <h2 className="text-lg font-semibold">Controllers</h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            Register each self-hosted UniFi Network controller. A Breeze agent on the controller&apos;s
+            Register each self-hosted UniFi Network controller. A BL4CK agent on the controller&apos;s
             network polls its local Integration API (firmware&nbsp;≥&nbsp;9.3) directly — no UniFi cloud account
             needed. The local API key is stored encrypted and pushed to the chosen agent.
           </p>
@@ -974,7 +974,7 @@ export default function UnifiIntegration() {
             </button>
           </div>
           <p className="mb-4 text-sm text-muted-foreground">
-            Map each agent-discovered controller site to a Breeze site. Devices polled from that site are
+            Map each agent-discovered controller site to a BL4CK site. Devices polled from that site are
             reconciled into the chosen site&apos;s discovered assets.
           </p>
 
@@ -990,7 +990,7 @@ export default function UnifiIntegration() {
                   <thead>
                     <tr className="text-left text-muted-foreground">
                       <th className="px-3 py-2 font-medium">Controller site</th>
-                      <th className="px-3 py-2 font-medium">Breeze site</th>
+                      <th className="px-3 py-2 font-medium">BL4CK site</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -1058,7 +1058,7 @@ export default function UnifiIntegration() {
             </button>
           </div>
           <p className="mb-4 text-sm text-muted-foreground">
-            Map each discovered UniFi site to a Breeze site. Devices synced from that UniFi site are
+            Map each discovered UniFi site to a BL4CK site. Devices synced from that UniFi site are
             reconciled into the chosen site&apos;s discovered assets.
           </p>
 
@@ -1082,7 +1082,7 @@ export default function UnifiIntegration() {
                     <tr className="text-left text-muted-foreground">
                       <th className="px-3 py-2 font-medium">UniFi host</th>
                       <th className="px-3 py-2 font-medium">UniFi site</th>
-                      <th className="px-3 py-2 font-medium">Breeze site</th>
+                      <th className="px-3 py-2 font-medium">BL4CK site</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -1143,7 +1143,7 @@ export default function UnifiIntegration() {
         <div className="rounded-xl border bg-card p-5 shadow-xs" data-testid="unifi-collectors-card">
           <h2 className="text-lg font-semibold">Deep telemetry collectors</h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            Assign a Breeze agent at the site to poll each UniFi console&apos;s local Network Integration API
+            Assign a BL4CK agent at the site to poll each UniFi console&apos;s local Network Integration API
             (firmware&nbsp;≥&nbsp;9.3) for per-port PoE, device health, and connected clients. The local API key is
             stored encrypted and pushed to the chosen agent.
           </p>
@@ -1173,7 +1173,7 @@ export default function UnifiIntegration() {
                   )}
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <label className="text-sm">
-                      <span className="text-muted-foreground">Breeze site (this console serves)</span>
+                      <span className="text-muted-foreground">BL4CK site (this console serves)</span>
                       <select
                         value={draft.siteId}
                         onChange={(e) => updateDraft(h.id, { siteId: e.target.value, collectorDeviceId: '' })}

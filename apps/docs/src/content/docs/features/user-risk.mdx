@@ -5,7 +5,7 @@ description: AI-powered risk scoring, behavior analytics, access reviews, and au
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-User Risk Scoring provides a composite risk score for every user in your organization, calculated from behavioral signals, security events, and access patterns. Scores range from 0 (lowest risk) to 100 (highest risk) and update continuously as new events occur. When a user's score crosses a configurable threshold, Breeze can automatically assign security training, send notifications, and flag the user for access review.
+User Risk Scoring provides a composite risk score for every user in your organization, calculated from behavioral signals, security events, and access patterns. Scores range from 0 (lowest risk) to 100 (highest risk) and update continuously as new events occur. When a user's score crosses a configurable threshold, BL4CK can automatically assign security training, send notifications, and flag the user for access review.
 
 This feature combines three related capabilities:
 - **Risk scoring** -- numeric scores with factor breakdowns and trend tracking
@@ -60,7 +60,7 @@ Each risk score includes a `factors` object that breaks down the score by contri
 
 ## What Drives a Risk Score
 
-Breeze evaluates eight distinct risk factors for every user. Each factor produces a score from 0 to 100, and the final composite score is a weighted average of all eight. The table below describes each factor, what data feeds it, and its default weight.
+BL4CK evaluates eight distinct risk factors for every user. Each factor produces a score from 0 to 100, and the final composite score is a weighted average of all eight. The table below describes each factor, what data feeds it, and its default weight.
 
 | Factor | What increases it | Default weight |
 |--------|-------------------|----------------|
@@ -79,7 +79,7 @@ Breeze evaluates eight distinct risk factors for every user. Each factor produce
 
 ### How users are linked to devices
 
-Breeze matches users to devices using the **last logged-in user** reported by each device. The matching is case-insensitive and supports several identity formats: email address, username, `DOMAIN\user` notation, and name variants. A single user can be associated with multiple devices.
+BL4CK matches users to devices using the **last logged-in user** reported by each device. The matching is case-insensitive and supports several identity formats: email address, username, `DOMAIN\user` notation, and name variants. A single user can be associated with multiple devices.
 
 ### Threshold configuration
 
@@ -101,7 +101,7 @@ To change these thresholds, navigate to **Settings > User Risk > Policy** and ad
 
 ### Viewing Risk Scores
 
-Navigate to the **User Risk** section in the Breeze dashboard to see a paginated list of all users ranked by their current risk score.
+Navigate to the **User Risk** section in the BL4CK dashboard to see a paginated list of all users ranked by their current risk score.
 
 The scores list includes summary statistics:
 
@@ -228,7 +228,7 @@ Interventions are automated actions triggered by risk conditions.
 
 ## Security Training Assignment
 
-When a user's risk score exceeds the configured threshold, Breeze can automatically assign security training. You can also manually assign training to any user.
+When a user's risk score exceeds the configured threshold, BL4CK can automatically assign security training. You can also manually assign training to any user.
 
 ### Assigning Training
 
@@ -281,7 +281,7 @@ Access reviews provide a structured process for periodically certifying that use
 2. Click **New Access Review**.
 3. Provide a name, optional description, and due date.
 4. Optionally assign a reviewer (defaults to the current user).
-5. Click **Create**. Breeze automatically generates review items for every user in the current scope (partner or organization) with their current role assignments.
+5. Click **Create**. BL4CK automatically generates review items for every user in the current scope (partner or organization) with their current role assignments.
 </Steps>
 
 <Aside>
@@ -309,7 +309,7 @@ Each review item shows:
 <Steps>
 1. Ensure all items have a decision (no pending items remain).
 2. Click **Complete Review**.
-3. Breeze automatically removes access for all revoked users:
+3. BL4CK automatically removes access for all revoked users:
    - **Partner reviews**: Revoked users are removed from `partner_users`
    - **Organization reviews**: Revoked users are removed from `organization_users`
 4. The review is marked as completed with a timestamp.

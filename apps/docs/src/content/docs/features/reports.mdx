@@ -5,7 +5,7 @@ description: Generate, schedule, and export fleet reports covering inventory, co
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze provides a full reporting and analytics subsystem for generating on-demand or scheduled fleet reports and querying real-time analytics data. Reports are scoped to organizations and enforce multi-tenant access at every layer -- organization-scoped users see only their own data, partner-scoped users can access reports for any organization they manage, and system-scoped users have unrestricted access.
+BL4CK provides a full reporting and analytics subsystem for generating on-demand or scheduled fleet reports and querying real-time analytics data. Reports are scoped to organizations and enforce multi-tenant access at every layer -- organization-scoped users see only their own data, partner-scoped users can access reports for any organization they manage, and system-scoped users have unrestricted access.
 
 The system is split into two complementary route groups:
 
@@ -82,7 +82,7 @@ See [Scheduling](#scheduling) below for how these are evaluated and what recipie
 
 ## Generating Reports
 
-Breeze supports two generation flows: ad-hoc (stateless) and saved (tracked with run history).
+BL4CK supports two generation flows: ad-hoc (stateless) and saved (tracked with run history).
 
 ### Ad-hoc Generation
 
@@ -190,7 +190,7 @@ Scheduled runs fire in the organization's local time zone (falling back to the p
 
 Add addresses to the **Email distribution list** (or `config.emailRecipients`) to have each scheduled run emailed automatically, in addition to appearing in the reports list:
 
-- **PDF-format** reports attach the same branded PDF you'd download from the run. If it's larger than 5 MB or fails to render, the email falls back to a link into Breeze instead of an attachment.
+- **PDF-format** reports attach the same branded PDF you'd download from the run. If it's larger than 5 MB or fails to render, the email falls back to a link into BL4CK instead of an attachment.
 - **CSV and Excel-format** reports attach the data as a CSV file.
 - The email leads with a one-line trend summary when a prior run exists to compare against, for example "Posture score 79 -- up from 74 last run."
 
@@ -226,11 +226,11 @@ The run record stores:
 
 ## Security & Compliance Posture Report
 
-The **Security & Compliance Posture** report (`security_compliance_posture`) packages your security evidence for one organization into a single document -- purpose-built for filling out **cyber-insurance applications** and answering **vendor security questionnaires**. It joins the security data Breeze already collects into per-control answers with percent-implemented rollups: EDR/MDR and native antivirus coverage, the list of unprotected devices, disk-encryption and host-firewall coverage, patch currency, antivirus-definition freshness, password-complexity posture, local-admin exposure, MFA and privileged-access posture, backup coverage, DNS filtering, identity-provider connection, and an optional CIS hardening pass-rate.
+The **Security & Compliance Posture** report (`security_compliance_posture`) packages your security evidence for one organization into a single document -- purpose-built for filling out **cyber-insurance applications** and answering **vendor security questionnaires**. It joins the security data BL4CK already collects into per-control answers with percent-implemented rollups: EDR/MDR and native antivirus coverage, the list of unprotected devices, disk-encryption and host-firewall coverage, patch currency, antivirus-definition freshness, password-complexity posture, local-admin exposure, MFA and privileged-access posture, backup coverage, DNS filtering, identity-provider connection, and an optional CIS hardening pass-rate.
 
 It is scoped to a single organization (with an optional site filter) and is honest about gaps: a control that hasn't been assessed is reported as **N/A**, never as a misleading 0% or a falsely favorable score. The PDF renders as a branded scorecard (overall score out of 100 with a STRONG / GOOD / FAIR / AT RISK band and a per-control grid) and carries point-in-time, not-a-certification disclaimers.
 
-The PDF also includes a **Recommended actions** section generated from whichever controls are currently failing, and a plain-language **glossary** so a non-technical reader -- an insurance underwriter, a customer's compliance contact -- can follow it without help. When a prior run exists to compare against, the scorecard shows how the score has moved since then (for example "+5 since Jun 1"). The cover carries your logo and name if [partner branding](/features/branding/) is configured; otherwise it uses the standard Breeze mark.
+The PDF also includes a **Recommended actions** section generated from whichever controls are currently failing, and a plain-language **glossary** so a non-technical reader -- an insurance underwriter, a customer's compliance contact -- can follow it without help. When a prior run exists to compare against, the scorecard shows how the score has moved since then (for example "+5 since Jun 1"). The cover carries your logo and name if [partner branding](/features/branding/) is configured; otherwise it uses the standard BL4CK mark.
 
 <Aside type="note">
   You can start this report straight from the report builder: pick the **Security & Compliance Posture (Insurance)** template card, then set the name, date-range preset, schedule, and output format like any other report. Once saved, it generates and downloads exactly like the rest of your reports (it appears in your reports list as "Security & Compliance Posture").

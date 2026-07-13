@@ -1,5 +1,5 @@
 /**
- * Simple fetch wrapper with Bearer token auth for Breeze API
+ * Simple fetch wrapper with Bearer token auth for BL4CK API
  */
 
 function joinPaths(basePath: string, path: string): string {

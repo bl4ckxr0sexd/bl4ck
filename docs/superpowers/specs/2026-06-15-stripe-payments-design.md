@@ -16,7 +16,7 @@ accounts). Their clients pay a sent invoice online from the existing customer po
 **Stripe Hosted Checkout**, with the charge created **directly on the MSP's connected account**
 (`Stripe-Account: acct_xxx`). A signature-verified Stripe webhook reconciles captured payments —
 and reflected refunds — back into the existing `invoice_payments` table via the engine's single
-`recomputeInvoiceStatus()` reconcile point. Breeze never touches the funds, takes no fee, and bears
+`recomputeInvoiceStatus()` reconcile point. BL4CK never touches the funds, takes no fee, and bears
 no merchant/chargeback liability.
 
 ## 2. Decisions of record (locked)
@@ -27,7 +27,7 @@ no merchant/chargeback liability.
 | Charge model | **Direct charges** on the connected account | MSP is merchant of record; client's statement shows the MSP; chargebacks/refunds/payouts/compliance are the MSP's. |
 | Platform fee | **None** (`application_fee_amount` not used; no fee plumbing built) | Per product decision 2026-06-15. |
 | Payment UX | **Stripe Hosted Checkout (redirect)** | SAQ A (no card data in our DOM) — lowest PCI/audit surface, matters for the SOC 2 / security-tier roadmap. Least code. |
-| Refunds | **Reflect-only via webhook** | MSP refunds in their own Stripe dashboard; Breeze listens to `charge.refunded` and stays in sync. Breeze does not initiate refunds in v1. |
+| Refunds | **Reflect-only via webhook** | MSP refunds in their own Stripe dashboard; BL4CK listens to `charge.refunded` and stays in sync. BL4CK does not initiate refunds in v1. |
 | Stripe↔invoice link | **Mapping table**, never a `stripe_*` column on core tables | `invoice-engine-design.md:151-154`; `billing-architecture-overview.md:91-93`. |
 | Reconcile point | Existing `invoice_payments` rows + `recomputeInvoiceStatus()` | Single path for manual and Stripe payments; `invoice_payments.method='card'` and the open `reference` column were designed for this. |
 
@@ -41,7 +41,7 @@ no merchant/chargeback liability.
 - Light up `payment.failed` on the existing `invoice-events` bus (others already defined).
 
 **Explicit non-goals (deferred):**
-- No application/platform fee; no funds flow through Breeze.
+- No application/platform fee; no funds flow through BL4CK.
 - No saved cards / off-session auto-charge of recurring contracts (possible **sub-project 4b**).
 - No Breeze-initiated refunds (no refund button) — reflect-only.
 - No embedded Checkout / Payment Element in v1 (redirect only; embedded is a fast-follow).

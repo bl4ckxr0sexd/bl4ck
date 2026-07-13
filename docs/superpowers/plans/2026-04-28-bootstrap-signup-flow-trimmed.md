@@ -288,7 +288,7 @@ Add one case: `register-partner in SaaS mode succeeds with no setup admin presen
 - Create account on `/auth?next=/devices` → after signup, lands on `/devices`.
 - Sign in on `/auth?next=/oauth/consent?uid=abc` → lands on `/oauth/consent?uid=abc`.
 - `/auth?next=https://evil.com` → after success, lands on `/` (open-redirect blocked).
-- Initiate OAuth from Claude.ai with no Breeze session → browser ends on `/auth`, sign up, completes consent, token issued.
+- Initiate OAuth from Claude.ai with no BL4CK session → browser ends on `/auth`, sign up, completes consent, token issued.
 
 ---
 

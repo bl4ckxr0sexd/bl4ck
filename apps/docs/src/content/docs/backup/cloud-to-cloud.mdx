@@ -14,18 +14,18 @@ Cloud-to-Cloud (C2C) backup protects your organization's SaaS data — Microsoft
 
 ## Connecting Microsoft 365
 
-Two authentication modes are available depending on your Breeze deployment:
+Two authentication modes are available depending on your BL4CK deployment:
 
 <Tabs>
   <TabItem label="Multi-tenant app (recommended)">
-    If your Breeze instance has `C2C_M365_CLIENT_ID` and `C2C_M365_CLIENT_SECRET` configured, the one-click consent flow is available.
+    If your BL4CK instance has `C2C_M365_CLIENT_ID` and `C2C_M365_CLIENT_SECRET` configured, the one-click consent flow is available.
 
     <Steps>
-    1. Go to the **C2C** section in Breeze.
+    1. Go to the **C2C** section in BL4CK.
     2. Click **Grant Access** (or **Connect Microsoft 365**).
     3. You're redirected to Microsoft's admin consent screen.
     4. Sign in with a Microsoft 365 admin account and grant the requested permissions.
-    5. Microsoft redirects back to Breeze. The connection is created automatically.
+    5. Microsoft redirects back to BL4CK. The connection is created automatically.
     </Steps>
   </TabItem>
   <TabItem label="Manual credentials">
@@ -33,7 +33,7 @@ Two authentication modes are available depending on your Breeze deployment:
 
     <Steps>
     1. In the Azure portal, register a new app and grant the required Graph API permissions.
-    2. In Breeze, open the C2C connection wizard.
+    2. In BL4CK, open the C2C connection wizard.
     3. Enter the **Client ID**, **Client Secret**, and **Tenant ID** from your Azure AD app.
     4. Click **Connect**.
     </Steps>
@@ -49,7 +49,7 @@ Google Workspace backup requires a service account with domain-wide delegation.
 <Steps>
 1. In the Google Cloud Console, create a service account and enable domain-wide delegation.
 2. In your Google Workspace admin console, authorize the service account's client ID with the required scopes.
-3. In Breeze, open the C2C connection wizard and select **Google Workspace**.
+3. In BL4CK, open the C2C connection wizard and select **Google Workspace**.
 4. Upload the service account key file.
 5. Click **Connect**.
 </Steps>

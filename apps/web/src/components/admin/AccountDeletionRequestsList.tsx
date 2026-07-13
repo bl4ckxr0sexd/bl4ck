@@ -65,7 +65,7 @@ export default function AccountDeletionRequestsList() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Account deletion requests</h1>
           <p className="text-sm text-muted-foreground">
-            Users in your tenant who've asked to delete their Breeze account. Approve to queue
+            Users in your tenant who've asked to delete their BL4CK account. Approve to queue
             them for processing, or reject with a note explaining why.
           </p>
         </div>

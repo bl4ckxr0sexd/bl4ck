@@ -1,5 +1,5 @@
 export interface InstallCommandOptions {
-  /** Breeze API origin, e.g. https://eu.2breeze.app */
+  /** BL4CK API origin, e.g. https://eu.2breeze.app */
   apiUrl: string;
   /** Base URL for direct Windows binary downloads (GitHub releases) */
   ghBase: string;
@@ -39,7 +39,7 @@ export function buildInstallCommands(opts: InstallCommandOptions): InstallComman
   const unixCmd =
     `f="$(mktemp)" && ` +
     `{ curl -fsSL --connect-timeout 10 -o "$f" "${apiUrl}/api/v1/agents/install.sh" && head -n1 "$f" | grep -q '^#!' || ` +
-    `{ echo "[ERROR] Could not fetch the Breeze installer from ${apiUrl} — verify this machine has network access to your Breeze server." >&2; false; }; } && ` +
+    `{ echo "[ERROR] Could not fetch the BL4CK installer from ${apiUrl} — verify this machine has network access to your BL4CK server." >&2; false; }; } && ` +
     `sudo bash "$f" --server "${apiUrl}" --token "${token}"${unixSecretFlag}`;
 
   // The MZ-magic check is the Windows analog of the unix shebang check: a

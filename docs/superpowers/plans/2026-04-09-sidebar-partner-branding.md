@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let partners upload a logo via the Partner Settings → Branding tab (stored as a base64 data URI in the existing `partner.settings` JSONB column), then render that logo + partner name in the admin sidebar top-left in place of the hard-coded Breeze SVG / "Breeze" text.
+**Goal:** Let partners upload a logo via the Partner Settings → Branding tab (stored as a base64 data URI in the existing `partner.settings` JSONB column), then render that logo + partner name in the admin sidebar top-left in place of the hard-coded BL4CK SVG / "BL4CK" text.
 
 **Architecture:** Three layers of work. (1) Extend `sanitizeImageSrc` to accept safe `data:image/…` URIs (PNG/JPEG/WebP only, size-capped). (2) Add a file-upload UI to `PartnerBrandingTab` — canvas-resize client-side to ≤256×256, encode to PNG base64, store in `branding.logoUrl` via the existing `PATCH /orgs/partners/me` endpoint; add a server-side length cap. (3) Build a `BrandHeader` component and wire it into `Sidebar`, which fetches `/orgs/partners/me` on mount to pull branding.
 
@@ -16,7 +16,7 @@
 - **Modify** `apps/web/src/lib/safeImageSrc.test.ts` — add data URI test cases.
 - **Modify** `apps/web/src/components/settings/PartnerBrandingTab.tsx` — replace the `<input type="url">` logo field with a file-picker (canvas resize → PNG base64) + preview + remove button + URL fallback.
 - **Modify** `apps/api/src/routes/orgs.ts` — add `.max(400_000)` to the `branding.logoUrl` Zod field (line 359).
-- **Create** `apps/web/src/components/layout/BrandHeader.tsx` — presentational component: renders sanitized `<img>` or Breeze SVG fallback + optional label.
+- **Create** `apps/web/src/components/layout/BrandHeader.tsx` — presentational component: renders sanitized `<img>` or BL4CK SVG fallback + optional label.
 - **Create** `apps/web/src/components/layout/BrandHeader.test.tsx` — unit tests covering fallback, branded HTTPS URL, data URI, and unsafe URL rejection.
 - **Modify** `apps/web/src/components/layout/Sidebar.tsx` — add branding fetch effect + state; replace desktop + mobile brand blocks with `<BrandHeader />`.
 
@@ -425,21 +425,21 @@ import BrandHeader from './BrandHeader';
 const PNG_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 describe('BrandHeader', () => {
-  it('renders the Breeze SVG fallback when logoUrl is null', () => {
+  it('renders the BL4CK SVG fallback when logoUrl is null', () => {
     const { container } = render(<BrandHeader logoUrl={null} name={null} showLabel />);
     expect(container.querySelector('svg')).not.toBeNull();
     expect(container.querySelector('img')).toBeNull();
   });
 
-  it('renders "Breeze" when name is null and showLabel is true', () => {
+  it('renders "BL4CK" when name is null and showLabel is true', () => {
     render(<BrandHeader logoUrl={null} name={null} showLabel />);
-    expect(screen.getByText('Breeze')).toBeInTheDocument();
+    expect(screen.getByText('BL4CK')).toBeInTheDocument();
   });
 
   it('renders the partner name when provided and showLabel is true', () => {
     render(<BrandHeader logoUrl={null} name="Acme MSP" showLabel />);
     expect(screen.getByText('Acme MSP')).toBeInTheDocument();
-    expect(screen.queryByText('Breeze')).not.toBeInTheDocument();
+    expect(screen.queryByText('BL4CK')).not.toBeInTheDocument();
   });
 
   it('hides the label when showLabel is false', () => {
@@ -489,9 +489,9 @@ Create `apps/web/src/components/layout/BrandHeader.tsx`:
 import { sanitizeImageSrc } from '../../lib/safeImageSrc';
 
 interface BrandHeaderProps {
-  /** Partner logo. Sanitized before render; falls back to the Breeze SVG when null/unsafe. */
+  /** Partner logo. Sanitized before render; falls back to the BL4CK SVG when null/unsafe. */
   logoUrl: string | null | undefined;
-  /** Partner name. Falls back to "Breeze" when null/empty. */
+  /** Partner name. Falls back to "BL4CK" when null/empty. */
   name: string | null | undefined;
   /** Whether to render the text label (hidden in collapsed sidebar mode). */
   showLabel: boolean;
@@ -516,7 +516,7 @@ const BREEZE_SVG = (
 
 export default function BrandHeader({ logoUrl, name, showLabel }: BrandHeaderProps) {
   const safeLogoUrl = sanitizeImageSrc(logoUrl);
-  const label = name?.trim() || 'Breeze';
+  const label = name?.trim() || 'BL4CK';
 
   return (
     <div className="flex items-center gap-2">
@@ -615,7 +615,7 @@ Find (lines 442–453):
             </svg>
           </div>
           {showLabels && (
-            <span className="text-lg font-bold tracking-tight text-foreground">Breeze</span>
+            <span className="text-lg font-bold tracking-tight text-foreground">BL4CK</span>
           )}
         </div>
 ```
@@ -639,7 +639,7 @@ Find (lines 492–501):
                 <path d="M14 46C14 46 22 46 32 46C40 46 44 40 50 40C53 40 55 42 55 44C55 46 53 48 50 48C46 48 44 46 44 46" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
-            <span className="text-lg font-bold tracking-tight text-foreground">Breeze</span>
+            <span className="text-lg font-bold tracking-tight text-foreground">BL4CK</span>
           </div>
 ```
 
@@ -663,10 +663,10 @@ Expected: both PASS.
 1. Start dev server.
 2. Log in as a partner-scoped user.
 3. Go to `/settings/partner` → Branding → upload a small PNG. Save.
-4. Hard-refresh any page. Top-left of the sidebar shows the partner logo + name instead of the Breeze SVG.
+4. Hard-refresh any page. Top-left of the sidebar shows the partner logo + name instead of the BL4CK SVG.
 5. Collapse the sidebar — label hides, logo box stays.
 6. Mobile overlay (< 768px) also shows the branded header.
-7. Log in as a system-scoped user — sidebar falls back silently to Breeze defaults.
+7. Log in as a system-scoped user — sidebar falls back silently to BL4CK defaults.
 
 - [ ] **Step 8: Commit**
 

@@ -1,6 +1,6 @@
 # Known Unresolved Advisories
 
-This document tracks third-party advisories that `pnpm audit` flags in the Breeze
+This document tracks third-party advisories that `pnpm audit` flags in the BL4CK
 dependency tree but which we have consciously decided not to patch, along with
 the threat-model justification and the conditions under which the decision
 should be revisited.
@@ -35,11 +35,11 @@ apps/mobile
 
 `pnpm why ip --recursive` also shows the same `ip@2.0.1` version reachable
 through `@react-native-community/cli-hermes@12.1.1`. Both are React Native CLI
-tooling dependencies, not Breeze API/web/agent runtime dependencies.
+tooling dependencies, not BL4CK API/web/agent runtime dependencies.
 
 ### How `ip` is used in our tree
 
-This is not imported by first-party Breeze code. The dependency is pulled by
+This is not imported by first-party BL4CK code. The dependency is pulled by
 React Native CLI packages used for mobile development diagnostics/profiling.
 Those packages run on developer or CI machines during mobile development and
 are not shipped in the API, web app, portal/viewer/helper, or Go agent.
@@ -54,9 +54,9 @@ The exploitation path requires:
    gate** (typically to prevent SSRF against internal network ranges), **and**
 2. Attacker-controlled input that is passed into that gate.
 
-In Breeze's tree neither condition holds:
+In BL4CK's tree neither condition holds:
 
-- **No first-party use.** Breeze code does not import `ip`, and the API/web/agent
+- **No first-party use.** BL4CK code does not import `ip`, and the API/web/agent
   launch surfaces do not depend on the React Native CLI packages that pull it.
 - **Build-time / developer-tooling only.** `@react-native-community/cli-hermes`
   and `@react-native-community/cli-doctor` run as part of React Native CLI
@@ -65,7 +65,7 @@ In Breeze's tree neither condition holds:
 - **Not on the API / web / agent path.** The `ip` package does not appear in
   the dependency graphs of `apps/api`, `apps/web`, `apps/agent`,
   `apps/helper`, `apps/portal`, or `apps/viewer`. The advisory therefore has
-  no bearing on any internet-exposed Breeze surface.
+  no bearing on any internet-exposed BL4CK surface.
 
 To exploit the SSRF in our context an attacker would need to:
 

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Breeze RMM",
+    "name": "BL4CK RMM",
     "slug": "breeze-rmm",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -17,8 +17,8 @@
       "infoPlist": {
         "NSFaceIDUsageDescription": "Use Face ID to unlock the app",
         "NSCameraUsageDescription": "Camera access for QR code scanning",
-        "NSSpeechRecognitionUsageDescription": "Use voice to ask Breeze about your fleet.",
-        "NSMicrophoneUsageDescription": "Use voice to ask Breeze about your fleet."
+        "NSSpeechRecognitionUsageDescription": "Use voice to ask BL4CK about your fleet.",
+        "NSMicrophoneUsageDescription": "Use voice to ask BL4CK about your fleet."
       }
     },
     "android": {
@@ -51,14 +51,14 @@
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "Allow Breeze RMM to use Face ID for authentication"
+          "faceIDPermission": "Allow BL4CK RMM to use Face ID for authentication"
         }
       ],
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Use voice to ask Breeze about your fleet.",
-          "speechRecognitionPermission": "Use voice to ask Breeze about your fleet."
+          "microphonePermission": "Use voice to ask BL4CK about your fleet.",
+          "speechRecognitionPermission": "Use voice to ask BL4CK about your fleet."
         }
       ],
       "@sentry/react-native/expo"

@@ -1,4 +1,4 @@
-# SOC 2 C1.1 Confidential Data Identification Notes (Breeze)
+# SOC 2 C1.1 Confidential Data Identification Notes (BL4CK)
 
 Last updated: 2026-02-28
 
@@ -10,7 +10,7 @@ Last updated: 2026-02-28
 
 ## Objective of This Note
 
-Document how Breeze identifies confidential data classes, where that data exists, and which controls are applied to protect confidentiality.
+Document how BL4CK identifies confidential data classes, where that data exists, and which controls are applied to protect confidentiality.
 
 ## Confidential Data Categories (Draft)
 
@@ -122,4 +122,4 @@ Start with these systems/tables and expand:
 
 ## Example C1.1 Narrative (Draft)
 
-Breeze identifies confidential information through a documented data classification approach covering restricted secrets, tenant operational data, and sensitive audit artifacts. Confidential datasets are protected with tenant-aware access boundaries (RLS and scoped RBAC), encryption and hashing controls for secrets and credentials, and secure transport protections. The organization maintains evidence of classification, control mapping, and periodic review to ensure confidentiality commitments are met.
+BL4CK identifies confidential information through a documented data classification approach covering restricted secrets, tenant operational data, and sensitive audit artifacts. Confidential datasets are protected with tenant-aware access boundaries (RLS and scoped RBAC), encryption and hashing controls for secrets and credentials, and secure transport protections. The organization maintains evidence of classification, control mapping, and periodic review to ensure confidentiality commitments are met.

@@ -1,6 +1,6 @@
 ---
-name: Breeze Mobile
-description: Trusted-device companion to Breeze RMM. Out-of-band approval surface for MCP step-up, with ambient AI chat and fleet status.
+name: BL4CK Mobile
+description: Trusted-device companion to BL4CK RMM. Out-of-band approval surface for MCP step-up, with ambient AI chat and fleet status.
 colors:
   brand: "#1c8a9e"
   brand-soft: "#3eaec3"
@@ -158,13 +158,13 @@ components:
     typography: "{typography.body}"
 ---
 
-# Design System: Breeze Mobile
+# Design System: BL4CK Mobile
 
 ## 1. Overview
 
 **Creative North Star: "The Calm Sentinel"**
 
-Breeze Mobile is the security identity that makes high-tier AI agent actions safe. Its load-bearing moment is the 11:47pm buzz — owner of a 30-tech MSP glances at their phone, reads a request, trusts it's real, taps once. Every other surface (AI chat, fleet status, alerts) is ambient. The system rejects the visual register of generic mobile SaaS: no gradient text, no glassmorphism, no neon-on-dark, no candy palettes. It also rejects the cold, default look of stock React Native: Geist replaces system sans, brand-tinted neutrals replace pure greys, and color is committed to a single cool teal anchor with strict status semantics.
+BL4CK Mobile is the security identity that makes high-tier AI agent actions safe. Its load-bearing moment is the 11:47pm buzz — owner of a 30-tech MSP glances at their phone, reads a request, trusts it's real, taps once. Every other surface (AI chat, fleet status, alerts) is ambient. The system rejects the visual register of generic mobile SaaS: no gradient text, no glassmorphism, no neon-on-dark, no candy palettes. It also rejects the cold, default look of stock React Native: Geist replaces system sans, brand-tinted neutrals replace pure greys, and color is committed to a single cool teal anchor with strict status semantics.
 
 Density is calm but confident. One card on screen at a time during the security moment; spacious rows everywhere else. Type carries the headline, not decoration. Motion is short, smooth, and deferential — ease-out-quint at all times, no bounce, no elastic. Color drives meaning: green is *only* approve / healthy, red is *only* deny / critical, amber is *only* warning. The brand teal carries identity but never status.
 

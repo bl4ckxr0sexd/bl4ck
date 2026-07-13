@@ -1,4 +1,4 @@
-# Session-Aware Breeze Assist Implementation Plan
+# Session-Aware BL4CK Assist Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1178,7 +1178,7 @@ func defaultBaseDir() string {
 		if pd == "" {
 			pd = `C:\ProgramData`
 		}
-		return filepath.Join(pd, "Breeze")
+		return filepath.Join(pd, "BL4CK")
 	default:
 		return "/etc/breeze"
 	}
@@ -2022,7 +2022,7 @@ git commit -m "test(helper): integration test for multi-session reconcile lifecy
 
 ### Not covered in this plan (separate deliverable)
 
-The **Breeze Helper (Tauri app)** `--config` CLI flag is specified in the design spec but is a separate Rust/React codebase. That work should be planned independently:
+The **BL4CK Helper (Tauri app)** `--config` CLI flag is specified in the design spec but is a separate Rust/React codebase. That work should be planned independently:
 - Add `--config <path>` CLI argument parsing to the Tauri app
 - If present, use that path for config; derive status path as sibling
 - If absent, fall back to legacy global path (existing behavior)

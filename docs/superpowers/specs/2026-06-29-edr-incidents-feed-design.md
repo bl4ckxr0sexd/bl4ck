@@ -21,13 +21,13 @@ the resulting incident.
 
 Make the Incidents page the single pane for security incidents: surface **all** Huntress incidents
 and S1 threats alongside native tracked incidents, while keeping proper incident management for the
-ones a human chooses to work — without rebuilding the Huntress/S1 console inside Breeze.
+ones a human chooses to work — without rebuilding the Huntress/S1 console inside BL4CK.
 
 ## Decisions (locked with the product owner)
 
 - **Two-tier model**, not auto-file. EDR findings appear read-only; they become tracked incidents
   only via manual **Promote** (the shipped Pillar 4a button).
-- **Show everything.** All Huntress incidents and all S1 threats surface. Breeze does **no**
+- **Show everything.** All Huntress incidents and all S1 threats surface. BL4CK does **no**
   severity filtering or config-policy gating — sensitivity is configured on the EDR side.
 - **Don't duplicate Huntress.** Findings render as thin summary rows with a **link-out** to the EDR
   console for forensic detail. Tracked incidents **reference** their EDR origin (do not copy it).
@@ -40,7 +40,7 @@ ones a human chooses to work — without rebuilding the Huntress/S1 console insi
 ### 1. Page layout (web)
 
 A single **interleaved list** with two row kinds, distinguished by a **source badge**
-(`Breeze` / `Huntress` / `SentinelOne`) and a filter (`All · Tracked · Findings`, plus by source):
+(`BL4CK` / `Huntress` / `SentinelOne`) and a filter (`All · Tracked · Findings`, plus by source):
 
 - **Finding rows** (read-only): title, normalized severity, affected device/user, EDR status,
   detected time, **"View in Huntress/S1"** link-out, and a **Promote** button.

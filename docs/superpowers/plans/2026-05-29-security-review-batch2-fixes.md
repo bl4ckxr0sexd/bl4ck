@@ -186,7 +186,7 @@ Expected: FAIL (build error / undefined `isSecretYAMLKey`).
 ```go
 // config.go — add (requires "strings" import)
 var secretKeyAllowedInAgentYAML = map[string]bool{
-	"helper_auth_token": true, // Breeze Assist runs as the logged-in user; must read it.
+	"helper_auth_token": true, // BL4CK Assist runs as the logged-in user; must read it.
 }
 
 func isSecretYAMLKey(key string) bool {

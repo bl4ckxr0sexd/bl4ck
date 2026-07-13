@@ -1,6 +1,6 @@
 ---
 title: Health Endpoints
-description: Built-in health check and readiness endpoints for Breeze RMM.
+description: Built-in health check and readiness endpoints for BL4CK RMM.
 sidebar:
   order: 3
   label: Health Endpoints
@@ -8,7 +8,7 @@ sidebar:
 
 import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze exposes health check endpoints that let you verify whether the API and its dependencies are running. Use these with load balancers, container orchestrators, and uptime monitors to detect and respond to outages automatically.
+BL4CK exposes health check endpoints that let you verify whether the API and its dependencies are running. Use these with load balancers, container orchestrators, and uptime monitors to detect and respond to outages automatically.
 
 ## Available Endpoints
 
@@ -36,7 +36,7 @@ Returns `200 OK` if the API process is alive. This endpoint does not check backe
 | Field | Description |
 |---|---|
 | `status` | Always `"ok"` when the process is running |
-| `version` | Current Breeze API version |
+| `version` | Current BL4CK API version |
 | `uptime` | Seconds since the process started |
 
 ### GET /health/ready
@@ -136,7 +136,7 @@ backend breeze_api
 
 ## Docker Health Checks
 
-Every container in the Breeze production stack has a built-in health check. Docker (and Docker Compose) use these to determine container status and trigger restarts.
+Every container in the BL4CK production stack has a built-in health check. Docker (and Docker Compose) use these to determine container status and trigger restarts.
 
 | Container | Check Command | Interval | Start Period |
 |---|---|---|---|
@@ -159,7 +159,7 @@ Look for `(healthy)`, `(unhealthy)`, or `(health: starting)` in the STATUS colum
 
 ## Kubernetes Probes
 
-If you deploy Breeze on Kubernetes, map the health endpoints to pod probes:
+If you deploy BL4CK on Kubernetes, map the health endpoints to pod probes:
 
 ```yaml
 containers:

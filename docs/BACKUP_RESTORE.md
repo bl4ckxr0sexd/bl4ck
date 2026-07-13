@@ -1,6 +1,6 @@
 # Backup and Restore
 
-This document covers backup and restore procedures for a Breeze RMM deployment.
+This document covers backup and restore procedures for a BL4CK RMM deployment.
 
 ## What Gets Backed Up
 
@@ -172,7 +172,7 @@ Use backup verification endpoints to prove recoverability and track RTO/RPO read
 - `GET /api/v1/backup/recovery-readiness` — per-device readiness scores and risk factors
 - Add `?refresh=true` to `health` or `recovery-readiness` when you want a forced readiness recalculation.
 
-Verification is live-only. The target device must be online and connected so Breeze can queue a real agent command. If dispatch cannot start, the API returns a non-2xx error and creates no synthetic verification record.
+Verification is live-only. The target device must be online and connected so BL4CK can queue a real agent command. If dispatch cannot start, the API returns a non-2xx error and creates no synthetic verification record.
 
 Example verification trigger:
 
@@ -313,8 +313,8 @@ Search API logs for:
    EXIT_CODE=$?
 
    if [ $EXIT_CODE -ne 0 ]; then
-     echo "Breeze backup failed with exit code $EXIT_CODE. See $LOG_FILE" | \
-       mail -s "ALERT: Breeze backup failure" ops@yourcompany.com 2>/dev/null || true
+     echo "BL4CK backup failed with exit code $EXIT_CODE. See $LOG_FILE" | \
+       mail -s "ALERT: BL4CK backup failure" ops@yourcompany.com 2>/dev/null || true
    fi
 
    exit $EXIT_CODE

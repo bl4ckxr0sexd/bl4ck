@@ -57,7 +57,7 @@ import { users } from './users';
 
 /**
  * Single-use, short-TTL token issued at installer-download time. The token
- * is embedded in the macOS installer app filename (`Breeze Installer
+ * is embedded in the macOS installer app filename (`BL4CK Installer
  * [TOKEN@host].app`) and exchanged for enrollment values on first launch via
  * the unauthenticated `/api/v1/installer/bootstrap/:token` route.
  *

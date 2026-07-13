@@ -11,7 +11,7 @@ Surface a "Reboot pending" indicator on the device list and device detail view, 
 
 The **OS-level heartbeat flag**, persisted to a new `devices.pending_reboot` column.
 
-Rationale: it catches all reboot causes (Windows Update outside Breeze, third-party installers, pending file renames), refreshes every heartbeat, and self-clears after reboot. The alternative — the existing `patch_job_results.reboot_required AND rebooted_at IS NULL` query backing the `system.rebootRequired` filter (#968) — only sees Breeze-managed patch jobs.
+Rationale: it catches all reboot causes (Windows Update outside BL4CK, third-party installers, pending file renames), refreshes every heartbeat, and self-clears after reboot. The alternative — the existing `patch_job_results.reboot_required AND rebooted_at IS NULL` query backing the `system.rebootRequired` filter (#968) — only sees Breeze-managed patch jobs.
 
 The `patch_job_results` columns and the patch-reboot policy machinery (`patchRebootHandler`) are **not** changed by this feature.
 
@@ -37,7 +37,7 @@ Changes:
 2. **Schema**: add `pendingReboot` to `apps/api/src/db/schema/devices.ts`; verify with `pnpm db:check-drift`.
 3. **Heartbeat handler** (`apps/api/src/routes/agents/heartbeat.ts`): in the **main-agent branch only** (watchdog heartbeats must not touch the flag), include `pendingReboot: payload.pendingReboot ?? false` in the device update. Absent field (older agents) → `false`, the correct conservative default. The flag self-clears on the first post-reboot heartbeat.
 4. **Device list endpoint** (`apps/api/src/routes/devices/core.ts`): add `pendingReboot` to the SELECT. Add the field to the shared `Device` type in `packages/shared/src/types/`.
-5. **Filter re-point** (`apps/api/src/services/filterEngine.ts`): change `system.rebootRequired` SQL from the `patch_job_results` EXISTS subquery to `devices.pending_reboot = true`. Update the field description to "Device OS reports a reboot is pending". Semantic change: the filter now also matches reboots not caused by Breeze patch jobs — this is intentional so the filter agrees with the indicator.
+5. **Filter re-point** (`apps/api/src/services/filterEngine.ts`): change `system.rebootRequired` SQL from the `patch_job_results` EXISTS subquery to `devices.pending_reboot = true`. Update the field description to "Device OS reports a reboot is pending". Semantic change: the filter now also matches reboots not caused by BL4CK patch jobs — this is intentional so the filter agrees with the indicator.
 
 ## Web
 

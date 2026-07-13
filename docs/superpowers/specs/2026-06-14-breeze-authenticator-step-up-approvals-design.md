@@ -1,4 +1,4 @@
-# Breeze Authenticator — risk-tiered step-up verification for approvals
+# BL4CK Authenticator — risk-tiered step-up verification for approvals
 
 **Status:** Draft (design) · **Date:** 2026-06-14 · **Author:** Todd + Claude
 **Related:** #1254 (mobile approval bridge — first consumer), Discussion #858 (PAM), existing login MFA (`routes/auth/passkeys.ts`, `services/passkeys.ts`)
@@ -9,9 +9,9 @@
 
 Today an approval (PAM elevation, AI tool action, helper/MCP step-up) is decided by a **logged-in session** — `POST /api/v1/mobile/approvals/:id/approve` and `POST /pam/elevation-requests/:id/respond` just trust the bearer token. The mobile app prompts Face ID before the tap, but that biometric is **device-local and never reaches the server** (`apps/mobile/.../ApprovalButtons.tsx`); the API gates on nothing more than "this user is authenticated."
 
-That is too weak for the actions Breeze is about to let technicians approve from a phone — privileged Windows elevation and Tier-4 AI actions. A stolen/unlocked session, a left-open browser, or push-fatigue tapping can approve a privileged action with no proof that the *right human on a trusted device* deliberately authorized *this specific request*.
+That is too weak for the actions BL4CK is about to let technicians approve from a phone — privileged Windows elevation and Tier-4 AI actions. A stolen/unlocked session, a left-open browser, or push-fatigue tapping can approve a privileged action with no proof that the *right human on a trusted device* deliberately authorized *this specific request*.
 
-We want a **Breeze Authenticator**: the technician registers a trusted device once (Microsoft-Authenticator style), and from then on approvals require a verification whose **strength scales with the action's risk tier**, enforced **server-side**.
+We want a **BL4CK Authenticator**: the technician registers a trusted device once (Microsoft-Authenticator style), and from then on approvals require a verification whose **strength scales with the action's risk tier**, enforced **server-side**.
 
 ## 2. Goals / non-goals
 
@@ -19,7 +19,7 @@ We want a **Breeze Authenticator**: the technician registers a trusted device on
 - A registered, **device-bound, biometric-gated signing key** per technician device — works on **both** the mobile app and the browser/desktop.
 - A **risk-tiered assurance ladder** keyed off the `approval_requests.riskTier` enum (`low|medium|high|critical`) that already exists on every approval.
 - **Server-side enforcement** on the decide endpoints: medium+ approvals must present a verifiable signature; high+ adds a server-verified **PIN**.
-- A **per-partner policy** to raise the required rung above the Breeze floor (never below).
+- A **per-partner policy** to raise the required rung above the BL4CK floor (never below).
 - **Factor recording**: every decision records *which device, which assurance level, PIN-verified or not*.
 - Backward compatible: if no authenticator is enrolled and policy demands only L1, behavior is exactly today's — so **#1254 is never blocked**.
 
@@ -27,7 +27,7 @@ We want a **Breeze Authenticator**: the technician registers a trusted device on
 - Number-matching (rejected — assumes co-location with the originating screen; breaks "approve from anywhere"). PIN replaces it.
 - End-user (non-technician) self-elevation identity. Out of scope; this is a *technician/approver* feature.
 - Replacing login MFA. Login passkeys/TOTP stay as-is; approver devices are a **separate registration** (a device may hold both).
-- Desktop Breeze Helper as an approval surface (possible future; web + mobile only now).
+- Desktop BL4CK Helper as an approval surface (possible future; web + mobile only now).
 - TOTP/SMS as an approval factor (knowledge/possession already covered by PIN + device key).
 
 ## 3. Concepts
@@ -139,7 +139,7 @@ enforce_from   timestamptz                   -- grace window before enforcement
 updated_by_user_id uuid → users(id)
 updated_at     timestamptz default now() not null
 ```
-RLS: `breeze_has_partner_access(partner_id)` (flat, never tree traversal); add `'authenticator_policies' → 'partner_id'` to the `PARTNER_TENANT_TABLES` map in `rls-coverage.integration.test.ts`. The MSP sets its own approval posture; Breeze ships the default floor and `floor_overrides` may only **raise** a rung (validated app-side and re-checked server-side). Org-level override is a documented future extension, not in v1.
+RLS: `breeze_has_partner_access(partner_id)` (flat, never tree traversal); add `'authenticator_policies' → 'partner_id'` to the `PARTNER_TENANT_TABLES` map in `rls-coverage.integration.test.ts`. The MSP sets its own approval posture; BL4CK ships the default floor and `floor_overrides` may only **raise** a rung (validated app-side and re-checked server-side). Org-level override is a documented future extension, not in v1.
 
 ### 6.4 Factor recording
 
@@ -206,7 +206,7 @@ All registration is **step-up gated** by the existing `requireCurrentPasswordSte
 
 ## 10. Policy model
 
-- Breeze ships the **default floor** (§4). Partners may **raise** any rung via `authenticator_policies.floor_overrides`; lowering is rejected.
+- BL4CK ships the **default floor** (§4). Partners may **raise** any rung via `authenticator_policies.floor_overrides`; lowering is rejected.
 - `require_enrollment` + `enforce_from` give a grace window: before `enforce_from`, an un-enrolled tech may still approve L2+ on session alone (logged + audited as `assurance_downgraded_grace`); after, L2+ without a registered device is refused with a "set up your authenticator" prompt.
 - Surfaced in the existing PAM/security admin UI (a new "Approval security" tab) — read/write gated by an admin permission (reuse `requirePamWrite`-style or a new `requireSecurityAdmin`).
 
@@ -255,7 +255,7 @@ Each phase is independently shippable; nothing is user-visible until a partner r
 ## 16. Open questions / future
 
 - **Org-level (not just partner) policy override** — deferred; partner floor only in v1.
-- **Desktop Breeze Helper as an approval surface** — possible Phase 5.
+- **Desktop BL4CK Helper as an approval surface** — possible Phase 5.
 - **Number-matching for the rare co-located/in-console case** — dropped; revisit only if a concrete need appears.
 - **End-user self-service elevation identity** — separate feature, out of scope.
 - **Shared device for login + approver credential** — allowed; do we ever want to *force* distinct authenticators? Default: allow shared.

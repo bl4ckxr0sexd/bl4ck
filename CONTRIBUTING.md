@@ -1,6 +1,6 @@
-# Contributing to Breeze
+# Contributing to BL4CK
 
-Thanks for your interest in contributing to Breeze! This guide will help you get started.
+Thanks for your interest in contributing to BL4CK! This guide will help you get started.
 
 ## Reporting Bugs
 

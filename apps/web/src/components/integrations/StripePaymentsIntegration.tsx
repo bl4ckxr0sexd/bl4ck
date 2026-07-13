@@ -93,7 +93,7 @@ export default function StripePaymentsIntegration() {
       <h2 className="text-lg font-semibold">Online payments</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Paste your Stripe secret key to let customers pay invoices online. Charges run directly on
-        your own Stripe account — funds never touch Breeze. Create a restricted key (or use your
+        your own Stripe account — funds never touch BL4CK. Create a restricted key (or use your
         secret key) in your{' '}
         <a
           href="https://dashboard.stripe.com/apikeys"

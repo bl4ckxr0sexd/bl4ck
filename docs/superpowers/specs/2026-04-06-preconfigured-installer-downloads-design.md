@@ -2,7 +2,7 @@
 
 ## Overview
 
-Admins download platform-specific agent installers from the Breeze dashboard with enrollment credentials pre-baked. The agent auto-enrolls on first run with zero manual configuration. Supports both MSP mass deployment (GPO/MDM/SCCM push) and end-user self-install scenarios.
+Admins download platform-specific agent installers from the BL4CK dashboard with enrollment credentials pre-baked. The agent auto-enrolls on first run with zero manual configuration. Supports both MSP mass deployment (GPO/MDM/SCCM push) and end-user self-install scenarios.
 
 ## Platforms
 
@@ -96,7 +96,7 @@ sudo /usr/local/bin/breeze-agent enroll "${ENROLL_ARGS[@]}"
 # Clean up enrollment credentials
 rm -f "$ENROLLMENT_JSON"
 
-echo "Breeze agent installed and enrolled successfully."
+echo "BL4CK agent installed and enrolled successfully."
 ```
 
 ### Agent-Side Changes

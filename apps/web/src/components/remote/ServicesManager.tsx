@@ -61,7 +61,7 @@ const startupTypeColors: Record<StartupType, string> = {
 
 const startupTypeOptions: StartupType[] = ['Automatic', 'Automatic (Delayed)', 'Manual', 'Disabled'];
 
-// The Breeze agent's own service name per platform
+// The BL4CK agent's own service name per platform
 export const AGENT_SERVICE_NAMES = new Set([
   'breezeagent',       // Windows (case-insensitive match)
   'breeze-agent',      // Linux systemd
@@ -289,7 +289,7 @@ export default function ServicesManager({
           <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
             <h3 className="text-lg font-semibold">Action Blocked</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              Stopping the Breeze agent will take this device offline and make it unreachable.
+              Stopping the BL4CK agent will take this device offline and make it unreachable.
               Use Restart instead.
             </p>
             <div className="mt-4 flex justify-end gap-3">
@@ -309,7 +309,7 @@ export default function ServicesManager({
           <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
             <h3 className="text-lg font-semibold">Confirm Action</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              This will restart the Breeze agent. The device will briefly go offline and
+              This will restart the BL4CK agent. The device will briefly go offline and
               reconnect automatically. Continue?
             </p>
             <div className="mt-4 flex justify-end gap-3">
@@ -486,7 +486,7 @@ export default function ServicesManager({
                                 })
                               }
                               disabled={service.status === 'Stopped' || isAgentService(service.name)}
-                              title={isAgentService(service.name) ? 'Cannot stop the Breeze agent' : 'Stop Service'}
+                              title={isAgentService(service.name) ? 'Cannot stop the BL4CK agent' : 'Stop Service'}
                               className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted disabled:cursor-not-allowed disabled:opacity-30"
                             >
                               <Square className="h-4 w-4 text-red-600" />

@@ -8,7 +8,7 @@ import { fetchWithAuth } from './auth';
 import type { AssertionProof } from '@breeze/shared';
 
 /**
- * Browser-approver (Breeze Authenticator Phase 2) client helpers.
+ * Browser-approver (BL4CK Authenticator Phase 2) client helpers.
  *
  * Mirror the proven 3-step `apiVerifyPasskeyMFA` pattern in `stores/auth.ts`:
  * fetch options/challenge → run the WebAuthn ceremony via `@simplewebauthn/browser`

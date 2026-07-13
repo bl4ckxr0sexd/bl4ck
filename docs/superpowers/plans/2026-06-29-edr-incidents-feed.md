@@ -594,7 +594,7 @@ git commit -m "feat(web): promote mappers set EDR source link"
 
 **Interfaces:**
 - Consumes: `GET /incidents/feed` → `{ data: IncidentFeedRow[]; pagination }` (Task 4).
-- Produces: list rows with a source badge (`Breeze`/`Huntress`/`SentinelOne`), a `All · Tracked · Findings` filter, Promote affordance hint on findings, and a link-out for findings.
+- Produces: list rows with a source badge (`BL4CK`/`Huntress`/`SentinelOne`), a `All · Tracked · Findings` filter, Promote affordance hint on findings, and a link-out for findings.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -645,7 +645,7 @@ Expected: FAIL — page still calls `/incidents` and has no badge.
 In `apps/web/src/components/incidents/IncidentsPage.tsx`:
 - Replace the `Incident` interface with the `IncidentFeedRow` shape (`kind`, `source`, `sourceId`, `severity`, `edrStatus`, `status`, `deviceId`, `detectedAt`, `trackedIncidentId`).
 - Change the fetch URL from `/incidents?...` to `/incidents/feed?...`, keeping the `page`/`limit` params; add an optional `kind` param driven by a new filter state (`'' | 'tracked' | 'finding'`) replacing the old status/severity filters (severity filter may stay).
-- Render per row: a **source badge** mapping `source` → label (`breeze`→`Breeze`, `huntress`→`Huntress`, `s1`→`SentinelOne`) with the existing `severityColors` chip for `severity`.
+- Render per row: a **source badge** mapping `source` → label (`breeze`→`BL4CK`, `huntress`→`Huntress`, `s1`→`SentinelOne`) with the existing `severityColors` chip for `severity`.
 - For `kind === 'tracked'`: clicking the row calls `navigateTo('/incidents/' + row.trackedIncidentId)`; show `status` chip.
 - For `kind === 'finding'`: show `edrStatus` text and a "View in {source}" external link (`linkOut` if present on the row — see Task 4 note; until link-out URLs are wired, render the badge + a non-link "Promote from the EDR view" hint). Do not make finding rows navigate to `/incidents/:id`.
 
@@ -653,7 +653,7 @@ Concretely, add the badge map near the existing `severityColors`:
 
 ```tsx
 const sourceLabels: Record<'breeze' | 'huntress' | 's1', string> = {
-  breeze: 'Breeze',
+  breeze: 'BL4CK',
   huntress: 'Huntress',
   s1: 'SentinelOne',
 };

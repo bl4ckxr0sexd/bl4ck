@@ -162,7 +162,7 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
     return (
       <ConsentShell title="Sign in to continue">
         <p className="text-sm text-muted-foreground">
-          You need to sign in to your Breeze account before authorizing this connection.
+          You need to sign in to your BL4CK account before authorizing this connection.
         </p>
         <a
           href={loginRedirectTarget(uid)}
@@ -232,7 +232,7 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
 
   return (
     <ConsentShell
-      title={`${displayName} wants to access your Breeze tenant`}
+      title={`${displayName} wants to access your BL4CK tenant`}
       subtitle={showClientIdSubtitle ? `Client ID: ${details.client.client_id}` : undefined}
     >
       <ScopeList scopes={details.scopes} />

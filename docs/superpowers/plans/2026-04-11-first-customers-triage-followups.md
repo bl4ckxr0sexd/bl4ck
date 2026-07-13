@@ -2,7 +2,7 @@
 
 ## Context
 
-First real paying signups hit Breeze prod in the 2026-04-10 / 2026-04-11 window.
+First real paying signups hit BL4CK prod in the 2026-04-10 / 2026-04-11 window.
 Triage of a single customer's onboarding experience surfaced a cascade of latent
 production bugs, operational gaps, and systemic issues that had been waiting for
 real traffic to expose. This doc is the operational tracker for what shipped,
@@ -52,7 +52,7 @@ what's in flight, and what still needs attention.
   dedicated route: hero + activation pill polling the subscription endpoint
   for up to 30s, plan summary card with receipt download (retries the invoice
   fetch 4× at 3s to work around Stripe's async PDF attachment), and a 3-card
-  "next steps" checklist deep-linking back to the main Breeze app
+  "next steps" checklist deep-linking back to the main BL4CK app
   (`/settings/enrollment-keys`, `/settings/users`, `/`). Stripe checkout
   `success_url` now points at `/billing/success?plan=<plan>`. Reviewed by
   parallel agent pass (code quality + silent-failure hunt + comment audit);
@@ -160,7 +160,7 @@ not blocking merge. Worth picking up as a follow-up PR or during a refactor pass
   the subscription endpoint every 2s up to 30s waiting for the Stripe webhook),
   plan summary card with receipt download (retries the invoice fetch 4× at 3s
   to work around Stripe's async `invoice_pdf` attachment), and a 3-card "next
-  steps" checklist deep-linking back into the main Breeze app
+  steps" checklist deep-linking back into the main BL4CK app
   (`/settings/enrollment-keys`, `/settings/users`, `/`). Stripe checkout
   `success_url` now points at `/billing/success?plan=<plan>`. Deployed to US
   and EU at 2026-04-12 ~00:07 UTC.

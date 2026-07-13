@@ -263,7 +263,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold">Install the Breeze agent</h2>
+        <h2 className="text-lg font-semibold">Install the BL4CK agent</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Download an installer or use the command line to set up your first device.
         </p>

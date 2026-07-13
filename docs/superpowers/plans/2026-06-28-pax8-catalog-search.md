@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let partners search the Pax8 product catalog and import products into the Breeze catalog (and onto quotes/contract lines), mirroring the existing TD SYNNEX import flow.
+**Goal:** Let partners search the Pax8 product catalog and import products into the BL4CK catalog (and onto quotes/contract lines), mirroring the existing TD SYNNEX import flow.
 
 **Architecture:** Add a `products` data stream to the existing Pax8 client (reusing its OAuth + the existing `pax8Integrations` credentials), a `pax8CatalogService` that does a live-proxy search with a short-TTL Redis cache and imports via the existing `createCatalogItem`, four routes alongside the TD SYNNEX distributor routes, and one shared web lookup component mounted in three hosts (catalog tab, quote editor, contract editor).
 

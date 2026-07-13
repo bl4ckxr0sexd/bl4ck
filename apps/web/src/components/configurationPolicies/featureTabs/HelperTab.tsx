@@ -97,8 +97,8 @@ export default function HelperTab({ policyId, existingLink, onLinkChanged, linke
         {/* Deploy toggle */}
         <div className="flex items-center justify-between rounded-md border bg-background px-4 py-3">
           <div>
-            <p className="text-sm font-medium">Deploy Breeze Assist to devices</p>
-            <p className="text-xs text-muted-foreground">Install and run the Breeze Assist tray application on targeted devices.</p>
+            <p className="text-sm font-medium">Deploy BL4CK Assist to devices</p>
+            <p className="text-xs text-muted-foreground">Install and run the BL4CK Assist tray application on targeted devices.</p>
           </div>
           <button
             type="button"
@@ -117,9 +117,9 @@ export default function HelperTab({ policyId, existingLink, onLinkChanged, linke
         <div className="space-y-4">
           <div>
             <h3 className="text-sm font-semibold">Tray Menu Options</h3>
-            <p className="text-xs text-muted-foreground">Configure which items appear in the Breeze Assist right-click context menu. Exit is always available.</p>
+            <p className="text-xs text-muted-foreground">Configure which items appear in the BL4CK Assist right-click context menu. Exit is always available.</p>
             {!settings.enabled && (
-              <p className="mt-1 text-xs italic text-muted-foreground">Enable "Deploy Breeze Assist to devices" above to apply these options.</p>
+              <p className="mt-1 text-xs italic text-muted-foreground">Enable "Deploy BL4CK Assist to devices" above to apply these options.</p>
             )}
           </div>
 
@@ -137,7 +137,7 @@ export default function HelperTab({ policyId, existingLink, onLinkChanged, linke
                 className="h-4 w-4 rounded border-border"
               />
               <div>
-                <p className="text-sm font-medium">Open Breeze Portal</p>
+                <p className="text-sm font-medium">Open BL4CK Portal</p>
                 <p className="text-xs text-muted-foreground">Opens the web portal in the user's browser.</p>
               </div>
             </label>
@@ -168,7 +168,7 @@ export default function HelperTab({ policyId, existingLink, onLinkChanged, linke
               />
               <div>
                 <p className="text-sm font-medium">Request Support</p>
-                <p className="text-xs text-muted-foreground">Opens the Breeze Assist chat window for AI-assisted support.</p>
+                <p className="text-xs text-muted-foreground">Opens the BL4CK Assist chat window for AI-assisted support.</p>
               </div>
             </label>
 
@@ -183,7 +183,7 @@ export default function HelperTab({ policyId, existingLink, onLinkChanged, linke
                 placeholder="https://portal.example.com (defaults to server URL)"
                 className="mt-2 h-10 w-full rounded-md border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
               />
-              <p className="mt-1 text-xs text-muted-foreground">Leave blank to use the default Breeze server URL.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Leave blank to use the default BL4CK server URL.</p>
             </div>
           </div>
         </div>

@@ -132,7 +132,7 @@ export default function RemoteAccessTab({ policyId, existingLink, onLinkChanged,
           </div>
           <ToggleRow
             label="Remote Desktop"
-            description="Allow the Breeze Viewer to connect to this device via the Connect Remote Desktop action (WebRTC)."
+            description="Allow the BL4CK Viewer to connect to this device via the Connect Remote Desktop action (WebRTC)."
             checked={settings.webrtcDesktop}
             onChange={(v) => update('webrtcDesktop', v)}
           />
@@ -145,7 +145,7 @@ export default function RemoteAccessTab({ policyId, existingLink, onLinkChanged,
           <ToggleRow label="Remote System Tools" description="Allow remote process manager, services, registry, terminal, and file browser." checked={settings.remoteTools} onChange={(v) => update('remoteTools', v)} />
           <ToggleRow
             label="Clipboard: remote → viewer (copy from remote)"
-            description="Stream the remote machine's clipboard to the operator's viewer. This is the data-egress direction — whatever the end user copies (passwords, MFA codes, secrets) reaches the operator. Off by default on hosted Breeze."
+            description="Stream the remote machine's clipboard to the operator's viewer. This is the data-egress direction — whatever the end user copies (passwords, MFA codes, secrets) reaches the operator. Off by default on hosted BL4CK."
             checked={settings.clipboardHostToViewer}
             onChange={(v) => update('clipboardHostToViewer', v)}
           />

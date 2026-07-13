@@ -7,7 +7,7 @@
 
 ## Problem
 
-The Breeze Assist Helper (Tauri desktop app, `apps/helper/`) authenticates to the
+The BL4CK Assist Helper (Tauri desktop app, `apps/helper/`) authenticates to the
 `/helper/*` API routes with a per-device `helper_auth_token`. Today the Go agent
 persists that token into `agent.yaml`, and the Helper reads it directly off disk
 (`apps/helper/src-tauri/src/lib.rs:79-130`).

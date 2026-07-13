@@ -7,7 +7,7 @@ sidebar:
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-Breeze includes a built-in ticketing system designed for MSP technician workflows. Tickets arrive from the customer portal, from alerts, from technicians creating them by hand, and through the API -- and they all land in one queue. Open **Tickets** from the left sidebar to start working.
+BL4CK includes a built-in ticketing system designed for MSP technician workflows. Tickets arrive from the customer portal, from alerts, from technicians creating them by hand, and through the API -- and they all land in one queue. Open **Tickets** from the left sidebar to start working.
 
 Every ticket gets a number in the form `T-YYYY-NNNN` (for example `T-2026-0042`), which appears throughout the dashboard and is the easiest way to reference a ticket with your team or a customer.
 
@@ -135,7 +135,7 @@ Tickets enter the queue from four directions:
 
 ## Email-to-Ticket
 
-Breeze can turn customer emails into tickets automatically, so your help desk works entirely over email like a full PSA. Configure it under **Settings → Ticketing → Inbound email**.
+BL4CK can turn customer emails into tickets automatically, so your help desk works entirely over email like a full PSA. Configure it under **Settings → Ticketing → Inbound email**.
 
 ### Your inbound address
 
@@ -157,7 +157,7 @@ Partners can customize the acknowledgement email's **subject** and **body** (pla
 
 ### Review queue
 
-Emails that Breeze can't automatically turn into a ticket land in a **review queue** instead -- so unsolicited or unprocessable mail doesn't flood the ticket queue. From there you can convert a message into a ticket (assigning it to the right organization) or dismiss it. Two kinds of mail land here:
+Emails that BL4CK can't automatically turn into a ticket land in a **review queue** instead -- so unsolicited or unprocessable mail doesn't flood the ticket queue. From there you can convert a message into a ticket (assigning it to the right organization) or dismiss it. Two kinds of mail land here:
 
 - Any email that **failed to process** -- for example, one with no usable sender address.
 - Emails from **unknown senders**, if your **Unknown senders** setting is left on its default. See [Unknown sender handling](#unknown-sender-handling) below to change that behavior.
@@ -174,7 +174,7 @@ A sender is "unknown" when it isn't a portal user, a mapped customer domain, or 
 |---|---|
 | **Quarantine for review** (default) | Held in the Tickets **Review queue** for manual convert or dismiss. |
 | **Route to the triage organization** | Auto-creates a ticket directly in a designated triage organization instead of quarantining it. This option requires a **Default triage organization** to already be selected above it -- it stays disabled until you pick one. |
-| **Drop silently** | No ticket, no review-queue entry, no autoresponse. Breeze still keeps an internal record of the message. Use this to keep unmapped spam out of both triage and the review queue. |
+| **Drop silently** | No ticket, no review-queue entry, no autoresponse. BL4CK still keeps an internal record of the message. Use this to keep unmapped spam out of both triage and the review queue. |
 
 Pick the **Default triage organization** from the dropdown above the Unknown senders options before you can select "Route to the triage organization."
 
@@ -184,20 +184,20 @@ A separate checkbox on the same card, **Drop mail that fails sender authenticati
 
 ### Connecting a Microsoft 365 support mailbox
 
-Instead of forwarding to your Breeze inbound address, you can connect a Microsoft 365 **shared support mailbox** (for example `support@yourmsp.com`) directly. Customer email to that mailbox becomes tickets, and your public replies are sent back **from that same mailbox** -- with no MX record or forwarding-rule changes. Breeze uses an app-only connection your Microsoft Global Administrator consents to once, so it survives staff turnover (there's no personal login tied to the mailbox). Set it up on the **Microsoft 365 support mailbox** card under **Settings → Ticketing → Inbound Email**.
+Instead of forwarding to your BL4CK inbound address, you can connect a Microsoft 365 **shared support mailbox** (for example `support@yourmsp.com`) directly. Customer email to that mailbox becomes tickets, and your public replies are sent back **from that same mailbox** -- with no MX record or forwarding-rule changes. BL4CK uses an app-only connection your Microsoft Global Administrator consents to once, so it survives staff turnover (there's no personal login tied to the mailbox). Set it up on the **Microsoft 365 support mailbox** card under **Settings → Ticketing → Inbound Email**.
 
 <Steps>
 
-1. Enter the shared mailbox address and an optional display name, then click **Connect**. Breeze redirects you to Microsoft, where a **Global Administrator** grants one-time admin consent.
-2. Scope Breeze's access to **only** this mailbox. The card shows an exact **Application Access Policy** snippet (a `New-DistributionGroup` plus `New-ApplicationAccessPolicy` pair) to run in Exchange Online PowerShell as a tenant admin. Until you do this, the connection shows **Needs attention**, because the underlying mail permission is tenant-wide by default.
-3. Click **Re-test**. Once Breeze can read the mailbox, the status flips to **Connected**.
+1. Enter the shared mailbox address and an optional display name, then click **Connect**. BL4CK redirects you to Microsoft, where a **Global Administrator** grants one-time admin consent.
+2. Scope BL4CK's access to **only** this mailbox. The card shows an exact **Application Access Policy** snippet (a `New-DistributionGroup` plus `New-ApplicationAccessPolicy` pair) to run in Exchange Online PowerShell as a tenant admin. Until you do this, the connection shows **Needs attention**, because the underlying mail permission is tenant-wide by default.
+3. Click **Re-test**. Once BL4CK can read the mailbox, the status flips to **Connected**.
 
 </Steps>
 
-Once connected, Breeze polls the mailbox every minute or two, turns new messages into tickets (threading and the review queue work exactly as above), and marks each handled message as read so your team can see what's been picked up. Only mail that arrives after you connect is ticketed -- existing inbox history is not imported. Public replies go out **from the support address** and thread natively in the customer's mailbox; internal notes and technician notifications are unaffected. You can connect more than one mailbox (for example `support@` and `billing@`). **Disconnect** stops polling immediately; to fully remove access, also revoke the app's consent in your Microsoft Entra admin center.
+Once connected, BL4CK polls the mailbox every minute or two, turns new messages into tickets (threading and the review queue work exactly as above), and marks each handled message as read so your team can see what's been picked up. Only mail that arrives after you connect is ticketed -- existing inbox history is not imported. Public replies go out **from the support address** and thread natively in the customer's mailbox; internal notes and technician notifications are unaffected. You can connect more than one mailbox (for example `support@` and `billing@`). **Disconnect** stops polling immediately; to fully remove access, also revoke the app's consent in your Microsoft Entra admin center.
 
 <Aside>
-  Connecting or managing a mailbox requires **partner scope and MFA**. The Microsoft 365 mailbox card only appears once your operator has configured the Breeze Ticketing Azure app -- see [Ticket Mailbox environment variables](/deploy/environment/#ticket-mailbox-m365-email-to-ticket).
+  Connecting or managing a mailbox requires **partner scope and MFA**. The Microsoft 365 mailbox card only appears once your operator has configured the BL4CK Ticketing Azure app -- see [Ticket Mailbox environment variables](/deploy/environment/#ticket-mailbox-m365-email-to-ticket).
 </Aside>
 
 ## Categories and SLAs
@@ -217,7 +217,7 @@ Go to **Settings > Ticketing** to manage ticket categories.
 Categories also carry SLA targets (response and resolution times) and billing defaults. When a ticket's resolution target is running out, an **at-risk** chip appears in the queue, turning to **breached** once the target has passed -- and the **Breaching soon** tab collects all of them in one place.
 
 <Aside>
-  The automated SLA engine is live. Breeze tracks each ticket against its category's response and resolution targets, pauses the clock while a ticket is **On Hold**, monitors for breaches, and notifies the assignee (and escalates to the configured contacts) as a target approaches or is missed.
+  The automated SLA engine is live. BL4CK tracks each ticket against its category's response and resolution targets, pauses the clock while a ticket is **On Hold**, monitors for breaches, and notifies the assignee (and escalates to the configured contacts) as a target approaches or is missed.
 </Aside>
 
 ## Custom Statuses & SLA Configuration
@@ -244,7 +244,7 @@ In an organization's settings, open the **Ticketing** tab to set per-priority SL
 
 ## Time Tracking & Parts
 
-Breeze lets technicians log time and record parts against any ticket. These records feed the billing summary on the ticket's properties rail and the weekly Timesheet view -- but are **never shown in the customer portal**.
+BL4CK lets technicians log time and record parts against any ticket. These records feed the billing summary on the ticket's properties rail and the weekly Timesheet view -- but are **never shown in the customer portal**.
 
 ### Timer widget
 

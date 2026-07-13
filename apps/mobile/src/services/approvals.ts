@@ -81,7 +81,7 @@ export async function fetchApproval(id: string): Promise<ApprovalRequest> {
 }
 
 /**
- * Optional Breeze Authenticator step-up payload attached to an approve. A
+ * Optional BL4CK Authenticator step-up payload attached to an approve. A
  * hardware-signed `proof` upgrades the recorded decision to L2 (mobile_hw_key);
  * a verified `pin` upgrades it to L3. Both are optional — a device-less tech
  * approves with neither, recorded as L1 (Phase 3 is opt-in; enforcement is

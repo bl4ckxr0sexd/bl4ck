@@ -31,7 +31,7 @@ type Manager struct {
 	done            chan struct{}
 	stopOnce        sync.Once
 	stopped         bool
-	managedByPolicy bool // true when Config Policy allows Breeze to manage Screen Sharing
+	managedByPolicy bool // true when Config Policy allows BL4CK to manage Screen Sharing
 }
 
 // NewManager — add parameter:
@@ -122,7 +122,7 @@ In `agent/internal/heartbeat/handlers_tunnel.go`, replace lines 77-87:
 			if h.tunnelMgr == nil || !h.tunnelMgr.IsManagedByPolicy() {
 				return tools.CommandResult{
 					Status: "failed",
-					Error:  "Screen Sharing is disabled on this device. Enable 'Manage Remote Management' in Config Policy to allow Breeze to control this, or enable it manually in System Preferences > Sharing.",
+					Error:  "Screen Sharing is disabled on this device. Enable 'Manage Remote Management' in Config Policy to allow BL4CK to control this, or enable it manually in System Preferences > Sharing.",
 					DurationMs: time.Since(start).Milliseconds(),
 				}
 			}
@@ -201,7 +201,7 @@ Expected: Clean compile
 cd agent && git add internal/tunnel/manager.go internal/heartbeat/handlers_tunnel.go internal/heartbeat/heartbeat.go
 git commit -m "fix(agent): gate Screen Sharing management behind Config Policy
 
-Default: Breeze never touches Apple Screen Sharing (kickstart).
+Default: BL4CK never touches Apple Screen Sharing (kickstart).
 When manageRemoteManagement is true in heartbeat response, existing
 enable/disable/cleanup behavior runs. When VNC tunnel opens and
 Screen Sharing is off without policy, return informative error."

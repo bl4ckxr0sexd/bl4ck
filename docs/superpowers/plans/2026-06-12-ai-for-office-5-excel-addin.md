@@ -1,10 +1,10 @@
-# Breeze AI for Office — Plan 5: Excel Add-in
+# BL4CK AI for Office — Plan 5: Excel Add-in
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship the client-facing Excel add-in: a new `apps/office-addin/` task-pane app that signs users in via Office SSO (MSAL popup fallback), exchanges the Entra token for a Breeze client-AI session, streams chat over fetch-based SSE, executes the 9 workbook tools client-side via Office.js, gates every mutating tool behind a write-preview Apply/Reject card, and carries the context chip, template picker, and MSP-brandable footer from spec §11.
+**Goal:** Ship the client-facing Excel add-in: a new `apps/office-addin/` task-pane app that signs users in via Office SSO (MSAL popup fallback), exchanges the Entra token for a BL4CK client-AI session, streams chat over fetch-based SSE, executes the 9 workbook tools client-side via Office.js, gates every mutating tool behind a write-preview Apply/Reject card, and carries the context chip, template picker, and MSP-brandable footer from spec §11.
 
-**Architecture:** A standalone Vite + React app in the pnpm workspace (`apps/*` glob — no workspace-file change). Office.js loads from the Microsoft CDN in `taskpane.html`; the React island renders after `Office.onReady`. Auth is a two-hop chain: `OfficeRuntime.auth.getAccessToken` (silent SSO) → `@azure/msal-browser` popup fallback → `POST /client-ai/auth/exchange` → in-memory + sessionStorage Breeze session token with single-flight re-exchange on 401. The chat loop is a framework-free `ChatController` (testable without React) that consumes the session SSE stream, auto-executes read tools through an Office.js executor registry, and parks mutating `tool_request`s in an approval queue that the `WritePreviewCard` resolves via `POST .../tool-results`. All Office.js access is funneled through `Excel.run`, which a hand-rolled mock replaces wholesale in vitest.
+**Architecture:** A standalone Vite + React app in the pnpm workspace (`apps/*` glob — no workspace-file change). Office.js loads from the Microsoft CDN in `taskpane.html`; the React island renders after `Office.onReady`. Auth is a two-hop chain: `OfficeRuntime.auth.getAccessToken` (silent SSO) → `@azure/msal-browser` popup fallback → `POST /client-ai/auth/exchange` → in-memory + sessionStorage BL4CK session token with single-flight re-exchange on 401. The chat loop is a framework-free `ChatController` (testable without React) that consumes the session SSE stream, auto-executes read tools through an Office.js executor registry, and parks mutating `tool_request`s in an approval queue that the `WritePreviewCard` resolves via `POST .../tool-results`. All Office.js access is funneled through `Excel.run`, which a hand-rolled mock replaces wholesale in vitest.
 
 **Tech Stack:** Vite 8, React 19.2, TypeScript 5.7, Tailwind CSS 3.4, @azure/msal-browser 4, @types/office-js, office-addin-dev-certs (https dev server), Vitest 4 + jsdom
 
@@ -24,7 +24,7 @@ Request: `{ "accessToken": "<Entra ID access token>" }` (no auth header — pre-
 
 ```json
 {
-  "accessToken": "<48-char Breeze session token>",
+  "accessToken": "<48-char BL4CK session token>",
   "expiresInSeconds": 86400,
   "user": { "id": "<portal_users uuid>", "email": "user@contoso.com", "name": "Finance User" }
 }
@@ -49,7 +49,7 @@ Error responses — always `{ "error": "<code>" }`:
 
 ### 2. Session loop (Plan 2 surface — prompt-pinned, see D1)
 
-All requests carry `Authorization: Bearer <Breeze session token>`. On any 401 the client re-runs the exchange once (single-flight) and retries.
+All requests carry `Authorization: Bearer <BL4CK session token>`. On any 401 the client re-runs the exchange once (single-flight) and retries.
 
 - `POST /client-ai/sessions` body `{}` → `200 { "sessionId": "<uuid>" }`
 - `POST /client-ai/sessions/:id/messages` body:
@@ -331,7 +331,7 @@ export default {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Breeze AI</title>
+    <title>BL4CK AI</title>
     <!-- Office.js MUST load from the Microsoft CDN (host requirement) and must
          not be bundled. It loads before the module script so Office.onReady is
          defined when main.tsx runs. -->
@@ -379,7 +379,7 @@ if (typeof Office !== 'undefined' && typeof Office.onReady === 'function') {
 export function App() {
   return (
     <div className="flex h-screen items-center justify-center text-sm text-gray-500">
-      Breeze AI — scaffold OK
+      BL4CK AI — scaffold OK
     </div>
   );
 }
@@ -470,7 +470,7 @@ console.log(`[make-icons] wrote icon-16/32/64/80.png to ${outDir}`);
 `apps/office-addin/.env.example` (generic placeholders only — CLAUDE.md no-internal-infra rule):
 
 ```bash
-# Breeze API origin the add-in calls. Local dev default shown.
+# BL4CK API origin the add-in calls. Local dev default shown.
 VITE_API_BASE_URL=http://localhost:3001
 # Entra app registration (multi-tenant) client ID. MUST match the API's
 # CLIENT_AI_ENTRA_CLIENT_ID (apps/api .env, Plan 1 Task 6).
@@ -545,9 +545,9 @@ The manifest is XML the M365 admin center / sideload consumes. It is environment
            xsi:type="TaskPaneApp">
   <Id>{{ADDIN_ID}}</Id>
   <Version>0.1.0</Version>
-  <ProviderName>Breeze</ProviderName>
+  <ProviderName>BL4CK</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Breeze AI"/>
+  <DisplayName DefaultValue="BL4CK AI"/>
   <Description DefaultValue="AI assistant for Excel, governed by your IT provider."/>
   <IconUrl DefaultValue="{{BASE_URL}}/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="{{BASE_URL}}/assets/icon-64.png"/>
@@ -608,11 +608,11 @@ The manifest is XML the M365 admin center / sideload consumes. It is environment
         <bt:Url id="Breeze.Taskpane.Url" DefaultValue="{{BASE_URL}}/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="Breeze.GroupLabel" DefaultValue="Breeze AI"/>
-        <bt:String id="Breeze.TaskpaneButton.Label" DefaultValue="Breeze AI"/>
+        <bt:String id="Breeze.GroupLabel" DefaultValue="BL4CK AI"/>
+        <bt:String id="Breeze.TaskpaneButton.Label" DefaultValue="BL4CK AI"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="Breeze.TaskpaneButton.Tooltip" DefaultValue="Open the Breeze AI assistant for this workbook."/>
+        <bt:String id="Breeze.TaskpaneButton.Tooltip" DefaultValue="Open the BL4CK AI assistant for this workbook."/>
       </bt:LongStrings>
     </Resources>
     <WebApplicationInfo>
@@ -1548,7 +1548,7 @@ git commit -m "test(office-addin): Office.js Excel mock with load/sync lifecycle
 
 ---
 
-### Task 5: Auth — Office SSO → MSAL fallback → Breeze exchange (TDD)
+### Task 5: Auth — Office SSO → MSAL fallback → BL4CK exchange (TDD)
 
 Two modules: `entraToken.ts` (silent `OfficeRuntime.auth.getAccessToken({ allowSignInPrompt: false })` → `@azure/msal-browser` popup fallback) and `session.ts` (the `POST /client-ai/auth/exchange` call, error-code → block-kind mapping, memory + sessionStorage store, single-flight re-exchange for 401s). Plus the `BlockedScreen` component the error kinds map onto (presentational — verified by tsc per D6).
 
@@ -1858,7 +1858,7 @@ export async function getEntraTokenInteractive(
 
 ```ts
 /**
- * Breeze client-AI session: POST /client-ai/auth/exchange (Plan 1, authoritative
+ * BL4CK client-AI session: POST /client-ai/auth/exchange (Plan 1, authoritative
  * — see Pinned server contracts §1). Stores { sessionToken, user, org?, branding? }
  * in memory + sessionStorage; reExchange() is the single-flight 401 recovery
  * path the API client (Task 6) calls.
@@ -2044,15 +2044,15 @@ import type { AuthBlockKind } from '../auth/session';
 const COPY: Record<AuthBlockKind, { title: string; body: string }> = {
   not_provisioned: {
     title: 'Not set up yet',
-    body: 'Breeze AI has not been provisioned for your organization. Contact your IT provider to enable it.',
+    body: 'BL4CK AI has not been provisioned for your organization. Contact your IT provider to enable it.',
   },
   disabled: {
     title: 'Disabled',
-    body: 'Breeze AI is currently disabled for your organization. Contact your IT provider.',
+    body: 'BL4CK AI is currently disabled for your organization. Contact your IT provider.',
   },
   user_not_permitted: {
     title: 'No access',
-    body: 'Your account does not have access to Breeze AI. Contact your IT provider.',
+    body: 'Your account does not have access to BL4CK AI. Contact your IT provider.',
   },
   account_inactive: {
     title: 'Account inactive',
@@ -2060,7 +2060,7 @@ const COPY: Record<AuthBlockKind, { title: string; body: string }> = {
   },
   retryable: {
     title: 'Temporarily unavailable',
-    body: 'Something went wrong talking to Breeze. Try again in a moment.',
+    body: 'Something went wrong talking to BL4CK. Try again in a moment.',
   },
 };
 
@@ -2098,7 +2098,7 @@ Expected: 10 tests PASS (3 entraToken + 7 session). Then `npx tsc --noEmit` — 
 ```bash
 cd /Users/toddhebebrand/breeze
 git add apps/office-addin/src/auth apps/office-addin/src/components/BlockedScreen.tsx
-git commit -m "feat(office-addin): Office SSO -> MSAL fallback -> Breeze exchange with block-kind mapping" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat(office-addin): Office SSO -> MSAL fallback -> BL4CK exchange with block-kind mapping" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2513,7 +2513,7 @@ export async function* parseSseStream(
 
 ```ts
 /**
- * Typed /client-ai API client. Every request carries the Breeze session token;
+ * Typed /client-ai API client. Every request carries the BL4CK session token;
  * a 401 triggers ONE single-flight re-exchange (auth/session.ts) + retry.
  * Contracts: Contract reconciliation section of this plan (Plan 2 / Plan 4 pins).
  */
@@ -4469,7 +4469,7 @@ export class ChatController {
       onPermanentError: () =>
         this.update({
           busy: false,
-          banner: { kind: 'error', text: 'Connection to Breeze lost. Reload the task pane.' },
+          banner: { kind: 'error', text: 'Connection to BL4CK lost. Reload the task pane.' },
         }),
     });
     return this.sessionId;
@@ -4988,7 +4988,7 @@ Replaces the Task 1 placeholder `App.tsx` with the real phase machine: `loading`
 export function SignInScreen({ failed, onSignIn }: { failed: boolean; onSignIn: () => void }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="text-base font-semibold text-gray-800">Breeze AI</div>
+      <div className="text-base font-semibold text-gray-800">BL4CK AI</div>
       <p className="text-sm text-gray-500">
         Sign in with your work account to use the AI assistant for this workbook.
       </p>
@@ -5077,7 +5077,7 @@ export function App() {
     case 'loading':
       return (
         <div className="flex h-screen items-center justify-center text-sm text-gray-400">
-          Connecting to Breeze…
+          Connecting to BL4CK…
         </div>
       );
     case 'signin':
@@ -5098,9 +5098,9 @@ export function App() {
 - [ ] **Step 3: Create `apps/office-addin/README.md`**
 
 ````markdown
-# Breeze AI for Office — Excel add-in
+# BL4CK AI for Office — Excel add-in
 
-Task-pane add-in delivering the governed Breeze AI assistant to MSP client
+Task-pane add-in delivering the governed BL4CK AI assistant to MSP client
 end-users inside Excel. Spec: `docs/superpowers/specs/2026-06-12-breeze-ai-for-office-design.md`.
 
 ## Prerequisites
@@ -5176,7 +5176,7 @@ git commit -m "feat(office-addin): auth phase machine, sign-in/blocked screens, 
 Playwright cannot drive Excel (spec §13) — the in-host behavior is verified by hand against a Plan 1–4 capable API. Work through the numbered list in order on BOTH hosts where marked; record results in the PR description. Prep: a dev Entra tenant mapped via `client_ai_tenant_mappings`, a second unmapped tenant, an org policy you can toggle (`enabled`, `writeMode`, a DLP block rule), and at least one prompt template row.
 
 - [ ] **0. CORS prerequisite** — add the add-in origin (`https://localhost:3000`) to the API's `CORS_ALLOWED_ORIGINS` and restart it. Sanity: a browser-tab fetch from the pane origin to `GET <api>/health` succeeds.
-- [ ] **1. Sideload — Excel desktop** — `pnpm dev`, sideload `manifest.xml` (README instructions). Ribbon shows the Breeze AI button; the pane opens and renders past "Connecting to Breeze…".
+- [ ] **1. Sideload — Excel desktop** — `pnpm dev`, sideload `manifest.xml` (README instructions). Ribbon shows the BL4CK AI button; the pane opens and renders past "Connecting to BL4CK…".
 - [ ] **2. Sideload — Excel on the web** — upload the same manifest. Pane loads over https with no mixed-content/CORS console errors.
 - [ ] **3. Silent SSO** — in a tenant with admin consent + the Office client app pre-authorized: open the pane → lands directly in chat with **no** sign-in UI. Verify a `client_ai.auth.exchange` success audit row.
 - [ ] **4. MSAL popup fallback** — in a consented tenant WITHOUT Office-client pre-authorization (or a fresh sideload where `getAccessToken` 13012s): pane shows the sign-in screen; the button opens the MSAL popup; completing it lands in chat.
@@ -5189,7 +5189,7 @@ Playwright cannot drive Excel (spec §13) — the in-host behavior is verified b
 - [ ] **11. Readonly org** — set `writeMode='readonly'`: ask for a write → NO `tool_request` for mutating tools ever arrives (Plan 2 removes write tools from the toolset); the model answers in text only; no approval card renders.
 - [ ] **12. Template insert** — with an empty thread, the template picker lists the seeded template; clicking inserts its body into the composer (not auto-sent).
 - [ ] **13. DLP block banner** — add a `block`-action DLP rule (e.g. credit cards), put a matching value in a cell, ask the model to read it: `tool_completed` arrives with `blockReason`, the purple "Blocked by your IT provider's data policy" banner renders, and the redaction badge appears on redact-action rules.
-- [ ] **14. 401 mid-session re-exchange** — delete the Breeze session token key from Redis while the pane is open, then send a message: the single-flight re-exchange runs silently (one new exchange audit row) and the message succeeds with no visible interruption.
+- [ ] **14. 401 mid-session re-exchange** — delete the BL4CK session token key from Redis while the pane is open, then send a message: the single-flight re-exchange runs silently (one new exchange audit row) and the message succeeds with no visible interruption.
 - [ ] **15. Network-loss reconnect** — kill the API (or drop the network) mid-turn, restore within ~30s: the stream reconnects with backoff, history resyncs via `GET /sessions/:id` (no duplicated/garbled thread), and chat continues.
 - [ ] **16. Idle ping keepalive** — leave the pane idle 3+ minutes: `ping` frames keep the SSE connection alive (network tab), no error banner, and the next message streams without reconnecting.
 

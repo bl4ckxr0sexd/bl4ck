@@ -1,13 +1,13 @@
-# Breeze AI for Office — Follow-ups / Backlog
+# BL4CK AI for Office — Follow-ups / Backlog
 
-Non-blocking enhancement ideas, mostly **parity with the Breeze Helper desktop app**.
+Non-blocking enhancement ideas, mostly **parity with the BL4CK Helper desktop app**.
 None of these are required for the initial PR (#1314) — they're asides captured while
 bringing Tier B up in Excel (2026-06-13).
 
 ## Parity-with-Helper features
 
 - [ ] **Chat / conversation history** — a persistent history view in the task pane so
-      users can revisit and resume prior threads (the Breeze Helper app has this).
+      users can revisit and resume prior threads (the BL4CK Helper app has this).
       **Open design question: workbook-tied vs per-user?**
       - *Workbook-tied* — a conversation belongs to the file it started in; reopen that
         workbook → resume its thread. Fits the "assistant for *this* spreadsheet" model
@@ -29,7 +29,7 @@ bringing Tier B up in Excel (2026-06-13).
 - [ ] **Logo / branding in the pane** — surface the org's branding logo to client
       end-users. The policy editor **already stores `branding.logo` (URL) + display name**
       (spec §11 white-label hook); the pane just needs to render it in the header/footer
-      so end-users see their MSP's brand, not "Breeze". Low-effort, high white-label value.
+      so end-users see their MSP's brand, not "BL4CK". Low-effort, high white-label value.
 
 ## Pane UX
 
@@ -41,7 +41,7 @@ bringing Tier B up in Excel (2026-06-13).
 
 - [ ] **Apply-level selector (auto / ask)** — let writes run in an **Auto** mode
       (apply changes without the per-write preview card) or **Ask** mode (current
-      approval-gated behavior), like the Breeze Helper tool-approval levels. UX: a small
+      approval-gated behavior), like the BL4CK Helper tool-approval levels. UX: a small
       toggle in the pane.
       - **Governance caveat:** approval-gating is part of the product's safety story, so
         Auto should be **policy-gated** — the MSP decides per org whether end-users may

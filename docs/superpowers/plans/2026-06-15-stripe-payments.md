@@ -4,7 +4,7 @@
 
 **Goal:** Let MSP partners authorize their own Stripe account and collect online card payment from their clients for invoices the engine produces, reconciling captured payments and reflected refunds back into the existing `invoice_payments` table.
 
-**Architecture:** Stripe Connect **Standard** accounts via OAuth; **direct charges** on the connected account (`Stripe-Account: acct_xxx`); **no platform fee** (Breeze never holds funds). Clients pay through **Stripe Hosted Checkout** (redirect) from the customer portal. A signature-verified webhook reconciles into `invoice_payments` via the engine's single `recomputeInvoiceStatus()` path. Refunds are **reflect-only** (`charge.refunded`). The Stripe↔invoice link lives only in a mapping table — never a `stripe_*` column on core tables.
+**Architecture:** Stripe Connect **Standard** accounts via OAuth; **direct charges** on the connected account (`Stripe-Account: acct_xxx`); **no platform fee** (BL4CK never holds funds). Clients pay through **Stripe Hosted Checkout** (redirect) from the customer portal. A signature-verified webhook reconciles into `invoice_payments` via the engine's single `recomputeInvoiceStatus()` path. Refunds are **reflect-only** (`charge.refunded`). The Stripe↔invoice link lives only in a mapping table — never a `stripe_*` column on core tables.
 
 **Tech Stack:** TypeScript, Hono, Drizzle ORM, PostgreSQL (RLS as `breeze_app`), BullMQ/Redis, Vitest, `stripe@^22` (already installed).
 

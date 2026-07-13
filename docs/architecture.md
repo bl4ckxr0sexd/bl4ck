@@ -1,4 +1,4 @@
-# Breeze RMM - Architecture Plan
+# BL4CK RMM - Architecture Plan
 
 ## Overview
 
@@ -16,7 +16,7 @@ A fast, modern Remote Monitoring and Management platform targeting MSPs and inte
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         BREEZE RMM                                  │
+│                         BL4CK RMM                                  │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │  Astro Frontend (SSR + React Islands)                       │   │

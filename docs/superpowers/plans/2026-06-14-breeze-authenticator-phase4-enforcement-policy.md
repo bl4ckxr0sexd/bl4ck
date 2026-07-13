@@ -1,4 +1,4 @@
-# Breeze Authenticator — Phase 4 (Enforcement + Org Policy) Implementation Plan
+# BL4CK Authenticator — Phase 4 (Enforcement + Org Policy) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or superpowers:executing-plans. Steps use `- [ ]`.
 
@@ -44,7 +44,7 @@ Commands: `cd /Users/toddhebebrand/breeze-worktrees/authenticator-phase1` · `PA
 - [ ] **Step 1: Failing tests** —
   - `loadPartnerPolicy(partnerId)` returns the row or null (mock `../db`).
   - `isEnforcing(policy, now)` → false when policy null, `requireEnrollment=false`, or `enforceFrom` in the future; true when `requireEnrollment=true` and (`enforceFrom` null or ≤ now).
-  - `validateRaiseOnly(overrides)` throws when any override is *below* the Breeze default floor (`DEFAULT_ASSURANCE_FLOOR`), passes when equal-or-higher.
+  - `validateRaiseOnly(overrides)` throws when any override is *below* the BL4CK default floor (`DEFAULT_ASSURANCE_FLOOR`), passes when equal-or-higher.
 
 - [ ] **Step 2: Run — FAIL.** **Step 3: Implement:**
 
@@ -70,11 +70,11 @@ export function isEnforcing(
   return true;
 }
 
-/** Reject any override that would WEAKEN the Breeze floor (raise-only). */
+/** Reject any override that would WEAKEN the BL4CK floor (raise-only). */
 export function validateRaiseOnly(overrides: AssuranceFloorOverrides): void {
   for (const [tier, level] of Object.entries(overrides) as [RiskTier, number][]) {
     if (level < DEFAULT_ASSURANCE_FLOOR[tier]) {
-      throw new Error(`override for '${tier}' (${level}) is below the Breeze floor (${DEFAULT_ASSURANCE_FLOOR[tier]})`);
+      throw new Error(`override for '${tier}' (${level}) is below the BL4CK floor (${DEFAULT_ASSURANCE_FLOOR[tier]})`);
     }
   }
 }
@@ -156,7 +156,7 @@ Extend the signature to `{ approvalId, userId, riskTier, proof?, pin?, partnerId
 
 **Files:** Create `apps/web/src/stores/authenticatorPolicy.ts`, `apps/web/src/components/settings/OrgApprovalSecurityTab.tsx`; modify `OrgSettingsPage.tsx` (+ a component test).
 
-- [ ] **Step 1: Failing test** — the tab loads the policy, renders a per-tier required-level control (low→critical, each ≥ Breeze floor), a `requireEnrollment` toggle, and an `enforceFrom` date; Save calls PUT via `runAction`; a weakening selection is prevented client-side. Mock the store; assert by `data-testid`.
+- [ ] **Step 1: Failing test** — the tab loads the policy, renders a per-tier required-level control (low→critical, each ≥ BL4CK floor), a `requireEnrollment` toggle, and an `enforceFrom` date; Save calls PUT via `runAction`; a weakening selection is prevented client-side. Mock the store; assert by `data-testid`.
 
 - [ ] **Step 2: Run — FAIL.** **Step 3: Implement:**
   - `stores/authenticatorPolicy.ts`: `getAuthenticatorPolicy()` / `putAuthenticatorPolicy(body)` via `fetchWithAuth`.

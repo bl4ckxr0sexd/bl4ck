@@ -17,9 +17,9 @@ PAM covers three kinds of elevation, all of which land in the same queue:
 
 | Flow | What it is |
 |---|---|
-| **UAC intercept** | A user hits a Windows UAC consent prompt; Breeze captures it and routes it for approval instead of letting the local password decide. |
+| **UAC intercept** | A user hits a Windows UAC consent prompt; BL4CK captures it and routes it for approval instead of letting the local password decide. |
 | **Tech JIT admin** | A technician requests temporary local-admin access on a device for hands-on work. |
-| **AI tool action** | A privileged action proposed by the Breeze AI agent (Brain) or Helper that requires a human to sign off before it runs. |
+| **AI tool action** | A privileged action proposed by the BL4CK AI agent (Brain) or Helper that requires a human to sign off before it runs. |
 
 <Aside type="tip">
   PAM never lets a request self-approve. An AI- or Helper-initiated elevation always defaults to **pending** -- waiting on a person -- so automation can never quietly relax its own approval. A UAC prompt with no matching rule follows the org's **Default verdict** (require approval by default; optionally auto-deny), never an auto-approval.
@@ -132,14 +132,14 @@ The flagship PAM flow turns a standard Windows UAC consent prompt into a governe
 
 1. A user on a managed Windows device does something that triggers a **UAC elevation prompt** (installing software, changing a system setting, and so on).
 
-2. The Breeze agent observes the prompt and creates an **elevation request** describing the executable -- its path, signer, hash, and the requesting user.
+2. The BL4CK agent observes the prompt and creates an **elevation request** describing the executable -- its path, signer, hash, and the requesting user.
 
 3. PAM evaluates the request. If a rule auto-approves or auto-denies it, the decision is instant. Otherwise the request becomes **pending** and is routed to an approver.
 
 4. The approver makes the call from any of three surfaces:
    - The **Privileged Access console** in the web dashboard (Requests tab).
    - The **Helper desktop app**, which raises a native approval dialog on the user's own screen.
-   - The **mobile app**, which renders the elevation -- showing the executable, signer, and the requester's reason -- with biometric step-up. When a UAC elevation lands in the pending queue, Breeze pushes it to the phones of every technician eligible to approve it; the first to approve or deny on mobile decides it, and the request clears from the other approvers' inboxes.
+   - The **mobile app**, which renders the elevation -- showing the executable, signer, and the requester's reason -- with biometric step-up. When a UAC elevation lands in the pending queue, BL4CK pushes it to the phones of every technician eligible to approve it; the first to approve or deny on mobile decides it, and the request clears from the other approvers' inboxes.
 
 5. On approval, a **just-in-time admin window** opens for the granted duration. On denial, the elevation is blocked.
 
@@ -232,7 +232,7 @@ Each row names the decider -- the approver or denier by name for human decisions
 PAM's UAC-intercept flow interacts with whatever else is installed on the endpoint, because it works with the live Windows `consent.exe` prompt. Before enabling capture broadly on a fleet that also runs another vendor's agent, validate the interaction on a pilot group.
 
 <Aside type="caution">
-  There is a documented, production-breaking interaction between the **N-able N-Central agent** and `consent.exe` on idle or locked machines: UAC prompts accept credentials and then hang for **4-5 minutes** because of a deadlock in N-able's signature-verification hooks (Microsoft Q&A 5733506). This is an N-able issue addressed by their `Framework.dll` hotfixes, but any UAC-touching code -- including Breeze PAM -- shares the same surface. If your customers run N-Central concurrently, test PAM against it before turning capture on org-wide, and keep the [per-scope disable](#per-organization-and-per-device-overrides) switch in mind as an immediate mitigation.
+  There is a documented, production-breaking interaction between the **N-able N-Central agent** and `consent.exe` on idle or locked machines: UAC prompts accept credentials and then hang for **4-5 minutes** because of a deadlock in N-able's signature-verification hooks (Microsoft Q&A 5733506). This is an N-able issue addressed by their `Framework.dll` hotfixes, but any UAC-touching code -- including BL4CK PAM -- shares the same surface. If your customers run N-Central concurrently, test PAM against it before turning capture on org-wide, and keep the [per-scope disable](#per-organization-and-per-device-overrides) switch in mind as an immediate mitigation.
 </Aside>
 
 ### Platform support

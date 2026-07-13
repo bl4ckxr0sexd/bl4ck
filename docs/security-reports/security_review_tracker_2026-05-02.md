@@ -5,7 +5,7 @@ Mode: parallel focused defensive review
 
 ## Scope
 
-This tracker records rolling security-review work across the highest-risk Breeze surfaces:
+This tracker records rolling security-review work across the highest-risk BL4CK surfaces:
 
 1. Remote access, tunnels, WebSocket tickets, and session lifecycle.
 2. Public installer, download, enrollment, and bootstrap token paths.
@@ -61,7 +61,7 @@ Recommended next step:
 - If not, exclude clients with partner grant rows or active token/grant rows from stale cleanup and add regression tests.
 
 Second-pass validation:
-- Confirmed normal OAuth client use does not update `oauth_clients.last_used_at`; oidc-provider uses client find paths, while Breeze only stamps `lastUsedAt` on `Client.upsert()` conflict.
+- Confirmed normal OAuth client use does not update `oauth_clients.last_used_at`; oidc-provider uses client find paths, while BL4CK only stamps `lastUsedAt` on `Client.upsert()` conflict.
 - Cleanup currently deletes old rows with `last_used_at IS NULL` and `partner_id IS NULL`, but consent writes `oauth_client_partner_grants` rather than `oauth_clients.partner_id`.
 - Deleting the OAuth client cascades partner grants, auth codes, refresh tokens, and grants.
 
@@ -961,7 +961,7 @@ Evidence summary:
 - Backup provider config includes storage credentials such as S3 access keys and secret keys.
 
 Impact:
-- Any user with organization read access may receive direct backup storage credentials, enabling bucket access outside Breeze.
+- Any user with organization read access may receive direct backup storage credentials, enabling bucket access outside BL4CK.
 
 Recommended next step:
 - Store provider secrets encrypted or in a secret manager.
@@ -1149,7 +1149,7 @@ Impact:
 - API/DB/admin compromise can persist arbitrary code across the fleet through matching checksums.
 
 Recommended next step:
-- Require offline signed manifests or platform code-signature verification pinned to Breeze publisher identity.
+- Require offline signed manifests or platform code-signature verification pinned to BL4CK publisher identity.
 - Reject invalid release signatures, especially macOS fallback ad-hoc signing.
 - Add tests that DB-matching checksums with invalid signatures are rejected.
 
@@ -1183,8 +1183,8 @@ Impact:
 - A policy writer can exfiltrate secrets from root-readable key/value files into the DB/UI.
 
 Recommended next step:
-- Allowlist safe paths/keys, block Breeze config/secrets and sensitive key names, and redact token/password patterns before persistence.
-- Add tests for blocked Breeze config paths and non-allowlisted paths.
+- Allowlist safe paths/keys, block BL4CK config/secrets and sensitive key names, and redact token/password patterns before persistence.
+- Add tests for blocked BL4CK config paths and non-allowlisted paths.
 
 Wave J validation:
 - Covered by agent/API allowlisting, unsafe probe dropping, and focused policy-probe safety tests.
@@ -1285,7 +1285,7 @@ Evidence summary:
 - `safeFetch` reportedly preserves caller-supplied `Host`.
 
 Impact:
-- Users can spoof Breeze metadata headers or set transport/hop-by-hop headers, confusing receivers or enabling vhost/proxy abuse.
+- Users can spoof BL4CK metadata headers or set transport/hop-by-hop headers, confusing receivers or enabling vhost/proxy abuse.
 
 Recommended next step:
 - Validate header names as RFC tokens, reject control characters, and deny reserved/hop-by-hop names including `host`, `content-length`, `transfer-encoding`, `connection`, and `x-breeze-*`.
@@ -2458,7 +2458,7 @@ Evidence summary:
 - Helper opens configured portal URLs through shell without app-level scheme/origin validation.
 
 Impact:
-- Bad `portal_url` values can trigger unexpected external protocols rather than only Breeze portal URLs.
+- Bad `portal_url` values can trigger unexpected external protocols rather than only BL4CK portal URLs.
 
 Recommended next step:
 - Allow only approved HTTPS origins before shell open.
@@ -2653,7 +2653,7 @@ Evidence summary:
 - macOS install scripts reportedly create group `breeze` with hard-coded GID 399.
 
 Impact:
-- GID collisions can grant Breeze ACL access to unrelated group members or break group isolation.
+- GID collisions can grant BL4CK ACL access to unrelated group members or break group isolation.
 
 Recommended next step:
 - Allocate a free system GID or use directory service APIs without hard-coded `PrimaryGroupID`.
@@ -2796,7 +2796,7 @@ Evidence summary:
 - Snapshot rows reference encryption key ID, and docs claim keys are stored encrypted and used for restore.
 
 Impact:
-- Breeze records backup key metadata but does not manage decryptable key material; rotation/deactivation cannot guarantee restore of snapshots tied to old keys.
+- BL4CK records backup key metadata but does not manage decryptable key material; rotation/deactivation cannot guarantee restore of snapshots tied to old keys.
 
 Recommended next step:
 - Define key ownership: BYOK public-key only with client-held private keys, or server-managed wrapped DEKs/KEKs.
@@ -2828,7 +2828,7 @@ Evidence summary:
 - Viewer-token ICE endpoint permits disconnected sessions.
 
 Impact:
-- A valid Breeze user or leaked viewer token can mint reusable TURN credentials and use coturn as a general relay for up to 24 hours.
+- A valid BL4CK user or leaked viewer token can mint reusable TURN credentials and use coturn as a general relay for up to 24 hours.
 
 Recommended next step:
 - Require active remote session and remote-desktop permission before issuing TURN credentials.

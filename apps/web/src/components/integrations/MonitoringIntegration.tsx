@@ -474,7 +474,7 @@ export default function MonitoringIntegration() {
               <div>
                 <h2 className="text-lg font-semibold">Prometheus</h2>
                 <p className="text-sm text-muted-foreground">
-                  Publish Breeze metrics with custom scrape settings.
+                  Publish BL4CK metrics with custom scrape settings.
                 </p>
               </div>
             </div>
@@ -549,7 +549,7 @@ export default function MonitoringIntegration() {
               <div>
                 <h2 className="text-lg font-semibold">Grafana</h2>
                 <p className="text-sm text-muted-foreground">
-                  Link dashboards and enable deep links from Breeze.
+                  Link dashboards and enable deep links from BL4CK.
                 </p>
               </div>
             </div>

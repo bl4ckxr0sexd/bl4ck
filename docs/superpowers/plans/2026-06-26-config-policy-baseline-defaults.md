@@ -1,10 +1,10 @@
-# Config Policy Baseline "Breeze Defaults" Implementation Plan
+# Config Policy Baseline "BL4CK Defaults" Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Surface a read-only, virtual "Breeze Defaults" baseline at the bottom of the configuration-policy hierarchy so admins can see how unassigned devices behave out of the box, sourced from a single canonical defaults module.
+**Goal:** Surface a read-only, virtual "BL4CK Defaults" baseline at the bottom of the configuration-policy hierarchy so admins can see how unassigned devices behave out of the box, sourced from a single canonical defaults module.
 
-**Architecture:** A new canonical defaults module (`policyBaselineDefaults.ts`) becomes the single source of truth for the applied no-policy defaults (`remote_access`, `pam`); the live enforcement paths import from it. `resolveEffectiveConfig` gains an opt-in `includeBaseline` flag that synthesizes a `sourceLevel: 'default'` layer for unconfigured features (existing callers unchanged). A new read-only `GET /baseline` endpoint and a dedicated web page surface the full registry; the per-device effective-config view labels fall-through features as "Breeze Defaults".
+**Architecture:** A new canonical defaults module (`policyBaselineDefaults.ts`) becomes the single source of truth for the applied no-policy defaults (`remote_access`, `pam`); the live enforcement paths import from it. `resolveEffectiveConfig` gains an opt-in `includeBaseline` flag that synthesizes a `sourceLevel: 'default'` layer for unconfigured features (existing callers unchanged). A new read-only `GET /baseline` endpoint and a dedicated web page surface the full registry; the per-device effective-config view labels fall-through features as "BL4CK Defaults".
 
 **Tech Stack:** Hono (API), Drizzle (no schema changes — baseline is virtual), Vitest (API), Astro + React + Tailwind + lucide-react (web), Vitest + jsdom (web).
 
@@ -116,7 +116,7 @@ Expected: FAIL — cannot resolve `./policyBaselineDefaults`.
 Create `apps/api/src/services/policyBaselineDefaults.ts`:
 ```ts
 /**
- * Canonical "Breeze Defaults" — the single source of truth for how an UNASSIGNED
+ * Canonical "BL4CK Defaults" — the single source of truth for how an UNASSIGNED
  * device behaves (no config policy anywhere in its hierarchy). Surfaced read-only
  * in the UI as the bottom of the assignment hierarchy (#1725).
  *
@@ -182,7 +182,7 @@ const NOT_ENFORCED: Record<Exclude<ConfigFeatureType, 'remote_access' | 'pam'>, 
   sensitive_data:    { label: 'Data Discovery',     behavior: 'Not enforced — no sensitive-data scans run.' },
   peripheral_control:{ label: 'Peripheral Control', behavior: 'Not enforced — peripherals are unrestricted.' },
   warranty:          { label: 'Warranty',           behavior: 'Not enforced — no warranty alerts apply.' },
-  helper:            { label: 'Breeze Assist',      behavior: 'Not enforced — Breeze Assist uses its built-in defaults.' },
+  helper:            { label: 'BL4CK Assist',      behavior: 'Not enforced — BL4CK Assist uses its built-in defaults.' },
   onedrive_helper:   { label: 'OneDrive Helper',    behavior: 'Not enforced — no OneDrive helper config applies.' },
 };
 
@@ -387,7 +387,7 @@ Adds the opt-in synthetic `'default'` layer to the resolver. Default off → exi
   - `ResolvedFeature.sourceLevel: ConfigAssignmentLevel | 'default'`
   - `EffectiveConfiguration.inheritanceChain[].level: ConfigAssignmentLevel | 'default'`
   - `resolveEffectiveConfig(deviceId, auth, opts?: { includeBaseline?: boolean })`
-  - When `includeBaseline` is true: every `ConfigFeatureType` absent from real winners gets a synthetic `ResolvedFeature` with `sourceLevel: 'default'`, `sourcePolicyId: 'breeze-defaults'`, `sourcePolicyName: 'Breeze Defaults'`, `sourceTargetId: 'breeze-defaults'`, `sourcePriority: 0`, `featurePolicyId: null`, `inlineSettings` from the baseline entry (or `null` for not-enforced). A single inheritance-chain node `{ level: 'default', policyId: 'breeze-defaults', policyName: 'Breeze Defaults', targetId: 'breeze-defaults', priority: 0, featureTypes: [<all synthesized types>] }` is appended last.
+  - When `includeBaseline` is true: every `ConfigFeatureType` absent from real winners gets a synthetic `ResolvedFeature` with `sourceLevel: 'default'`, `sourcePolicyId: 'breeze-defaults'`, `sourcePolicyName: 'BL4CK Defaults'`, `sourceTargetId: 'breeze-defaults'`, `sourcePriority: 0`, `featurePolicyId: null`, `inlineSettings` from the baseline entry (or `null` for not-enforced). A single inheritance-chain node `{ level: 'default', policyId: 'breeze-defaults', policyName: 'BL4CK Defaults', targetId: 'breeze-defaults', priority: 0, featureTypes: [<all synthesized types>] }` is appended last.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -441,13 +441,13 @@ describe('resolveEffectiveConfig includeBaseline', () => {
     expect(r).not.toBeNull();
     const ra = r!.features.remote_access;
     expect(ra.sourceLevel).toBe('default');
-    expect(ra.sourcePolicyName).toBe('Breeze Defaults');
+    expect(ra.sourcePolicyName).toBe('BL4CK Defaults');
     expect((ra.inlineSettings as Record<string, unknown>).webrtcDesktop).toBe(true);
     expect(r!.features.patch.sourceLevel).toBe('default');
     expect(r!.features.patch.inlineSettings).toBeNull();
     const defaultNode = r!.inheritanceChain.find((n) => n.level === 'default');
     expect(defaultNode).toBeTruthy();
-    expect(defaultNode!.policyName).toBe('Breeze Defaults');
+    expect(defaultNode!.policyName).toBe('BL4CK Defaults');
   });
 });
 ```
@@ -512,7 +512,7 @@ Then replace the final `return { deviceId, features, inheritanceChain };` (line 
         sourceLevel: 'default',
         sourceTargetId: 'breeze-defaults',
         sourcePolicyId: 'breeze-defaults',
-        sourcePolicyName: 'Breeze Defaults',
+        sourcePolicyName: 'BL4CK Defaults',
         sourcePriority: 0,
       };
       synthesized.push(entry.featureType);
@@ -522,7 +522,7 @@ Then replace the final `return { deviceId, features, inheritanceChain };` (line 
         level: 'default',
         targetId: 'breeze-defaults',
         policyId: 'breeze-defaults',
-        policyName: 'Breeze Defaults',
+        policyName: 'BL4CK Defaults',
         priority: 0,
         featureTypes: synthesized,
       });
@@ -605,7 +605,7 @@ import { getPolicyBaselineDefaults } from '../../services/policyBaselineDefaults
 ```
 Add the route after the `resolutionRoutes` / `requireConfigPolicyRead` declarations (before `GET /effective/:deviceId`):
 ```ts
-// GET /baseline — static "Breeze Defaults" registry (read-only, no tenant data)
+// GET /baseline — static "BL4CK Defaults" registry (read-only, no tenant data)
 resolutionRoutes.get(
   '/baseline',
   requireScope('organization', 'partner', 'system'),
@@ -636,7 +636,7 @@ git commit -m "feat(config-policy): /baseline endpoint + baseline on /effective 
 
 ---
 
-### Task 6: Web — dedicated read-only "Breeze Defaults" page
+### Task 6: Web — dedicated read-only "BL4CK Defaults" page
 
 Lists every feature's baseline value + behavior with a "Create override policy" deep-link per row.
 
@@ -772,7 +772,7 @@ export default function BreezeDefaultsPage() {
           <Layers className="h-5 w-5" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Breeze Defaults</h2>
+          <h2 className="text-lg font-semibold">BL4CK Defaults</h2>
           <p className="text-sm text-muted-foreground">
             How devices behave out of the box with no configuration policy assigned. These are
             read-only — create a policy to override any of them.
@@ -827,7 +827,7 @@ import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import BreezeDefaultsPage from '../../components/configurationPolicies/BreezeDefaultsPage';
 ---
 
-<DashboardLayout title="Breeze Defaults">
+<DashboardLayout title="BL4CK Defaults">
   <BreezeDefaultsPage client:load />
 </DashboardLayout>
 ```
@@ -841,7 +841,7 @@ In `apps/web/src/components/configurationPolicies/ConfigurationPoliciesPage.tsx`
   className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted"
 >
   <Layers className="h-4 w-4" />
-  Breeze Defaults
+  BL4CK Defaults
 </a>
 ```
 
@@ -854,14 +854,14 @@ Expected: test PASS; `astro check` no new errors. (Note: `astro check` does not 
 
 ```bash
 git add apps/web/src/components/configurationPolicies/BreezeDefaultsPage.tsx apps/web/src/components/configurationPolicies/BreezeDefaultsPage.test.tsx apps/web/src/pages/configuration-policies/defaults.astro apps/web/src/components/configurationPolicies/ConfigurationPoliciesPage.tsx
-git commit -m "feat(web): read-only Breeze Defaults page (#1725)"
+git commit -m "feat(web): read-only BL4CK Defaults page (#1725)"
 ```
 
 ---
 
 ### Task 7: Web — label baseline source in the per-device effective-config view
 
-When a feature resolves from the baseline, the device's Effective Configuration tab shows "Breeze Defaults" as the source instead of "No policy assigned", and the "assigned policies" count excludes the synthetic default node.
+When a feature resolves from the baseline, the device's Effective Configuration tab shows "BL4CK Defaults" as the source instead of "No policy assigned", and the "assigned policies" count excludes the synthetic default node.
 
 **Files:**
 - Modify: `apps/web/src/components/devices/DeviceEffectiveConfigTab.tsx`
@@ -882,11 +882,11 @@ import DeviceEffectiveConfigTab from './DeviceEffectiveConfigTab';
 const baselineResponse = {
   deviceId: 'dev-1',
   features: {
-    patch: { featureType: 'patch', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'Breeze Defaults', sourcePriority: 0 },
-    alert_rule: { featureType: 'alert_rule', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'Breeze Defaults', sourcePriority: 0 },
+    patch: { featureType: 'patch', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'BL4CK Defaults', sourcePriority: 0 },
+    alert_rule: { featureType: 'alert_rule', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'BL4CK Defaults', sourcePriority: 0 },
   },
   inheritanceChain: [
-    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'Breeze Defaults', priority: 0, featureTypes: ['patch', 'alert_rule'] },
+    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'BL4CK Defaults', priority: 0, featureTypes: ['patch', 'alert_rule'] },
   ],
 };
 
@@ -897,7 +897,7 @@ vi.mock('../../stores/auth', () => ({
 describe('DeviceEffectiveConfigTab baseline labeling', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows Breeze Defaults as the source for baseline features', async () => {
+  it('shows BL4CK Defaults as the source for baseline features', async () => {
     render(<DeviceEffectiveConfigTab deviceId="dev-1" />);
     await waitFor(() => expect(screen.getAllByText(/Breeze Defaults/).length).toBeGreaterThan(0));
   });
@@ -926,7 +926,7 @@ type AssignmentLevel = 'partner' | 'organization' | 'site' | 'device_group' | 'd
 (b) Add the label (in `LEVEL_LABELS`, after `device`):
 ```ts
   device: 'Device',
-  default: 'Breeze Defaults',
+  default: 'BL4CK Defaults',
 ```
 
 (c) The header at lines 207-212 counts `inheritanceChain.length` as "assigned policies". Exclude the synthetic default node. Replace the count expression. Just before the `return (` at line 202, add:
@@ -945,17 +945,17 @@ Then in the header text (lines 209-212) replace `inheritanceChain.length` with `
   const hasRealFeatures = data ? Object.values(data.features).some((f) => f.sourceLevel !== 'default') : false;
   if (!data || !hasRealFeatures) {
 ```
-Keep the existing empty-state JSX, but add a link to the new Breeze Defaults page inside it (after the existing "Go to Config Policies" anchor):
+Keep the existing empty-state JSX, but add a link to the new BL4CK Defaults page inside it (after the existing "Go to Config Policies" anchor):
 ```tsx
         <a
           href="/configuration-policies/defaults"
           className="mt-2 inline-block text-sm font-medium text-primary hover:underline"
         >
-          View Breeze Defaults
+          View BL4CK Defaults
         </a>
 ```
 
-> The inheritance-chain table already renders any level via `LEVEL_LABELS[entry.level]` and `FEATURE_META[ft]?.label ?? ft`, so the `'default'` node renders without further change once the label exists. Baseline features for the 8 shown types now appear in the "configured" grid with source "Breeze Defaults".
+> The inheritance-chain table already renders any level via `LEVEL_LABELS[entry.level]` and `FEATURE_META[ft]?.label ?? ft`, so the `'default'` node renders without further change once the label exists. Baseline features for the 8 shown types now appear in the "configured" grid with source "BL4CK Defaults".
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -973,7 +973,7 @@ Run: `pnpm --filter @breeze/web exec astro check`
 Expected: no new errors.
 ```bash
 git add apps/web/src/components/devices/DeviceEffectiveConfigTab.tsx apps/web/src/components/devices/DeviceEffectiveConfigTab.test.tsx
-git commit -m "feat(web): label Breeze Defaults source in device effective-config (#1725)"
+git commit -m "feat(web): label BL4CK Defaults source in device effective-config (#1725)"
 ```
 
 ---
@@ -1015,10 +1015,10 @@ git status
 
 These confirm the user-facing behavior the issue asked for. Run against a local stack with at least one device.
 
-1. Navigate to **Configuration Policies → Breeze Defaults**. Confirm Remote Access shows **"Active default"** with `webrtc desktop: on`, `vnc relay: on`, `remote tools: on`; confirm Patches/Alerts/etc. show **"Not enforced"**; confirm each row has a **Create override policy** link.
+1. Navigate to **Configuration Policies → BL4CK Defaults**. Confirm Remote Access shows **"Active default"** with `webrtc desktop: on`, `vnc relay: on`, `remote tools: on`; confirm Patches/Alerts/etc. show **"Not enforced"**; confirm each row has a **Create override policy** link.
 2. Click **Create override policy** on Patches → lands on the new-policy page with `?feature=patch`.
-3. Open a device with **no** assigned policies → **Effective Configuration** tab → confirm the empty-state offers **View Breeze Defaults**, OR (depending on whether the device shows the 8 tracked features) the tracked features show source **"Breeze Defaults"** and the inheritance chain has a **Breeze Defaults** row; header reads **"0 assigned policies"**.
-4. Assign a real policy with a patch feature to that device → confirm Patch now shows the real policy as source (baseline no longer wins for patch), while still-unconfigured features show Breeze Defaults.
+3. Open a device with **no** assigned policies → **Effective Configuration** tab → confirm the empty-state offers **View BL4CK Defaults**, OR (depending on whether the device shows the 8 tracked features) the tracked features show source **"BL4CK Defaults"** and the inheritance chain has a **BL4CK Defaults** row; header reads **"0 assigned policies"**.
+4. Assign a real policy with a patch feature to that device → confirm Patch now shows the real policy as source (baseline no longer wins for patch), while still-unconfigured features show BL4CK Defaults.
 
 ## Out of scope (do not implement here)
 

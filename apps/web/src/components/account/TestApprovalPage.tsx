@@ -68,7 +68,7 @@ export default function TestApprovalPage() {
         </a>
         <h1 className="text-2xl font-semibold tracking-tight">Test the approval flow</h1>
         <p className="text-sm text-muted-foreground">
-          Send a sandbox approval push to your own Breeze Mobile devices. Tapping the push will
+          Send a sandbox approval push to your own BL4CK Mobile devices. Tapping the push will
           take over your phone with the approval screen for 60 seconds. Approving or denying does
           not run any real action — it's purely for testing.
         </p>
@@ -141,7 +141,7 @@ export default function TestApprovalPage() {
           >
             <ShieldAlert className="mt-0.5 h-4 w-4 flex-none" aria-hidden />
             <p>
-              We don't see a registered Breeze Mobile device on your account. Sign in to the app
+              We don't see a registered BL4CK Mobile device on your account. Sign in to the app
               at least once, then try again.
             </p>
           </div>

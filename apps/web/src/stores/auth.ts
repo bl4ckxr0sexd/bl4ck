@@ -433,7 +433,7 @@ export async function restoreAccessTokenFromCookie(): Promise<boolean> {
 /**
  * Bootstraps the auth store after a Cloudflare Access redirect login.
  *
- * The server's GET /api/v1/auth/cf-access-login endpoint mints a Breeze
+ * The server's GET /api/v1/auth/cf-access-login endpoint mints a BL4CK
  * session and sets the HttpOnly refresh cookie, but there's no JSON body
  * for the SPA to consume since it's a 302 redirect. This helper completes
  * the handshake:

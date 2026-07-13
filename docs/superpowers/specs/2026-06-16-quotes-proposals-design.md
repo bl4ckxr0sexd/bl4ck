@@ -6,7 +6,7 @@
 
 ## Summary
 
-A new **Quotes** (Proposals) subsystem for Breeze RMM, modeled on the existing
+A new **Quotes** (Proposals) subsystem for BL4CK RMM, modeled on the existing
 Invoices system and reusing the shared catalog picker, pdfkit PDF/email
 machinery, and the Stripe pay-link flow. A quote is a richer document than an
 invoice: alongside line items it carries an **ordered list of content blocks**

@@ -552,7 +552,7 @@ export default function AssetDetailModal({
             <div className="rounded-md border bg-muted/30 p-4">
               <h3 className="text-sm font-semibold">Link to managed device</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Associate this discovered asset with an existing agent-managed device so Breeze
+                Associate this discovered asset with an existing agent-managed device so BL4CK
                 treats them as the same machine. This does not install an agent or create a new
                 device. The asset will be marked as approved.
               </p>

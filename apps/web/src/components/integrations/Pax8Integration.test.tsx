@@ -229,7 +229,7 @@ describe('Pax8Integration', () => {
     expect(showToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
   });
 
-  it('maps a Pax8 company to a Breeze org and posts the mapping', async () => {
+  it('maps a Pax8 company to a BL4CK org and posts the mapping', async () => {
     fetchWithAuth.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === '/pax8/companies/map' && init?.method === 'POST') {
         return jsonResponse({ data: { ...company, mappedOrgId: breezeOrg.id, mappedOrgName: breezeOrg.name } });

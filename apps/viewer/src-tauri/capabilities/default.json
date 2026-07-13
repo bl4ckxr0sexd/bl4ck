@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default permissions for Breeze Viewer",
+  "description": "Default permissions for BL4CK Viewer",
   "windows": ["main", "session-*"],
   "permissions": [
     "core:default",

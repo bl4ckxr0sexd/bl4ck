@@ -11,7 +11,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 A backup you can't restore is worthless. The Verification tab helps you continuously validate that your backups are recoverable and measure how prepared each device is for a recovery scenario.
 
 <Aside type="note">
-  Verification is a live agent operation. The target device must be online and connected to Breeze before an integrity check or test restore can start.
+  Verification is a live agent operation. The target device must be online and connected to BL4CK before an integrity check or test restore can start.
 </Aside>
 
 ---
@@ -35,7 +35,7 @@ Go to **Operations > Backup > Verification** to access verification controls.
 5. When complete, the status updates to **Passed**, **Failed**, or **Partial**.
 </Steps>
 
-If the device is offline, Breeze shows `Device is offline. Verification requires a connected agent.` and the verification buttons stay disabled. If command dispatch fails for another reason, Breeze shows the dispatch error and lets you retry after the underlying issue is fixed.
+If the device is offline, BL4CK shows `Device is offline. Verification requires a connected agent.` and the verification buttons stay disabled. If command dispatch fails for another reason, BL4CK shows the dispatch error and lets you retry after the underlying issue is fixed.
 
 ### Verification History
 
@@ -50,7 +50,7 @@ The history table shows all past verifications with:
 
 ## Automated Verification
 
-Breeze runs verifications automatically on a schedule:
+BL4CK runs verifications automatically on a schedule:
 
 | Check | Frequency | What it does |
 |-------|-----------|-------------|
@@ -59,7 +59,7 @@ Breeze runs verifications automatically on a schedule:
 | **Readiness score recalculation** | Daily at 02:00 UTC | Updates recovery readiness scores for all devices |
 | **Timeout detection** | Every 5 minutes | Flags verifications that have been running too long |
 
-No setup is needed — automated verifications run as soon as backup is configured. If a device is offline when a scheduled verification window arrives, Breeze skips that run and logs the skip instead of creating a synthetic verification record.
+No setup is needed — automated verifications run as soon as backup is configured. If a device is offline when a scheduled verification window arrives, BL4CK skips that run and logs the skip instead of creating a synthetic verification record.
 
 ---
 
@@ -105,4 +105,4 @@ The Verification tab also shows an organization-wide health summary:
 
 Use this as a quick indicator of overall backup posture.
 
-If the overview shows **No verification history**, that means Breeze has no completed live verification for the device yet. Run a real verification once the device is online to populate readiness and recent-failure history.
+If the overview shows **No verification history**, that means BL4CK has no completed live verification for the device yet. Run a real verification once the device is online to populate readiness and recent-failure history.

@@ -1,6 +1,6 @@
 # Compliance Coverage
 
-This document summarizes Breeze compliance controls and API surfaces used for audit workflows.
+This document summarizes BL4CK compliance controls and API surfaces used for audit workflows.
 
 ## SOC Program Walkthrough
 
@@ -11,7 +11,7 @@ This document summarizes Breeze compliance controls and API surfaces used for au
 
 - Evidence index and monthly tracker:
   - `docs/notes/SOC_AVAILABILITY_EVIDENCE_INDEX.md`
-- Processing capacity notes for Breeze application infrastructure:
+- Processing capacity notes for BL4CK application infrastructure:
   - `docs/notes/SOC_A1.1_CAPACITY_NOTES.md`
 - Recovery objectives notes (DigitalOcean-focused planning):
   - `docs/notes/SOC_A1.2_RECOVERY_OBJECTIVES_NOTES.md`
@@ -27,7 +27,7 @@ This document summarizes Breeze compliance controls and API surfaces used for au
 
 ## CIS Configuration Hardening
 
-Breeze supports CIS benchmark posture tracking and controlled remediation through `/api/v1/cis/*`.
+BL4CK supports CIS benchmark posture tracking and controlled remediation through `/api/v1/cis/*`.
 
 ### Coverage
 

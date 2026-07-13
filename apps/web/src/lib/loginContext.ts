@@ -24,7 +24,7 @@ async function fetchLoginContext(): Promise<LoginContext> {
     const body = (await res.json()) as Partial<LoginContext>;
     return { branding: body.branding ?? null, partnerSso: body.partnerSso ?? null };
   } catch (err) {
-    // Fail open to stock Breeze branding — but leave a trace, or a
+    // Fail open to stock BL4CK branding — but leave a trace, or a
     // deployment-wide config/CORS regression silently disables the feature
     // fleet-wide with no signal.
     console.warn('[login] login-context fetch failed; falling back to stock branding', err);

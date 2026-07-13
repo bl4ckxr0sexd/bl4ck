@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/breeze-logo.png" alt="Breeze" width="120" />
+  <img src="docs/assets/breeze-logo.png" alt="BL4CK" width="120" />
 </p>
 
-<h1 align="center">Breeze</h1>
+<h1 align="center">BL4CK</h1>
 
 <p align="center">
   <strong>The open source, AI-native RMM.</strong><br/>
@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/breeze-ai-demo.gif" alt="Breeze AI Demo — Check a device's health" width="800" />
+  <img src="docs/breeze-ai-demo.gif" alt="BL4CK AI Demo — Check a device's health" width="800" />
 </p>
 
 <p align="center">
@@ -44,7 +44,7 @@ This is a self-hosting fork of [LanternOps/breeze](https://github.com/lanternops
 - **Reusable installers** — a single downloaded Windows/macOS installer can enroll **many devices** instead of dying after the first install.
 - **Long-lived installers** — installers stay valid for **~365 days** instead of the stock 1 hour, so you can save one file and reuse it.
 
-Everything else is stock Breeze (AGPL-3.0). See [What changed](#what-changed-in-this-fork) for the exact diff and knobs.
+Everything else is stock BL4CK (AGPL-3.0). See [What changed](#what-changed-in-this-fork) for the exact diff and knobs.
 
 ### One-command setup
 
@@ -81,7 +81,7 @@ or fully non-interactive:
 
 ### What changed in this fork
 
-| Area | Stock Breeze | This fork |
+| Area | Stock BL4CK | This fork |
 |---|---|---|
 | Installer reuse | 1 device per installer | Unlimited devices per installer (`CHILD_ENROLLMENT_KEY_MAX_USAGE=unlimited`) |
 | Installer lifetime | ~1 hour | ~365 days (`*_TTL_MINUTES=525600`) |
@@ -102,15 +102,15 @@ or fully non-interactive:
 
 ---
 
-## What is Breeze?
+## What is BL4CK?
 
-Breeze is a full-featured remote monitoring and management platform with AI built into its core — not bolted on as an afterthought.
+BL4CK is a full-featured remote monitoring and management platform with AI built into its core — not bolted on as an afterthought.
 
-Software features are exploding, but people can't keep up. Every RMM on the market adds more buttons, more tabs, more dashboards. Breeze takes a different approach: **an AI agent that actually uses the features for you.** It investigates alerts, remediates issues, documents what it did, and only bothers you when it needs a human decision.
+Software features are exploding, but people can't keep up. Every RMM on the market adds more buttons, more tabs, more dashboards. BL4CK takes a different approach: **an AI agent that actually uses the features for you.** It investigates alerts, remediates issues, documents what it did, and only bothers you when it needs a human decision.
 
-Breeze is free, open source (AGPL-3.0), and designed to be self-hosted or [cloud-hosted at breezermm.com](https://breezermm.com).
+BL4CK is free, open source (AGPL-3.0), and designed to be self-hosted or [cloud-hosted at breezermm.com](https://breezermm.com).
 
-### Why Breeze?
+### Why BL4CK?
 
 - **AI-native, not AI-added.** Every page has an AI assistant that can see what you see and take action using built-in tools. Not a chatbot — an agent.
 - **Lightweight agent.** Single Go binary. Cross-platform. Minimal resource footprint. Your clients won't notice it's there.
@@ -122,7 +122,7 @@ Breeze is free, open source (AGPL-3.0), and designed to be self-hosted or [cloud
 
 ## Security
 
-Breeze has privileged access to every device it manages. We take that seriously.
+BL4CK has privileged access to every device it manages. We take that seriously.
 
 | Layer | What We Do |
 |---|---|
@@ -190,7 +190,7 @@ To report a vulnerability: **[security@lanternops.io](mailto:security@lanternops
 - **Bring your own key** — Plug in your Anthropic API key and the brain works out of the box
 - **External AI agents via MCP** — Or connect Claude.ai, ChatGPT, Cursor through the built-in MCP server with OAuth 2.1 + PKCE
 
-> **🧠 [LanternOps Brain](https://lanternops.io)** — Want persistent memory, cross-tenant intelligence, automated playbooks, and compliance evidence generation? LanternOps is the managed AI brain for Breeze. Same RMM, smarter brain. [Learn more →](https://lanternops.io)
+> **🧠 [LanternOps Brain](https://lanternops.io)** — Want persistent memory, cross-tenant intelligence, automated playbooks, and compliance evidence generation? LanternOps is the managed AI brain for BL4CK. Same RMM, smarter brain. [Learn more →](https://lanternops.io)
 
 ---
 
@@ -198,13 +198,13 @@ To report a vulnerability: **[security@lanternops.io](mailto:security@lanternops
 
 ### Option 1: Cloud Hosted (Easiest)
 
-Skip infrastructure entirely. [Sign up at breezermm.com](https://breezermm.com) and have a fully managed Breeze instance in minutes.
+Skip infrastructure entirely. [Sign up at breezermm.com](https://breezermm.com) and have a fully managed BL4CK instance in minutes.
 
 ### Option 2: Self-Hosted Guided Setup
 
 Requires [Docker](https://docs.docker.com/get-docker/) and Docker Compose.
 
-Run the guided setup from an empty directory where you want Breeze's generated `.env` and `docker-compose.yml` files to live:
+Run the guided setup from an empty directory where you want BL4CK's generated `.env` and `docker-compose.yml` files to live:
 
 ```bash
 mkdir breeze && cd breeze
@@ -213,13 +213,13 @@ chmod +x guided-setup.sh
 ./guided-setup.sh
 ```
 
-The guided setup checks required commands, Docker Compose, CPU, RAM, and free disk space before generating configuration. It asks which Breeze release to install, downloads that release's `docker-compose.yml` and `.env.example`, preserves the comments from `.env.example` in your generated `.env`, prompts for the required settings, and can generate secure passwords and application secrets with `openssl rand`.
+The guided setup checks required commands, Docker Compose, CPU, RAM, and free disk space before generating configuration. It asks which BL4CK release to install, downloads that release's `docker-compose.yml` and `.env.example`, preserves the comments from `.env.example` in your generated `.env`, prompts for the required settings, and can generate secure passwords and application secrets with `openssl rand`.
 
 During setup you can choose the packaged Caddy reverse proxy, Nginx Proxy Manager, or another external reverse proxy path. You can also choose Docker named volumes or local `./data` subdirectories for persistent container data.
 
 After the files are generated, the script lets you either stop with ready-to-use config files or continue into the guided start flow. The start flow prompts before pulling images and before running `docker compose up -d`, waits for the API to become healthy, then walks you through signing in with the one-time bootstrap credentials. Once you confirm first login is complete, it removes the bootstrap values from `.env`.
 
-On Linux hosts with systemd, the guided setup can also install a reboot startup service for cleaner shutdowns and startups. On shutdown, it asks Docker Compose to stop the Breeze stack before Docker itself stops. On startup, it reruns Compose after Docker and networking are online, helping Breeze bring up Postgres/Redis, API/Web, and optional services in the intended order. The service stores its helper in a root-owned system path and points it at the setup directory you selected. For an existing guided install, run `./guided-setup.sh --install-systemd` from the Breeze setup directory.
+On Linux hosts with systemd, the guided setup can also install a reboot startup service for cleaner shutdowns and startups. On shutdown, it asks Docker Compose to stop the BL4CK stack before Docker itself stops. On startup, it reruns Compose after Docker and networking are online, helping BL4CK bring up Postgres/Redis, API/Web, and optional services in the intended order. The service stores its helper in a root-owned system path and points it at the setup directory you selected. For an existing guided install, run `./guided-setup.sh --install-systemd` from the BL4CK setup directory.
 
 ### Option 3: Self-Hosted Manual Docker
 
@@ -259,15 +259,15 @@ docker compose up -d
 # docker compose --profile turn up -d
 ```
 
-Breeze will be running at `https://your-domain` (or `https://localhost` with a self-signed cert for local testing).
+BL4CK will be running at `https://your-domain` (or `https://localhost` with a self-signed cert for local testing).
 
-On first production boot against an empty database, Breeze creates the initial Partner Admin only from operator-provided `BREEZE_BOOTSTRAP_ADMIN_EMAIL` and `BREEZE_BOOTSTRAP_ADMIN_PASSWORD` values. If those values are missing, startup refuses to seed the empty production database. The password is never printed to logs. After you sign in and finish setup, remove those bootstrap values from `.env`.
+On first production boot against an empty database, BL4CK creates the initial Partner Admin only from operator-provided `BREEZE_BOOTSTRAP_ADMIN_EMAIL` and `BREEZE_BOOTSTRAP_ADMIN_PASSWORD` values. If those values are missing, startup refuses to seed the empty production database. The password is never printed to logs. After you sign in and finish setup, remove those bootstrap values from `.env`.
 
 For hardened production deploys (Cloudflare Tunnel, mandatory digest-pinned images, monitoring + logging), see [docs/DEPLOY_PRODUCTION.md](docs/DEPLOY_PRODUCTION.md) which uses `deploy/docker-compose.prod.yml`.
 
 ### Install the Agent
 
-From your Breeze dashboard, navigate to **Settings → Agents → Download** to get the agent installer for your platform.
+From your BL4CK dashboard, navigate to **Settings → Agents → Download** to get the agent installer for your platform.
 
 Or install directly:
 
@@ -291,7 +291,7 @@ make build
 
 ## AI Brain
 
-Breeze ships with the Claude Agent SDK integrated and an MCP server you can point any AI agent at. The AI isn't a separate product or plugin — it's woven into the platform, and the same risk engine governs every action whether it comes from the in-product chat or from an external agent over MCP.
+BL4CK ships with the Claude Agent SDK integrated and an MCP server you can point any AI agent at. The AI isn't a separate product or plugin — it's woven into the platform, and the same risk engine governs every action whether it comes from the in-product chat or from an external agent over MCP.
 
 ### How It Works
 
@@ -352,7 +352,7 @@ Risk policies are fully configurable per partner, organization, site, or device 
 Partner (MSP) → Organization (Customer) → Site (Location) → Device Group → Device
 ```
 
-Every entity in Breeze is scoped to this hierarchy. Permissions, policies, alerts, and AI risk classifications cascade down and can be overridden at any level.
+Every entity in BL4CK is scoped to this hierarchy. Permissions, policies, alerts, and AI risk classifications cascade down and can be overridden at any level.
 
 ### Tech Stack
 
@@ -455,7 +455,7 @@ For detailed architecture documentation, see [docs/architecture.md](docs/archite
 
 ## Contributing
 
-Breeze is built by MSPs, for MSPs. Contributions are welcome.
+BL4CK is built by MSPs, for MSPs. Contributions are welcome.
 
 ### Getting Started
 
@@ -498,22 +498,22 @@ make build  # outputs to agent/bin/
 ## FAQ
 
 **Is this really free?**
-Yes. Breeze is AGPL-3.0 licensed. Self-host it, use it in production, manage as many endpoints as you want. Free forever.
+Yes. BL4CK is AGPL-3.0 licensed. Self-host it, use it in production, manage as many endpoints as you want. Free forever.
 
 **What's the catch?**
-No catch. The business model is [LanternOps](https://lanternops.io) — a managed AI brain that connects to Breeze and adds persistent memory, cross-tenant intelligence, automated playbooks, and compliance evidence. Breeze is great on its own. LanternOps makes it autonomous.
+No catch. The business model is [LanternOps](https://lanternops.io) — a managed AI brain that connects to BL4CK and adds persistent memory, cross-tenant intelligence, automated playbooks, and compliance evidence. BL4CK is great on its own. LanternOps makes it autonomous.
 
 **How is this different from Tactical RMM?**
-Tactical RMM is a solid project. Breeze is AI-native — the agent SDK and tool system are core to the architecture, not an integration. We also have built-in remote access (WebRTC), a modern frontend (Astro + React), and a multi-tenant hierarchy designed for MSPs from day one.
+Tactical RMM is a solid project. BL4CK is AI-native — the agent SDK and tool system are core to the architecture, not an integration. We also have built-in remote access (WebRTC), a modern frontend (Astro + React), and a multi-tenant hierarchy designed for MSPs from day one.
 
 **Can I use this for my internal IT team (not an MSP)?**
 Absolutely. The multi-tenant hierarchy works for internal IT too — just use Organizations as departments or offices.
 
 **What AI models are supported?**
-For the in-product AI chat, Breeze uses the Claude Agent SDK (Anthropic). BYOK mode requires an Anthropic API key. We chose Claude for its tool-use capabilities and reasoning quality. Separately, Breeze runs a built-in MCP server with OAuth 2.1 + PKCE, so you can connect Claude.ai, ChatGPT, Cursor, or any other MCP-compatible AI agent — using whichever model that platform runs. We're open to community contributions for additional in-product model providers.
+For the in-product AI chat, BL4CK uses the Claude Agent SDK (Anthropic). BYOK mode requires an Anthropic API key. We chose Claude for its tool-use capabilities and reasoning quality. Separately, BL4CK runs a built-in MCP server with OAuth 2.1 + PKCE, so you can connect Claude.ai, ChatGPT, Cursor, or any other MCP-compatible AI agent — using whichever model that platform runs. We're open to community contributions for additional in-product model providers.
 
 **Is there an agent auto-update?**
-Yes. The Breeze agent has a built-in updater that pulls signed release artifacts and self-installs across macOS, Windows, and Linux. The Watchdog service supervises the agent process and restarts it on failure. Production deployments verify Ed25519-signed release manifests via `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS`.
+Yes. The BL4CK agent has a built-in updater that pulls signed release artifacts and self-installs across macOS, Windows, and Linux. The Watchdog service supervises the agent process and restarts it on failure. Production deployments verify Ed25519-signed release manifests via `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS`.
 
 **Is my data safe?**
 Self-hosted: your data never leaves your infrastructure. Cloud-hosted: data is isolated per partner with strict tenant separation. See our [Security Practices](docs/SECURITY_PRACTICES.md) for the full security whitepaper, including SOC 2 alignment mapping, encryption standards, and audit controls.
@@ -522,9 +522,9 @@ Self-hosted: your data never leaves your infrastructure. Cloud-hosted: data is i
 
 ## License
 
-Breeze is licensed under [AGPL-3.0](LICENSE).
+BL4CK is licensed under [AGPL-3.0](LICENSE).
 
-You can use, modify, and self-host Breeze freely. If you modify Breeze and offer it as a service, you must open source your modifications under the same license.
+You can use, modify, and self-host BL4CK freely. If you modify BL4CK and offer it as a service, you must open source your modifications under the same license.
 
 ---
 

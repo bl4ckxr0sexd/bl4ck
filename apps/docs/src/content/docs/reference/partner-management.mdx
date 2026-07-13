@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Partners are the top-level tenants in Breeze's multi-tenant hierarchy. A partner typically represents a Managed Service Provider (MSP), an enterprise IT department, or an internal team. Partners own organizations, which in turn contain sites, device groups, and devices. Breeze supports both administrator-provisioned partners (created by system-scoped users) and self-service partner registration (where MSPs sign up directly through the web interface).
+Partners are the top-level tenants in BL4CK's multi-tenant hierarchy. A partner typically represents a Managed Service Provider (MSP), an enterprise IT department, or an internal team. Partners own organizations, which in turn contain sites, device groups, and devices. BL4CK supports both administrator-provisioned partners (created by system-scoped users) and self-service partner registration (where MSPs sign up directly through the web interface).
 
 Partner management encompasses the full lifecycle: registration, configuration, user association, organization management, and feature flag controls. This reference covers the self-registration flow, the partner hierarchy model, administrative operations, and the environment variables that govern partner-related features.
 
@@ -16,7 +16,7 @@ Partner management encompasses the full lifecycle: registration, configuration, 
 
 ## Partner Hierarchy
 
-Breeze organizes all managed infrastructure into a strict tenant hierarchy. Partners sit at the top:
+BL4CK organizes all managed infrastructure into a strict tenant hierarchy. Partners sit at the top:
 
 ```
 Partner (MSP)
@@ -70,7 +70,7 @@ Partner users are associated with their partner through the `partner_users` tabl
 
 ## Self-Registration
 
-Partner self-registration allows MSPs and IT companies to create their own Breeze account without administrator intervention. The registration flow creates a partner, an admin role, a user account, and links them together in a single operation.
+Partner self-registration allows MSPs and IT companies to create their own BL4CK account without administrator intervention. The registration flow creates a partner, an admin role, a user account, and links them together in a single operation.
 
 ### Registration Flow
 

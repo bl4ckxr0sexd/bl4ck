@@ -1,4 +1,4 @@
-# Breeze MCP Server Guidance — Design
+# BL4CK MCP Server Guidance — Design
 
 **Date:** 2026-07-04
 **Status:** Approved (design), pending implementation plan
@@ -6,7 +6,7 @@
 
 ## Problem
 
-Customers connect the Breeze RMM AI Agent MCP server (`mcp__claude_ai_breeze__*`, ~171 tools) to their own Claude client (Claude.ai, Desktop, Code) and drive their RMM through natural language. Today those external clients receive **zero server-side guidance**: no orientation on how to pick among ~171 tools, and — more seriously — no safety framing before invoking genuinely destructive, multi-tenant tools (`file_operations`, `registry_operations`, `disk_cleanup`, `manage_patches`, `revoke_elevation`, …).
+Customers connect the BL4CK RMM AI Agent MCP server (`mcp__claude_ai_breeze__*`, ~171 tools) to their own Claude client (Claude.ai, Desktop, Code) and drive their RMM through natural language. Today those external clients receive **zero server-side guidance**: no orientation on how to pick among ~171 tools, and — more seriously — no safety framing before invoking genuinely destructive, multi-tenant tools (`file_operations`, `registry_operations`, `disk_cleanup`, `manage_patches`, `revoke_elevation`, …).
 
 The in-product chat agent already has a system prompt (`AI_SYSTEM_PROMPT_BASE` in `apps/api/src/services/aiAgentSystemPrompt.ts`), but it is consumed only by `aiAgent.ts` and never reaches the external MCP path (`apps/api/src/routes/mcpServer.ts`).
 
@@ -14,7 +14,7 @@ The failure mode we are preventing is not "the tech is confused" — it is "Clau
 
 ## Goal & non-goals
 
-**Goal:** Give every client that connects to the Breeze MCP server automatic, universal guidance — orientation, tool-selection heuristics, and non-negotiable guardrails — plus a small set of guided on-ramps for the highest-value MSP workflows. Delivered server-side so there is no install step and the guidance is always versioned with the deployed server.
+**Goal:** Give every client that connects to the BL4CK MCP server automatic, universal guidance — orientation, tool-selection heuristics, and non-negotiable guardrails — plus a small set of guided on-ramps for the highest-value MSP workflows. Delivered server-side so there is no install step and the guidance is always versioned with the deployed server.
 
 **Non-goals:**
 - A distributable `SKILL.md`. Considered and deferred — a skill only reaches skills-capable clients and can drift from the deployed server, so it cannot carry safety-critical guardrails. May be added later as an optional power-user layer.
@@ -58,7 +58,7 @@ Extract the safety rules currently embedded in `AI_SYSTEM_PROMPT_BASE` into one 
 
 Concise (~40-60 lines). Three parts:
 
-1. **Orientation** — Breeze is a multi-tenant RMM; hierarchy Partner → Organization → Site → Device Group → Device. Tool-selection heuristic: (a) resolve context first (`resolve_device_context` / `query_devices`), (b) read before write (prefer `query_*` / `get_*` over `manage_*` / `execute_*`), (c) one target at a time unless explicitly a fleet operation.
+1. **Orientation** — BL4CK is a multi-tenant RMM; hierarchy Partner → Organization → Site → Device Group → Device. Tool-selection heuristic: (a) resolve context first (`resolve_device_context` / `query_devices`), (b) read before write (prefer `query_*` / `get_*` over `manage_*` / `execute_*`), (c) one target at a time unless explicitly a fleet operation.
 2. **Guardrails** (from `BREEZE_AI_GUARDRAILS_CORE`) — always resolve and **echo the target device + org** before any mutation; treat Tier-3 tools as requiring explicit human confirmation; never act cross-tenant; never fabricate data; if a call is rejected by the server gate, surface the rejection rather than retrying blindly.
 3. **Pointer** — "For common workflows, use the `breeze-*` prompts."
 

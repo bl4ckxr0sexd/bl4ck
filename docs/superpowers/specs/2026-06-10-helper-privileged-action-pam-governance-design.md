@@ -7,7 +7,7 @@
 
 ## Problem
 
-The Breeze Helper (tray AI assistant) authenticates to `/api/v1/helper/*` with a
+The BL4CK Helper (tray AI assistant) authenticates to `/api/v1/helper/*` with a
 `helper_auth_token` that is **deliberately** stored in the world-readable `agent.yaml`
 (mode `0644`) so the Helper, running as the logged-in user, can read it. That token
 today grants two things it must not:

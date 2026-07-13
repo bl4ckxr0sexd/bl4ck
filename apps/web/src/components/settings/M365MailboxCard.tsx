@@ -25,15 +25,15 @@ const STATUS_LABEL: Record<MailboxConnectionDTO['status'], string> = {
 
 const APP_ID =
   (import.meta.env.PUBLIC_TICKET_MAILBOX_APP_ID as string | undefined)?.trim() ||
-  '<Breeze Ticketing app id>';
+  '<BL4CK Ticketing app id>';
 
 function powershellSnippet(mailbox: string): string {
   return [
     '# Run in Exchange Online PowerShell (Connect-ExchangeOnline) as a tenant admin:',
-    `New-DistributionGroup -Name "Breeze Ticketing Mailboxes" -Type Security -Members "${mailbox}"`,
+    `New-DistributionGroup -Name "BL4CK Ticketing Mailboxes" -Type Security -Members "${mailbox}"`,
     `New-ApplicationAccessPolicy -AppId ${APP_ID} \\`,
-    '  -PolicyScopeGroupId "Breeze Ticketing Mailboxes" -AccessRight RestrictAccess \\',
-    '  -Description "Restrict Breeze Ticketing to the support mailbox"',
+    '  -PolicyScopeGroupId "BL4CK Ticketing Mailboxes" -AccessRight RestrictAccess \\',
+    '  -Description "Restrict BL4CK Ticketing to the support mailbox"',
   ].join('\n');
 }
 

@@ -18,8 +18,8 @@ const LEVEL_LABELS: Record<AssuranceLevel, string> = {
 };
 
 /**
- * Breeze Authenticator (Phase 4) — partner "Approval Security" admin tab. Sets
- * the per-tier required assurance floor (raise-only above the Breeze default),
+ * BL4CK Authenticator (Phase 4) — partner "Approval Security" admin tab. Sets
+ * the per-tier required assurance floor (raise-only above the BL4CK default),
  * whether enrollment is required to approve above L1, and the grace cutoff.
  */
 export function OrgApprovalSecurityTab() {
@@ -92,7 +92,7 @@ export function OrgApprovalSecurityTab() {
           <h3 className="text-lg font-semibold">Approval Security</h3>
           <p className="text-sm text-muted-foreground">
             Require technicians to verify with a registered device when approving. You can only
-            <strong> raise</strong> the assurance level above the Breeze default — never lower it.
+            <strong> raise</strong> the assurance level above the BL4CK default — never lower it.
           </p>
         </div>
       </div>
@@ -110,7 +110,7 @@ export function OrgApprovalSecurityTab() {
                 value={current}
                 onChange={(e) => setTierLevel(tier, Number(e.target.value) as AssuranceLevel)}
               >
-                {/* raise-only: options below the Breeze floor are not offered */}
+                {/* raise-only: options below the BL4CK floor are not offered */}
                 {([1, 2, 3, 4] as AssuranceLevel[])
                   .filter((lvl) => lvl >= floor)
                   .map((lvl) => (

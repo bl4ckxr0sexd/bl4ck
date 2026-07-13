@@ -1,6 +1,6 @@
 ---
 title: Binary Distribution
-description: How Breeze serves agent and viewer downloads — GitHub Releases, local disk, or S3.
+description: How BL4CK serves agent and viewer downloads — GitHub Releases, local disk, or S3.
 sidebar:
   order: 5
   label: Binary Distribution
@@ -8,7 +8,7 @@ sidebar:
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze serves agent binaries and viewer installers through its own API. The download source is configurable via `BINARY_SOURCE`, so downloads work regardless of how you deploy.
+BL4CK serves agent binaries and viewer installers through its own API. The download source is configurable via `BINARY_SOURCE`, so downloads work regardless of how you deploy.
 
 ## Binary Source Modes
 
@@ -40,7 +40,7 @@ On startup, the API calls GitHub's Releases API to register the current version'
 
 In production, GitHub mode requires the `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` env var. This is the base64 SPKI of the Ed25519 public key that signs our release manifests. The API verifies every fetched manifest against this key before trusting its checksums, so a compromised GitHub release alone can't deliver tampered binaries.
 
-For the official Breeze releases, use the published trust anchor:
+For the official BL4CK releases, use the published trust anchor:
 
 ```bash
 RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS=yzx8ftmcls6uBetFC5SYnZhBo+cbur3IX50TbBthTso=

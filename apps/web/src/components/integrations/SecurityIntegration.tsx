@@ -303,7 +303,7 @@ export default function SecurityIntegration() {
         <div>
           <h1 className="text-2xl font-semibold">SentinelOne Integration</h1>
           <p className="text-sm text-muted-foreground">
-            Connect one partner-level SentinelOne tenant and map SentinelOne sites to Breeze organizations.
+            Connect one partner-level SentinelOne tenant and map SentinelOne sites to BL4CK organizations.
           </p>
         </div>
       </div>
@@ -476,7 +476,7 @@ export default function SecurityIntegration() {
             <div>
               <h2 className="text-lg font-semibold">Site mapping</h2>
               <p className="text-sm text-muted-foreground">
-                Map each SentinelOne site to a Breeze organization. Unmapped sites stay quarantined until assigned.
+                Map each SentinelOne site to a BL4CK organization. Unmapped sites stay quarantined until assigned.
               </p>
             </div>
             {unmappedCount > 0 && (
@@ -498,7 +498,7 @@ export default function SecurityIntegration() {
                 <tr className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   <th className="pb-2 pr-4">S1 site</th>
                   <th className="pb-2 pr-4">Agents</th>
-                  <th className="pb-2 pr-4">Breeze organization</th>
+                  <th className="pb-2 pr-4">BL4CK organization</th>
                   <th className="pb-2">Status</th>
                 </tr>
               </thead>
@@ -524,7 +524,7 @@ export default function SecurityIntegration() {
                         disabled={mappingSaving[site.s1SiteId]}
                         className="h-9 w-full max-w-xs rounded-md border bg-background px-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
                         data-testid={`s1-site-map-${site.s1SiteId}`}
-                        aria-label={`Map ${site.s1SiteName || site.s1SiteId} to a Breeze organization`}
+                        aria-label={`Map ${site.s1SiteName || site.s1SiteId} to a BL4CK organization`}
                       >
                         <option value="">Select organization</option>
                         {orgOptions.map((org) => (

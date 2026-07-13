@@ -1,4 +1,4 @@
-# Session-Aware Breeze Assist Redesign
+# Session-Aware BL4CK Assist Redesign
 
 **Date:** 2026-03-30
 **Status:** Draft
@@ -6,7 +6,7 @@
 
 ## Problem
 
-Breeze Assist (the helper Tauri app) is managed as a machine-global singleton. The helper Manager tracks one `lastEnabled` flag, one config path, one status file, one watcher, and checks liveness by process name. On multi-user hosts (Windows RDP, macOS Fast User Switching), this causes a class of bugs:
+BL4CK Assist (the helper Tauri app) is managed as a machine-global singleton. The helper Manager tracks one `lastEnabled` flag, one config path, one status file, one watcher, and checks liveness by process name. On multi-user hosts (Windows RDP, macOS Fast User Switching), this causes a class of bugs:
 
 - One session blocks launch into another
 - Disabling after restart fails to stop existing instances correctly
@@ -279,7 +279,7 @@ Each `sessionState` gets its own watcher goroutine. Same 30s poll / exponential 
 
 ### `--config` flag
 
-The Breeze Helper (Tauri app) adds a `--config` CLI flag:
+The BL4CK Helper (Tauri app) adds a `--config` CLI flag:
 
 ```
 breeze-helper --config /Library/Application Support/Breeze/sessions/501/helper_config.yaml
@@ -435,4 +435,4 @@ The agent removes these artifacts during the first-run migration (step added to 
 | `agent/internal/helper/enumerator_linux.go` | **New** — `loginctl`-based `SessionEnumerator` |
 | `agent/internal/helper/migrate.go` | **New** — first-run migration logic |
 | `agent/internal/heartbeat/heartbeat.go` | Minimal — pass `SessionEnumerator` to Manager constructor |
-| Breeze Helper (Tauri) | Add `--config` CLI flag, derive status path from config path |
+| BL4CK Helper (Tauri) | Add `--config` CLI flag, derive status path from config path |

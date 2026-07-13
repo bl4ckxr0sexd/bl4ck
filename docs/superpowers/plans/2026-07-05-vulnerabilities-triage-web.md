@@ -2401,7 +2401,7 @@ function buildDescription(findings: GroupFinding[]): string {
     `CVEs (${cves.length}): ${cves.join(', ')}`,
     `Devices (${devices.length}): ${devices.join(', ')}`,
     '',
-    'Created from the Breeze vulnerabilities triage queue.',
+    'Created from the BL4CK vulnerabilities triage queue.',
   ].join('\n');
 }
 

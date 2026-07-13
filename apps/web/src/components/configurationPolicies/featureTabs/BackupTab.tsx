@@ -1288,7 +1288,7 @@ export default function BackupTab({ policyId, existingLink, onLinkChanged, linke
       <div className="mt-6 space-y-4">
         <h3 className="text-sm font-semibold">Snapshot Protection</h3>
         <p className="text-xs text-muted-foreground">
-          These settings stamp future snapshots at creation time. Legal hold merges conservatively across applicable backup policies, and the longest immutability window wins. Application protection is enforced by Breeze cleanup jobs unless provider-enforced WORM is explicitly verified.
+          These settings stamp future snapshots at creation time. Legal hold merges conservatively across applicable backup policies, and the longest immutability window wins. Application protection is enforced by BL4CK cleanup jobs unless provider-enforced WORM is explicitly verified.
         </p>
         {invalidSavedProviderMode && (
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm text-amber-800">
@@ -1353,7 +1353,7 @@ export default function BackupTab({ policyId, existingLink, onLinkChanged, linke
             </option>
           </select>
           <p className="mt-1 chart-legend-xs text-muted-foreground">
-            Application-level protection blocks deletion in Breeze cleanup jobs. Provider-enforced WORM requires an S3 config with verified object lock support and still re-validates at snapshot time.
+            Application-level protection blocks deletion in BL4CK cleanup jobs. Provider-enforced WORM requires an S3 config with verified object lock support and still re-validates at snapshot time.
           </p>
         </div>
         {settings.immutabilityMode !== 'none' && (

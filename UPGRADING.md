@@ -1,4 +1,4 @@
-# Upgrading Breeze
+# Upgrading BL4CK
 
 > ## TL;DR — Upgrading to the SR-001..SR-024 security-hardening release
 >

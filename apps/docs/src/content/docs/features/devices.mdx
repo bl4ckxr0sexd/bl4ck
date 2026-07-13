@@ -32,14 +32,14 @@ Above the list you can:
 
 - **Search** by display name or hostname.
 - Build **structured filters** with the filter toolbar — status, OS, role, organization, site, group, hardware attributes, and more, combinable into saved filter conditions.
-- Switch the **class facet** between All, Agent (endpoints running the Breeze agent), and Network (devices found by network discovery).
+- Switch the **class facet** between All, Agent (endpoints running the BL4CK agent), and Network (devices found by network discovery).
 - Filter by **VPN** when the VPN column is enabled (see below).
 
 ---
 
 ## VPN Presence
 
-Agents on Windows, macOS, and Linux detect active VPN and overlay-network clients on the device and report them to Breeze. Recognized providers:
+Agents on Windows, macOS, and Linux detect active VPN and overlay-network clients on the device and report them to BL4CK. Recognized providers:
 
 - **WireGuard**
 - **Tailscale**
@@ -49,7 +49,7 @@ Agents on Windows, macOS, and Linux detect active VPN and overlay-network client
 - **Cloudflare WARP**
 - A generic **VPN** fallback for active tunnel interfaces that don't match a known provider
 
-Detection works purely from **local signals on the device** — tunnel interface names and addresses, corroborated by the provider's running service or process. It is read-only telemetry: Breeze does not read keys, peer lists, or any VPN configuration, and cannot manage the VPN. For Tailscale, the device's own DNS name is also reported.
+Detection works purely from **local signals on the device** — tunnel interface names and addresses, corroborated by the provider's running service or process. It is read-only telemetry: BL4CK does not read keys, peer lists, or any VPN configuration, and cannot manage the VPN. For Tailscale, the device's own DNS name is also reported.
 
 <Aside type="note">
   VPN data is the latest snapshot from the agent's periodic network inventory report (roughly every 15 minutes), not a live view. A blank value means either no VPN was detected or the agent is too old to report VPN presence.

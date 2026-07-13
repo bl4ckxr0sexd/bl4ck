@@ -1,4 +1,4 @@
-# Breeze Authenticator — Phase 1 (Foundation) Implementation Plan
+# BL4CK Authenticator — Phase 1 (Foundation) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -61,7 +61,7 @@ import {
 } from './assuranceLevel';
 
 describe('requiredAssurance', () => {
-  it('maps each tier to the Breeze default floor', () => {
+  it('maps each tier to the BL4CK default floor', () => {
     expect(requiredAssurance('low')).toBe(1);
     expect(requiredAssurance('medium')).toBe(2);
     expect(requiredAssurance('high')).toBe(3);
@@ -121,7 +121,7 @@ export type RiskTier = 'low' | 'medium' | 'high' | 'critical';
 /** Verification strength demanded of a decision. */
 export type AssuranceLevel = 1 | 2 | 3 | 4;
 
-/** Breeze default floor: risk tier → minimum assurance level. */
+/** BL4CK default floor: risk tier → minimum assurance level. */
 export const DEFAULT_ASSURANCE_FLOOR: Record<RiskTier, AssuranceLevel> = {
   low: 1,
   medium: 2,
@@ -130,14 +130,14 @@ export const DEFAULT_ASSURANCE_FLOOR: Record<RiskTier, AssuranceLevel> = {
 };
 
 /**
- * Partner policy may only RAISE a rung above the Breeze floor, never lower it.
+ * Partner policy may only RAISE a rung above the BL4CK floor, never lower it.
  * Keys are risk tiers; values are the minimum level the partner demands.
  */
 export type AssuranceFloorOverrides = Partial<Record<RiskTier, AssuranceLevel>>;
 
 /**
  * Resolve the required assurance level for an approval. A partner override is
- * honored only when it is STRICTLY HIGHER than the Breeze floor — an override
+ * honored only when it is STRICTLY HIGHER than the BL4CK floor — an override
  * that would weaken the floor is ignored (fail-closed).
  */
 export function requiredAssurance(
@@ -307,7 +307,7 @@ export const authenticatorPolicies = pgTable('authenticator_policies', {
   partnerId: uuid('partner_id')
     .primaryKey()
     .references(() => partners.id, { onDelete: 'cascade' }),
-  // Raise-only overrides of the Breeze default floor. {} = use defaults.
+  // Raise-only overrides of the BL4CK default floor. {} = use defaults.
   floorOverrides: jsonb('floor_overrides').$type<AssuranceFloorOverrides>().notNull().default({}),
   // When true (after enforceFrom), L2+ approvals require an enrolled device.
   requireEnrollment: boolean('require_enrollment').notNull().default(false),
@@ -430,7 +430,7 @@ git commit -m "feat(db): approver PIN + approval factor-recording columns"
 Create `apps/api/migrations/2026-06-14-a-authenticator-foundation.sql`:
 
 ```sql
--- Breeze Authenticator — Phase 1 foundation.
+-- BL4CK Authenticator — Phase 1 foundation.
 -- Idempotent: enums via duplicate_object guard, tables/columns IF NOT EXISTS,
 -- policies via pg_policies existence checks, FKs via pg_constraint checks.
 
@@ -598,7 +598,7 @@ git commit -m "feat(db): authenticator foundation migration + RLS"
 In the `USER_ID_SCOPED_TABLES` set (ends ~line 231, after `'user_passkeys'`), add:
 
 ```ts
-  // authenticator_devices: Breeze Authenticator approver device keys, scoped to
+  // authenticator_devices: BL4CK Authenticator approver device keys, scoped to
   // the owning user via breeze_current_user_id(), with an
   // OR breeze_current_scope() = 'system' branch (Shape 6). Mirrors user_passkeys.
   'authenticator_devices',

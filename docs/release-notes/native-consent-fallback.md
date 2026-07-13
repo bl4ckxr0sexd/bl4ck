@@ -2,14 +2,14 @@
 
 **Feature:** Native remote-session consent dialog + active-session banner from the Go user-helper
 **Issue:** #2229
-**Affects:** Devices running the Breeze agent's user-helper, when the Tauri "Breeze Assist" app is NOT installed
+**Affects:** Devices running the BL4CK agent's user-helper, when the Tauri "BL4CK Assist" app is NOT installed
 
 ---
 
 ## What changed
 
 The remote-session consent/notification feature (shipped in v0.83.0) previously
-required the **Breeze Assist** Tauri app to be installed on the target device to
+required the **BL4CK Assist** Tauri app to be installed on the target device to
 show the Allow/Decline consent dialog and the on-screen "Remote session active"
 banner. On devices without the Assist app, `session_prompt_mode: "consent"`
 fell through to `consent_unavailable_behavior` (default `proceed`) — i.e. no

@@ -725,7 +725,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
         {activeTab === 'cli' && (
           <div className="space-y-6">
             <p className="text-sm text-muted-foreground">
-              Install the Breeze agent on your device using the command line. Use the installation
+              Install the BL4CK agent on your device using the command line. Use the installation
               token and commands below.
             </p>
 

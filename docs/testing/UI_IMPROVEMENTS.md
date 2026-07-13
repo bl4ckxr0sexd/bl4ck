@@ -13,7 +13,7 @@ Legend: 🔴 high friction · 🟠 medium · 🟡 low/papercut · ✅ appears re
 | # | Area | Observation | Sev | Status |
 |---|---|---|---|---|
 | 1 | Global chrome | Footer reads **"Web dev · API 0.63.5"** on every page — stale/incorrect version (branch is past v0.70.0). The "Web dev" prefix suggests a dev-only indicator; **verify prod shows the real version** before treating as a bug. | 🟡 | open (verify prod) |
-| 2 | Global chrome | **Breeze AI + Documentation side panels render docked open** and sit off the right edge at 1680px — the AI panel's Close button was off-viewport (unclickable). They also intercept clicks on the right side of wide pages. | 🟠 | open (filed) |
+| 2 | Global chrome | **BL4CK AI + Documentation side panels render docked open** and sit off the right edge at 1680px — the AI panel's Close button was off-viewport (unclickable). They also intercept clicks on the right side of wide pages. | 🟠 | open (filed) |
 | 3 | Billing / invoice | Issued invoice **"Record payment" is disabled with no tooltip** explaining why (org billing not configured?). | 🟡 | open |
 | 4 | Billing / invoice | Issued-invoice "Bill to" shows a good empty-state nudge ("Set on the organization billing settings.") — positive, keep. | — | good |
 | 5 | Code quality | **Systemic:** the web sends `null`/`Number()` where Zod schemas expect `undefined`/money-strings (root cause of the contract 400s). Worth a validator↔UI-contract audit across billing routes + a test convention that asserts the *actual* client payload. | 🟠 | partially fixed (#1411) |

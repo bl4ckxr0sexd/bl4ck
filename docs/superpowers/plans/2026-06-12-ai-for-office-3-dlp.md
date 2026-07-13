@@ -1,4 +1,4 @@
-# Breeze AI for Office — Plan 3: DLP / Redaction Pipeline
+# BL4CK AI for Office — Plan 3: DLP / Redaction Pipeline
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -197,7 +197,7 @@ Expected: failure — `Cannot find module './clientAiDlp'`.
 import { z } from 'zod';
 
 /**
- * DLP configuration for Breeze AI for Office (spec §6).
+ * DLP configuration for BL4CK AI for Office (spec §6).
  *
  * Stored in client_ai_org_policies.dlp_config (jsonb, DB default '{}').
  * `dlpConfigSchema.parse({})` materialises the documented defaults: redact
@@ -456,7 +456,7 @@ Expected: failure — `Cannot find module './clientAiDlpDetectors'`.
 
 ```ts
 /**
- * Built-in DLP detectors for Breeze AI for Office (spec §6).
+ * Built-in DLP detectors for BL4CK AI for Office (spec §6).
  *
  * Pure functions: string in → match spans out. Validation gates (Luhn for
  * cards, mod-97 for IBAN, plausibility for SSN, mixed-class post-filters for
@@ -466,7 +466,7 @@ Expected: failure — `Cannot find module './clientAiDlpDetectors'`.
  *
  * The apiKey shapes are seeded from BARE_SECRET_PATTERNS in
  * services/aiToolOutput.ts (sk-, GitHub token family, github_pat_, AKIA, JWT)
- * plus Breeze brz_ tokens (services/apiKeys.ts generates brz_ + 48 hex) and
+ * plus BL4CK brz_ tokens (services/apiKeys.ts generates brz_ + 48 hex) and
  * generic 32+ char hex/base64 bearer-ish blobs.
  *
  * (services/aiInputSanitizer.ts was reviewed as a seed source per spec §6:
@@ -608,7 +608,7 @@ export function detectIban(text: string): DlpMatch[] {
 
 // ── apiKey ───────────────────────────────────────────────────────────────────
 // Specific token shapes — seeded from BARE_SECRET_PATTERNS in
-// services/aiToolOutput.ts, plus Breeze brz_ tokens (services/apiKeys.ts).
+// services/aiToolOutput.ts, plus BL4CK brz_ tokens (services/apiKeys.ts).
 const API_KEY_PATTERNS: RegExp[] = [
   /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}\b/g,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b/g,
@@ -1027,7 +1027,7 @@ Expected: failures — against the Plan-2 passthrough stub everything that asser
 ```ts
 /**
  * Client AI DLP / redaction pipeline (spec §6) — the single chokepoint for
- * every payload leaving Breeze for the model provider: user prompts, workbook
+ * every payload leaving BL4CK for the model provider: user prompts, workbook
  * tool_result cell matrices, and template content. The call sites live in the
  * Plan-2 session loop; this module owns only the scanning.
  *

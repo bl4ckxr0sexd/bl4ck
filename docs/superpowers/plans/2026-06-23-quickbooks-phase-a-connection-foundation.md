@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Source of truth:** Breeze. Phase A only establishes the connection; no data sync yet.
+- **Source of truth:** BL4CK. Phase A only establishes the connection; no data sync yet.
 - **RLS shape 3 (partner-axis):** `accounting_connections` MUST have RLS `ENABLE` + `FORCE` + four `breeze_has_partner_access(partner_id)` policies in the same migration that creates it. Add `'accounting_connections' → 'partner_id'` to `PARTNER_TENANT_TABLES` in `apps/api/src/__tests__/integration/rls-coverage.integration.test.ts` (map starts line 116) in the same PR.
 - **Encryption:** every `*_encrypted` column registered in `apps/api/src/services/encryptedColumnRegistry.ts` (`{ table, column, kind: 'text', description }`); encrypt on write via `encryptSecret(value)`, decrypt on read via `decryptSecret(value)` from `apps/api/src/services/secretCrypto.ts`. Never log decrypted tokens.
 - **Migration discipline:** filename `2026-06-23-quickbooks-accounting-connections.sql`; idempotent (`CREATE TABLE IF NOT EXISTS`, `DROP POLICY IF EXISTS` then `CREATE POLICY`, `CREATE ... IF NOT EXISTS` indexes); NO inner `BEGIN;`/`COMMIT;` (autoMigrate wraps each file); never edit once shipped. No `gen_random_bytes`/pgcrypto (not installed) — use `gen_random_uuid()` defaults only.

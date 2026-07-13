@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Re-key the SentinelOne (S1) integration from per-org to partner-wide scope, so an MSP configures one S1 console (token + management URL) per partner and maps S1 console **Sites** down to Breeze orgs — mirroring the shipped Huntress partner-axis pattern.
+**Goal:** Re-key the SentinelOne (S1) integration from per-org to partner-wide scope, so an MSP configures one S1 console (token + management URL) per partner and maps S1 console **Sites** down to BL4CK orgs — mirroring the shipped Huntress partner-axis pattern.
 
 **Architecture:** S1 moves from RLS tenancy shape #1 (direct `org_id`) to shape #3 (partner-axis) for the credential + mapping tables, while child tables (`s1_agents`/`s1_threats`/`s1_actions`) keep their denormalized `org_id` (shape #1) for per-org attribution. `s1_integrations` is re-keyed to `partner_id` (org_id retained as nullable legacy column); `s1_site_mappings` is promoted to a partner-axis discovery+mapping table `s1_org_mappings` keyed off the stable **S1 site id**. Routes invert from org-scope resolution to partner-scope credential management with dual-scope reads. The sync job — which already fans agents/threats out to per-org rows via site mappings — gains S1 site-id capture and partner-based credential resolution.
 
@@ -162,7 +162,7 @@ Create `apps/api/migrations/2026-06-27-a-sentinelone-partner-mapping.sql`:
 
 ```sql
 -- Promote SentinelOne integrations from org-owned credentials to partner-owned
--- credentials with explicit S1 site -> Breeze organization mapping.
+-- credentials with explicit S1 site -> BL4CK organization mapping.
 -- Mirrors 2026-06-12-a-huntress-partner-mapping.sql.
 
 -- 1. Add partner_id, relax org_id to legacy nullable, backfill from org.
@@ -743,7 +743,7 @@ Run the S1-affected unit files single-fork (the full suite is flaky in parallel 
 
 **Interfaces:**
 - Consumes: `GET /s1/integration` (partner), `GET /s1/sites` (discovered mappings), `POST /s1/integration`, `POST /s1/organizations/map`, `POST /s1/sync`, `GET /orgs/organizations`.
-- Behaviour: detect `isPartnerView = !currentOrgId` (rename from `isAllOrgs`). Partner view renders the credential form (name, management URL, API token) + a **Site → Breeze org** mapping table (per `s1_org_mappings`: site name, agent count, org `<select>`, status badge, "provisional" hint). Org view renders read-only mapped status (or an amber "ask your partner admin to map this org" notice when unmapped) instead of the current "switch scope" dead-end. All mutations go through `runAction`.
+- Behaviour: detect `isPartnerView = !currentOrgId` (rename from `isAllOrgs`). Partner view renders the credential form (name, management URL, API token) + a **Site → BL4CK org** mapping table (per `s1_org_mappings`: site name, agent count, org `<select>`, status badge, "provisional" hint). Org view renders read-only mapped status (or an amber "ask your partner admin to map this org" notice when unmapped) instead of the current "switch scope" dead-end. All mutations go through `runAction`.
 
 - [ ] **Step 1: Component tests** in `apps/web/src/components/integrations/SecurityIntegration.test.tsx` (create if absent; jsdom + the repo's web test setup). Cases:
   - Partner view (`currentOrgId = null`) renders the credential form and a mapping table row for a discovered site; selecting an org in the `<select>` calls `POST /s1/organizations/map`.
@@ -755,7 +755,7 @@ Run the S1-affected unit files single-fork (the full suite is flaky in parallel 
 
 - [ ] **Step 3: Implement** — restructure the component on the `HuntressIntegration.tsx` template:
   - Rename `isAllOrgs` → `isPartnerView` (`!currentOrgId`); delete the early-return "switch scope" block (lines ~243-257).
-  - Partner branch: credential card + mapping table (copy Huntress `Organization mapping` table markup ~511-583, swapping columns to `S1 site` / `Agents` / `Breeze organization` / `Status`, binding the `<select>` to `handleMap(s1SiteId, orgId|null)`).
+  - Partner branch: credential card + mapping table (copy Huntress `Organization mapping` table markup ~511-583, swapping columns to `S1 site` / `Agents` / `BL4CK organization` / `Status`, binding the `<select>` to `handleMap(s1SiteId, orgId|null)`).
   - Org branch: read-only status + amber "not mapped" notice (Huntress lines ~346-362).
   - Convert `POST /s1/integration`, `POST /s1/organizations/map`, `POST /s1/sync` to `runAction({ request, successMessage, errorFallback, onUnauthorized })` (Pax8Integration.tsx is the example).
   - Update the site-map fetch to read `s1_org_mappings` shape (`s1SiteId`, `s1SiteName`, `agentsCount`, `mappedOrgId`, `mappedOrgName`, `provisional`).

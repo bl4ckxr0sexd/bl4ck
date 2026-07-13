@@ -76,7 +76,7 @@ export default function BreezeDefaultsPage() {
           <Layers className="h-5 w-5" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Breeze Defaults</h2>
+          <h2 className="text-lg font-semibold">BL4CK Defaults</h2>
           <p className="text-sm text-muted-foreground">
             How devices behave out of the box with no configuration policy assigned. These are
             read-only — create a policy to override any of them.

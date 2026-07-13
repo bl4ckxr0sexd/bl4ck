@@ -220,7 +220,7 @@ export function Composer({ disabled, placeholder, onSend, draft, onDraftConsumed
           <TextInput
             value={text}
             onChangeText={setText}
-            placeholder={listening ? 'Listening…' : (placeholder ?? 'Ask Breeze.')}
+            placeholder={listening ? 'Listening…' : (placeholder ?? 'Ask BL4CK.')}
             placeholderTextColor={theme.textLo}
             editable={!disabled && !listening}
             multiline

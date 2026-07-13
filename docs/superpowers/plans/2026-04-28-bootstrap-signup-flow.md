@@ -10,7 +10,7 @@
 
 1. `/auth?next=…` page with login/signup tabs. Single URL. Default tab = Sign in. Tab state in `window.location.hash` (`#signin` / `#signup`). Replaces `/login` as the OAuth interaction redirect destination.
 2. Email verification is V1-deferred from being a hard gate. Send verification email at signup; auto-login immediately. Only `forgot-password` is gated on `email_verified_at IS NOT NULL`. No other gates in this PR.
-3. Welcome email contains the verify-email link. One email at signup. Subject: "Welcome to Breeze — please verify your email".
+3. Welcome email contains the verify-email link. One email at signup. Subject: "Welcome to BL4CK — please verify your email".
 
 ---
 
@@ -108,7 +108,7 @@ The consent page is a separate page from the login page. The `interactions.url` 
 
 The correct fix is: `/oauth/consent` should detect no-session state and redirect to `/auth?next=/oauth/consent?uid=<uid>`. This is a frontend concern (the ConsentForm already gets a 401 from `GET /api/v1/interaction/:uid`). Alternatively, add a Astro server-side check in `consent.astro` to redirect unauthenticated users to `/auth?next=...`.
 
-The simpler fix: In `consent.astro`, add Astro server-side cookie check. Since Breeze's auth cookie is HttpOnly, the Astro SSR layer cannot read it. The correct approach is to have `ConsentForm` detect a 401 from `GET /api/v1/interaction/:uid` and redirect to `/auth?next=<currentUrl>`.
+The simpler fix: In `consent.astro`, add Astro server-side cookie check. Since BL4CK's auth cookie is HttpOnly, the Astro SSR layer cannot read it. The correct approach is to have `ConsentForm` detect a 401 from `GET /api/v1/interaction/:uid` and redirect to `/auth?next=<currentUrl>`.
 
 **Decision:** Do not change `interactions.url` in `provider.ts`. Instead, handle the unauthenticated case in `ConsentForm.tsx`: when the interaction GET returns 401, set `window.location.href = '/auth?next=' + encodeURIComponent(window.location.pathname + window.location.search)`.
 
@@ -218,19 +218,19 @@ Add template builder function (append at end of file, before `alertSeverityPalet
 ```ts
 function buildWelcomeWithVerificationTemplate(params: WelcomeWithVerificationEmailParams): EmailTemplate {
   const name = params.name?.trim() || 'there';
-  const subject = 'Welcome to Breeze — please verify your email';
-  const preheader = 'Verify your email to finish setting up your Breeze account.';
+  const subject = 'Welcome to BL4CK — please verify your email';
+  const preheader = 'Verify your email to finish setting up your BL4CK account.';
   const body = `
       <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
-      <p style="${BODY_PARA}">Welcome to Breeze! You're all set — your account is ready and you can start managing your endpoints right away.</p>
+      <p style="${BODY_PARA}">Welcome to BL4CK! You're all set — your account is ready and you can start managing your endpoints right away.</p>
       <p style="${BODY_PARA}">One last thing: please verify your email address to keep your account secure.</p>
       ${renderButton('Verify email address', params.verifyUrl)}
-      <p style="${MUTED_PARA}">This link expires in 24 hours. If you didn't create a Breeze account, you can safely ignore this email.</p>
+      <p style="${MUTED_PARA}">This link expires in 24 hours. If you didn't create a BL4CK account, you can safely ignore this email.</p>
   `;
   const html = renderLayout({
     title: subject,
     preheader,
-    heading: 'Welcome to Breeze',
+    heading: 'Welcome to BL4CK',
     body,
     footer: supportFooter(params.supportEmail, 'Questions? Contact'),
   });
@@ -238,7 +238,7 @@ function buildWelcomeWithVerificationTemplate(params: WelcomeWithVerificationEma
   const support = getSupportEmail(params.supportEmail);
   const text = [
     `Hi ${name},`,
-    'Welcome to Breeze! Your account is ready.',
+    'Welcome to BL4CK! Your account is ready.',
     'Please verify your email address to keep your account secure.',
     `Verify your email: ${params.verifyUrl}`,
     'This link expires in 24 hours.',

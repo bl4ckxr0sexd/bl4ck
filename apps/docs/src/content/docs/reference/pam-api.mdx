@@ -334,7 +334,7 @@ The route is single-use: it atomically transitions the request from `approved` t
 |---|---|---|
 | `POST` | `/agents/:id/elevation-requests` | Agent reports an observed UAC consent prompt. |
 
-This endpoint is called **by the agent**, authenticated with the agent bearer token (not a user JWT), and is documented here for completeness. It records a UAC observation as an `elevation_requests` row with `flowType: uac_intercept`, runs the decisioning chain (software-policy bridge → PAM rules → org [default verdict](#org-default-verdict)), and emits the corresponding event and audit rows. When the result is `pending`, Breeze additionally fans out a mobile approval request to each eligible technician and pushes it to their phones (best-effort — the `201` does not depend on push delivery; the first approver to decide on mobile wins and the siblings expire).
+This endpoint is called **by the agent**, authenticated with the agent bearer token (not a user JWT), and is documented here for completeness. It records a UAC observation as an `elevation_requests` row with `flowType: uac_intercept`, runs the decisioning chain (software-policy bridge → PAM rules → org [default verdict](#org-default-verdict)), and emits the corresponding event and audit rows. When the result is `pending`, BL4CK additionally fans out a mobile approval request to each eligible technician and pushes it to their phones (best-effort — the `201` does not depend on push delivery; the first approver to decide on mobile wins and the siblings expire).
 
 Request body (synthesized fields like `reason` are written server-side; the agent only sends discovery data):
 

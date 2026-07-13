@@ -370,8 +370,8 @@ export default function Pax8Integration() {
         <div>
           <h1 className="text-2xl font-semibold">Pax8</h1>
           <p className="text-sm text-muted-foreground">
-            Connect Pax8 to sync companies and license subscriptions into Breeze, then map each Pax8
-            company to a Breeze organization for license billing.
+            Connect Pax8 to sync companies and license subscriptions into BL4CK, then map each Pax8
+            company to a BL4CK organization for license billing.
           </p>
         </div>
         {isConfigured ? (
@@ -567,7 +567,7 @@ export default function Pax8Integration() {
         <div className="rounded-xl border bg-card p-6 shadow-xs" data-testid="pax8-companies">
           <h2 className="text-lg font-semibold">Company mapping</h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            Map each Pax8 company to a Breeze organization. Subscriptions sync to the mapped org for
+            Map each Pax8 company to a BL4CK organization. Subscriptions sync to the mapped org for
             license billing.
           </p>
           {companies.length === 0 ? (
@@ -580,7 +580,7 @@ export default function Pax8Integration() {
                 <tr className="text-left text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Pax8 company</th>
                   <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Breeze organization</th>
+                  <th className="px-3 py-2 font-medium">BL4CK organization</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -597,7 +597,7 @@ export default function Pax8Integration() {
                         onChange={(e) => void mapCompany(company, e.target.value || null)}
                         className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
                         data-testid={`pax8-company-map-${company.pax8CompanyId}`}
-                        aria-label={`Map ${company.pax8CompanyName ?? company.pax8CompanyId} to a Breeze organization`}
+                        aria-label={`Map ${company.pax8CompanyName ?? company.pax8CompanyId} to a BL4CK organization`}
                       >
                         <option value="">Unmapped</option>
                         {orgOptions.map((org) => (

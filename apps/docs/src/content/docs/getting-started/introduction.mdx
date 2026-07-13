@@ -1,5 +1,5 @@
 ---
-title: What is Breeze RMM?
+title: What is BL4CK RMM?
 description: A fast, modern Remote Monitoring and Management platform for MSPs and internal IT teams.
 sidebar:
   order: 1
@@ -10,9 +10,9 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 import { Image } from 'astro:assets';
 import dashboardScreenshot from '../../../assets/screenshots/dashboard.png';
 
-Breeze is an open-source **Remote Monitoring and Management (RMM)** platform built for MSPs and internal IT teams. It's designed to scale to 10,000+ agents while staying fast, secure, and simple to operate.
+BL4CK is an open-source **Remote Monitoring and Management (RMM)** platform built for MSPs and internal IT teams. It's designed to scale to 10,000+ agents while staying fast, secure, and simple to operate.
 
-## Why Breeze?
+## Why BL4CK?
 
 <CardGrid>
   <Card title="Lightweight Agent" icon="rocket">
@@ -29,13 +29,13 @@ Breeze is an open-source **Remote Monitoring and Management (RMM)** platform bui
   </Card>
 </CardGrid>
 
-<Image src={dashboardScreenshot} alt="Breeze RMM dashboard with device status, alerts, and real-time activity" />
+<Image src={dashboardScreenshot} alt="BL4CK RMM dashboard with device status, alerts, and real-time activity" />
 
 ## Architecture at a Glance
 
 ```
 ┌─────────────┐     HTTPS/WSS     ┌──────────────────────────────────────┐
-│ Breeze Agent │ ◄──────────────► │           Breeze API (Hono)           │
+│ BL4CK Agent │ ◄──────────────► │           BL4CK API (Hono)           │
 │   (Go)       │                  │  ┌────────┐  ┌───────┐  ┌─────────┐  │
 └─────────────┘                   │  │Postgres│  │ Redis │  │ BullMQ  │  │
                                   │  └────────┘  └───────┘  └─────────┘  │
@@ -59,6 +59,6 @@ Breeze is an open-source **Remote Monitoring and Management (RMM)** platform bui
 
 <CardGrid>
   <LinkCard title="Prerequisites" href="/getting-started/prerequisites/" description="What you need before you start." />
-  <LinkCard title="Quickstart" href="/getting-started/quickstart/" description="Get Breeze running in 5 minutes." />
+  <LinkCard title="Quickstart" href="/getting-started/quickstart/" description="Get BL4CK running in 5 minutes." />
   <LinkCard title="Production Deploy" href="/deploy/production/" description="One-command deploy to a VPS." />
 </CardGrid>

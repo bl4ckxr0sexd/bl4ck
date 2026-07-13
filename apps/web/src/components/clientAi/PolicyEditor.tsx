@@ -528,7 +528,7 @@ export default function PolicyEditor({ orgId, onBack }: { orgId: string; onBack:
           Data loss prevention
         </h3>
         <p className="mb-4 text-sm text-muted-foreground">
-          Every payload leaving Breeze for the model is scanned (spec §6). Redacted values are
+          Every payload leaving BL4CK for the model is scanned (spec §6). Redacted values are
           stored redacted — the audit trail never keeps the sensitive form.
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

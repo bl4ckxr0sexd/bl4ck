@@ -2494,7 +2494,7 @@ export function ApprovalScreen() {
   // Recursive case: requesting client is THIS phone. v1 heuristic — match on
   // a known label prefix. Replace with a server-issued `isRecursive` flag in
   // a follow-up.
-  const isRecursive = focused.requestingClientLabel.startsWith('Breeze Mobile');
+  const isRecursive = focused.requestingClientLabel.startsWith('BL4CK Mobile');
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg0 }}>
@@ -2584,7 +2584,7 @@ feat(mobile): assemble ApprovalScreen with entrance + decision animations
 
 400ms slide-up entrance + soft haptic on mount, success wash sweeping up
 from the bottom on approve, 4px shake on deny, silent dimming on expiry.
-Recursive heuristic (client label starts with "Breeze Mobile") swaps in
+Recursive heuristic (client label starts with "BL4CK Mobile") swaps in
 HoldToConfirm; replace with a server-issued flag in a follow-up.
 "Report" link is a stub — sheet content lands in phase 2.
 
@@ -2821,7 +2821,7 @@ Seed a third with `"expiresInSeconds": 15`. Open the app, watch the ring complet
 
 - [ ] **Step 16.6: Recursive case (manual)**
 
-Seed an approval with `"requestingClientLabel": "Breeze Mobile"`. Verify Approve becomes a Hold-to-confirm bar that requires the full 5s.
+Seed an approval with `"requestingClientLabel": "BL4CK Mobile"`. Verify Approve becomes a Hold-to-confirm bar that requires the full 5s.
 
 - [ ] **Step 16.7: Offline cold open**
 
@@ -2831,7 +2831,7 @@ Approve a fresh seed but turn airplane mode ON before tapping. Force-quit the ap
 
 ```bash
 docker exec -it breeze-postgres psql -U breeze -d breeze \
-  -c "DELETE FROM approval_requests WHERE requesting_client_label IN ('Dev Seed','Claude Desktop','Breeze Mobile');"
+  -c "DELETE FROM approval_requests WHERE requesting_client_label IN ('Dev Seed','Claude Desktop','BL4CK Mobile');"
 ```
 
 - [ ] **Step 16.9: Commit a verification note**

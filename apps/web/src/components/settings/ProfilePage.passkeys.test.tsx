@@ -54,7 +54,7 @@ describe('ProfilePage passkey management', () => {
   it('starts passkey registration with currentPassword and verifies the browser credential', async () => {
     const registrationOptions = {
       challenge: 'register-challenge',
-      rp: { name: 'Breeze' },
+      rp: { name: 'BL4CK' },
       user: { id: 'user-1', name: 'casey@example.com', displayName: 'Casey Admin' },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
     };

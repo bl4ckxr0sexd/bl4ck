@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver the per-device `helper_auth_token` to the Breeze Assist Helper over the existing authenticated agent IPC channel (kernel peer-auth + binary-hash allowlist) instead of the world-readable `agent.yaml`, closing security-review finding HIGH-1.
+**Goal:** Deliver the per-device `helper_auth_token` to the BL4CK Assist Helper over the existing authenticated agent IPC channel (kernel peer-auth + binary-hash allowlist) instead of the world-readable `agent.yaml`, closing security-review finding HIGH-1.
 
 **Architecture:** Reuse the Go agent's existing IPC (`agent/internal/ipc` + `agent/internal/sessionbroker`). Add a least-privilege `assist` role/scope and a dedicated `helper_token_update` message so the helper token never shares a path with the watchdog's agent token. Add a focused Rust IPC client to the Tauri Helper (`apps/helper/src-tauri`) that authenticates, receives the token into memory, and feeds it to the existing `helper_fetch`. Two-phase rollout: **Phase 1 (this plan)** ships IPC delivery while the agent *still* writes the token to `agent.yaml` (file fallback retained); **Phase 2 (separate, gated release)** stops writing the file and removes the fallback.
 
@@ -118,7 +118,7 @@ In `agent/internal/ipc/message.go`, add `HelperRoleAssist` next to the existing 
 	HelperRoleSystem   = "system"
 	HelperRoleUser     = "user"
 	HelperRoleWatchdog = "watchdog"
-	HelperRoleAssist   = "assist" // Breeze Assist Tauri helper; receives helper token only
+	HelperRoleAssist   = "assist" // BL4CK Assist Tauri helper; receives helper token only
 ```
 Add the binary-kind constant next to the existing `HelperBinary*` constants (search for `HelperBinaryUserHelper`):
 ```go
@@ -272,7 +272,7 @@ git commit -m "feat(agent/broker): admit assist role with assist-only scope + no
 
 ---
 
-### Task 3: Allowlist the Breeze Helper binary hash
+### Task 3: Allowlist the BL4CK Helper binary hash
 
 **Files:**
 - Modify: `agent/internal/sessionbroker/broker.go` (trusted-path computation near `:1648-1696`, `allowedHelperPaths`, `RefreshAllowedHashes`)
@@ -312,7 +312,7 @@ Expected: FAIL — assist helper not in trusted paths.
 
 Add the Helper binary to the trusted-path list (mirror the existing watchdog entries discovered in Step 1). On Windows the Helper installs as `breeze-helper.exe`; on macOS the executable lives inside the `.app` bundle. Add a resolver:
 ```go
-// assistHelperBinaryPaths returns candidate install paths for the Breeze Assist
+// assistHelperBinaryPaths returns candidate install paths for the BL4CK Assist
 // helper, derived from the agent install dir. Used so RefreshAllowedHashes
 // allowlists the genuine breeze-helper binary's SHA-256.
 func assistHelperBinaryPaths(agentDir string) []string {
@@ -983,7 +983,7 @@ Register it in the `generate_handler![]` list.
 
 - [ ] **Step 2: Gate the chat UI on readiness**
 
-In the frontend, before the first `helper_fetch`, poll `invoke('helper_token_ready')` (or attempt the call and treat the "still setting up" error as a connecting state). Show a lightweight "Connecting to the Breeze agent…" state until ready, then proceed. Keep this minimal — it mirrors the existing error-state handling already present for missing config.
+In the frontend, before the first `helper_fetch`, poll `invoke('helper_token_ready')` (or attempt the call and treat the "still setting up" error as a connecting state). Show a lightweight "Connecting to the BL4CK agent…" state until ready, then proceed. Keep this minimal — it mirrors the existing error-state handling already present for missing config.
 
 - [ ] **Step 3: Build the frontend**
 
@@ -1060,7 +1060,7 @@ func TestSaveToOmitsHelperTokenFromAgentYAML(t *testing.T) {
 
 - [ ] **Step 4:** Run → PASS. Also `go test -race ./internal/config/...`.
 
-- [ ] **Step 5 (Rust):** Remove the `agent.yaml` branch from `helper_token_from_config` (read from secrets.yaml only, or delete the fn); make `load_agent_config_full` no longer require a token (still require `server_url`/`agent_id`); remove the `file_token` fallback in `helper_fetch` (use `helper_token().get().await.ok_or("Connecting to the Breeze agent…")?`). Update the `:997-1008` test as needed.
+- [ ] **Step 5 (Rust):** Remove the `agent.yaml` branch from `helper_token_from_config` (read from secrets.yaml only, or delete the fn); make `load_agent_config_full` no longer require a token (still require `server_url`/`agent_id`); remove the `file_token` fallback in `helper_fetch` (use `helper_token().get().await.ok_or("Connecting to the BL4CK agent…")?`). Update the `:997-1008` test as needed.
 
 - [ ] **Step 6:** `cargo build && cargo test`; agent `go build ./...`.
 

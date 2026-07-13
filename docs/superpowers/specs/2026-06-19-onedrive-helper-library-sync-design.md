@@ -6,7 +6,7 @@
 
 ## Summary
 
-A new **OneDrive Helper** capability in Breeze RMM that does reliably what
+A new **OneDrive Helper** capability in BL4CK RMM that does reliably what
 Intune does badly: silently mount the right SharePoint document libraries to
 each Windows user based on their group membership, manage the foundational
 OneDrive configuration those mounts depend on, and give the MSP the visibility
@@ -21,7 +21,7 @@ The overall product is **two sub-projects**, built in order:
 | | **Sub-project A — Provisioning + Library Sync** (this spec) | **Sub-project B — Sync Health** (later spec) |
 |---|---|---|
 | Job | Mount the right libraries per user + own base OneDrive config + report state | Detect / fix / alert on sync problems, nudge end users |
-| Depends on | M365 Graph, agent registry/hive writes, config policy | Agent state collection, alert engine, script/remediation, Breeze Helper |
+| Depends on | M365 Graph, agent registry/hive writes, config policy | Agent state collection, alert engine, script/remediation, BL4CK Helper |
 
 **This spec covers Sub-project A only.** Sub-project B is summarized under
 [Deferred to Sub-project B](#deferred-to-sub-project-b).
@@ -179,7 +179,7 @@ Per `CLAUDE.md` + the RLS-coverage contract test:
 4. **Entra group ≠ SharePoint permission** — optional Graph access pre-check to
    avoid generating sync errors.
 5. **Coexistence with existing Intune AutoMount** — both fight over the same
-   keys mid-migration; provide a clean "Breeze owns this now, retire your Intune
+   keys mid-migration; provide a clean "BL4CK owns this now, retire your Intune
    profile" story (and ideally detect existing Intune-managed AutoMount keys in
    the report).
 
@@ -191,7 +191,7 @@ Per `CLAUDE.md` + the RLS-coverage contract test:
   OneDrive.exe); **gate** disruptive fixes (`/reset`, re-link) behind MSP
   approval or a scheduled window; **alert-only** for unfixable (quota, file
   conflicts, expired auth).
-- MSP alerts + **end-user nudge via the Breeze Helper** (per-user toast:
+- MSP alerts + **end-user nudge via the BL4CK Helper** (per-user toast:
   "OneDrive needs your attention"), to close the "broken for months because
   nobody told the user" gap.
 - **KFM backup-*failure* alerting** (A reports KFM state; B alerts on it).

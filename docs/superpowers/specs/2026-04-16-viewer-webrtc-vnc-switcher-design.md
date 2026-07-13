@@ -7,7 +7,7 @@
 
 The Tauri viewer (`apps/viewer`) only speaks WebRTC (with a JPEG/WebSocket fallback). On macOS at the login window, our WebRTC pipeline can capture video but `CGEventPost(kCGHIDEventTap)` is blocked by the OS — input is impossible. macOS Screen Sharing (`screensharingd` on `:5900`, with Apple Remote Desktop authentication) works fine at the login window because Apple ships it with private entitlements we cannot replicate.
 
-Today the workaround uses the **web** noVNC client (`apps/web/src/components/remote/VncViewer.tsx`) opened in a browser tab. The web app already builds a `breeze://vnc?tunnel=...&ws=...` deep link and tries to launch the viewer, but the viewer doesn't handle that scheme and falls back to "Open in Browser." That breaks the workflow operators expect: the desktop window stays inside the Breeze viewer.
+Today the workaround uses the **web** noVNC client (`apps/web/src/components/remote/VncViewer.tsx`) opened in a browser tab. The web app already builds a `breeze://vnc?tunnel=...&ws=...` deep link and tries to launch the viewer, but the viewer doesn't handle that scheme and falls back to "Open in Browser." That breaks the workflow operators expect: the desktop window stays inside the BL4CK viewer.
 
 We also can't currently switch transports mid-session — if a remote user logs out while the operator is connected via WebRTC, the operator gets a black screen and has to manually launch a separate VNC session.
 

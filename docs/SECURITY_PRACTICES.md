@@ -1,8 +1,8 @@
 # Security Practices
 
-Breeze is an RMM platform — it has privileged access to every device it manages. We treat that responsibility as seriously as you do. Security is not a feature we bolted on; it is foundational to every layer of the architecture.
+BL4CK is an RMM platform — it has privileged access to every device it manages. We treat that responsibility as seriously as you do. Security is not a feature we bolted on; it is foundational to every layer of the architecture.
 
-This document describes the security controls, practices, and design decisions in Breeze. It is intended for MSPs evaluating Breeze, security teams conducting assessments, and contributors building on the platform.
+This document describes the security controls, practices, and design decisions in BL4CK. It is intended for MSPs evaluating BL4CK, security teams conducting assessments, and contributors building on the platform.
 
 ---
 
@@ -56,7 +56,7 @@ Every request passes through multiple security layers before reaching applicatio
 
 ### User Authentication
 
-Breeze implements a multi-factor authentication system with defense-in-depth:
+BL4CK implements a multi-factor authentication system with defense-in-depth:
 
 | Control | Implementation |
 |---|---|
@@ -100,7 +100,7 @@ Every entity is scoped to this hierarchy. A user at one organization can never a
 
 ### Database-Level Tenant Isolation
 
-Breeze sets PostgreSQL session variables on every request:
+BL4CK sets PostgreSQL session variables on every request:
 
 ```
 breeze.scope           = 'system' | 'partner' | 'organization'
@@ -209,7 +209,7 @@ Audit baseline remediation additionally uses explicit approval requests with sep
 
 ## Peripheral Control
 
-Breeze includes policy-driven USB/peripheral controls for data-exfiltration resistance and forensic visibility.
+BL4CK includes policy-driven USB/peripheral controls for data-exfiltration resistance and forensic visibility.
 
 ### Policy Model
 
@@ -256,7 +256,7 @@ Breeze includes policy-driven USB/peripheral controls for data-exfiltration resi
 
 ### Secret Encryption Details
 
-Breeze uses versioned, prefixed ciphertext formats so that the storage format is self-describing and rotation is a per-row operation, never a global re-encrypt-or-fail event.
+BL4CK uses versioned, prefixed ciphertext formats so that the storage format is self-describing and rotation is a per-row operation, never a global re-encrypt-or-fail event.
 
 #### Application secrets — `enc:v1:` / `enc:v2:`
 
@@ -270,7 +270,7 @@ Breeze uses versioned, prefixed ciphertext formats so that the storage format is
 - `isEncryptedSecret()` guard prevents double-encryption when the same value is rewritten
 - Active key may carry an `APP_ENCRYPTION_KEY_ID` so future writes are tagged with `enc:v2:`; the keyring lets multiple key versions coexist while migration runs
 
-**Dual-decrypt fallback chain (v0.65.0).** Earlier versions of Breeze derived the secret-encryption key from `JWT_SECRET` (and at one point `SESSION_SECRET`). v0.65.0 made `APP_ENCRYPTION_KEY` mandatory in production but adds a read-only fallback chain so existing rows decrypt transparently after upgrade: a primary-key decrypt failure on an `enc:v1:` row triggers a retry against any `JWT_SECRET` / `SESSION_SECRET` values present in the environment. Successful fallback decryption emits a one-time `[secretCrypto] Decrypted enc:v1: row with legacy fallback key` warning so operators can run `scripts/re-encrypt-secrets.ts` to re-encrypt the row under the dedicated key. New writes always use the active `APP_ENCRYPTION_KEY` — the legacy keys are never used for encryption.
+**Dual-decrypt fallback chain (v0.65.0).** Earlier versions of BL4CK derived the secret-encryption key from `JWT_SECRET` (and at one point `SESSION_SECRET`). v0.65.0 made `APP_ENCRYPTION_KEY` mandatory in production but adds a read-only fallback chain so existing rows decrypt transparently after upgrade: a primary-key decrypt failure on an `enc:v1:` row triggers a retry against any `JWT_SECRET` / `SESSION_SECRET` values present in the environment. Successful fallback decryption emits a one-time `[secretCrypto] Decrypted enc:v1: row with legacy fallback key` warning so operators can run `scripts/re-encrypt-secrets.ts` to re-encrypt the row under the dedicated key. New writes always use the active `APP_ENCRYPTION_KEY` — the legacy keys are never used for encryption.
 
 #### MFA secrets — `mfa:v1:`
 
@@ -299,7 +299,7 @@ Encryption-at-rest rotation procedures (key generation, keyring rollout, re-encr
 
 ## Rate Limiting & Abuse Prevention
 
-Breeze uses Redis-backed sliding window rate limiting. The implementation is **fail-closed** — if Redis is unavailable, requests are denied.
+BL4CK uses Redis-backed sliding window rate limiting. The implementation is **fail-closed** — if Redis is unavailable, requests are denied.
 
 ### Configured Limits
 
@@ -441,7 +441,7 @@ Client IPs in audit logs are derived via `getTrustedClientIp()`, which only hono
 
 ### Audit Baseline Controls
 
-Breeze enforces event-log audit-policy baselines with continuous drift detection:
+BL4CK enforces event-log audit-policy baselines with continuous drift detection:
 
 - Baseline definitions are stored per-org and per-OS (`audit_baselines`)
 - Endpoint policy snapshots are ingested as evidence (`audit_policy_states`)
@@ -456,7 +456,7 @@ Baseline remediation commands (`apply_audit_policy_baseline`) are treated as pri
 
 ## Incident Response Automation
 
-Breeze now includes a structured incident lifecycle API with auditable transitions:
+BL4CK now includes a structured incident lifecycle API with auditable transitions:
 
 - **Lifecycle states**: `detected` -> `analyzing` -> `contained` -> `recovering` -> `closed`
 - **Evidence chain**: evidence entries record who collected it, when, where it is stored, and optional integrity hash
@@ -557,7 +557,7 @@ All scanners run in CI and **block merges** on failure.
 
 ### Production Enforcement
 
-Breeze validates environment configuration on startup:
+BL4CK validates environment configuration on startup:
 
 - Rejects 24 known placeholder/default values
 - Requires explicit `CORS_ALLOWED_ORIGINS` (no wildcards)
@@ -651,11 +651,11 @@ We follow coordinated disclosure. See [SECURITY.md](../SECURITY.md) for:
 
 ## SOC 2 Alignment
 
-Breeze's security controls align with SOC 2 Trust Service Criteria:
+BL4CK's security controls align with SOC 2 Trust Service Criteria:
 
 ### CC6 — Logical and Physical Access Controls
 
-| Criteria | Breeze Implementation |
+| Criteria | BL4CK Implementation |
 |---|---|
 | CC6.1 — Logical access security | JWT + MFA + RBAC + API key scoping |
 | CC6.2 — Credentials management | Argon2id passwords, SHA-256 token hashing, AES-256-GCM secrets |
@@ -666,7 +666,7 @@ Breeze's security controls align with SOC 2 Trust Service Criteria:
 
 ### CC7 — System Operations
 
-| Criteria | Breeze Implementation |
+| Criteria | BL4CK Implementation |
 |---|---|
 | CC7.1 — Infrastructure monitoring | Agent health checks, heartbeat monitoring, configurable alerting |
 | CC7.2 — Anomaly detection | Rate limit violation tracking, audit log analysis |
@@ -675,20 +675,20 @@ Breeze's security controls align with SOC 2 Trust Service Criteria:
 
 ### CC8 — Change Management
 
-| Criteria | Breeze Implementation |
+| Criteria | BL4CK Implementation |
 |---|---|
 | CC8.1 — Change authorization | PR-based workflow, CI gate enforcement, code review requirements |
 
 ### CC9 — Risk Mitigation
 
-| Criteria | Breeze Implementation |
+| Criteria | BL4CK Implementation |
 |---|---|
 | CC9.1 — Risk identification | Automated security scanning (5 scanners), AI risk classification engine |
 | CC9.2 — Vendor risk management | Dependency lock files, supply chain scanning, known vulnerability databases |
 
 ### A1 — Availability
 
-| Criteria | Breeze Implementation |
+| Criteria | BL4CK Implementation |
 |---|---|
 | A1.1 — Processing capacity | Redis-backed rate limiting, BullMQ queue management |
 | A1.2 — Recovery objectives | RTO < 1 hour, RPO < 15 minutes |
@@ -696,7 +696,7 @@ Breeze's security controls align with SOC 2 Trust Service Criteria:
 
 ### C1 — Confidentiality
 
-| Criteria | Breeze Implementation |
+| Criteria | BL4CK Implementation |
 |---|---|
 | C1.1 — Confidential data identification | Multi-tenant isolation, encryption key hierarchy |
 | C1.2 — Confidential data disposal | Audit log retention policies, S3 archival, configurable retention |
@@ -728,4 +728,4 @@ Breeze's security controls align with SOC 2 Trust Service Criteria:
 
 *Last updated: May 2026 (v0.65.0 cross-cutting hardening release)*
 
-*For questions about Breeze security practices, contact [security@lanternops.io](mailto:security@lanternops.io).*
+*For questions about BL4CK security practices, contact [security@lanternops.io](mailto:security@lanternops.io).*

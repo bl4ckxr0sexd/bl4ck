@@ -6,7 +6,7 @@
 
 ## Problem
 
-Self-hosters running Breeze have no in-app signal that their Web or API is behind the latest release. They have to manually check GitHub Releases and compare against the version string in the sidebar footer ([Sidebar.tsx:544](apps/web/src/components/layout/Sidebar.tsx#L544)). Result: deployments drift, missing security/bug fixes (e.g. #646 hosted-SaaS download URL bug, agent manifest trust root #612) until someone notices externally.
+Self-hosters running BL4CK have no in-app signal that their Web or API is behind the latest release. They have to manually check GitHub Releases and compare against the version string in the sidebar footer ([Sidebar.tsx:544](apps/web/src/components/layout/Sidebar.tsx#L544)). Result: deployments drift, missing security/bug fixes (e.g. #646 hosted-SaaS download URL bug, agent manifest trust root #612) until someone notices externally.
 
 ## Goal
 

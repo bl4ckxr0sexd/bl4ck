@@ -7,7 +7,7 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Device Reliability tracks the operational health of every managed device in your fleet by collecting crash events, application hangs, service failures, hardware errors, and uptime data. The system computes a reliability score from 0 to 100 for each device using a weighted formula, identifies trend direction over time using linear regression, and surfaces the top issues affecting each device. Scores are recomputed automatically each time new telemetry arrives from the agent.
 
-The Breeze agent collects reliability telemetry from platform-specific event sources: Windows Event Log, macOS system logs, and Linux journal/syslog. Each heartbeat cycle, the agent sends a snapshot of recent events to the API, which stores the raw history and then triggers an asynchronous score computation via BullMQ (with an inline fallback if the queue is unavailable).
+The BL4CK agent collects reliability telemetry from platform-specific event sources: Windows Event Log, macOS system logs, and Linux journal/syslog. Each heartbeat cycle, the agent sends a snapshot of recent events to the API, which stores the raw history and then triggers an asynchronous score computation via BullMQ (with an inline fallback if the queue is unavailable).
 
 ---
 
@@ -46,7 +46,7 @@ The reliability score is a weighted composite of five sub-scores, each calculate
 
 Not every device should be judged the same way. A server or network device is *expected* to stay powered on, so its uptime is a meaningful reliability signal. A laptop or desktop workstation is *expected* to sleep and shut down every day — penalizing it for that would produce a misleadingly low score.
 
-Breeze therefore uses two weighting profiles based on device type:
+BL4CK therefore uses two weighting profiles based on device type:
 
 - **Servers, NAS, and network gear (and other always-on roles)** — uptime counts for 30% of the score, as in the table below.
 - **Workstations (laptops and desktops)** — uptime is **not** counted at all. The weight that uptime would have carried is redistributed across the fault factors that actually indicate a problem (crashes, hangs, service failures, hardware errors).
@@ -74,7 +74,7 @@ The five sub-scores are combined using the weighted factors in the table above. 
 
   As of v0.86.0, the same classification cleanup applies to macOS and Linux devices, and runs **server-side** — so those scores shift when your server is upgraded to v0.86.0, regardless of agent version (the server also cleans historical data and data from devices still on older agents). The v0.85.0 Windows improvement, by contrast, takes effect as agents are promoted.
 
-  v0.89.0 adds two further server-side corrections: memory/disk event IDs are only counted as hardware errors when they come from a genuine hardware source (see [Hardware Errors](#hardware-errors)), and failures of Breeze's own services no longer count against the service-failure factor (see [Service Failures](#service-failures)). Both apply on the next recompute — affected scores rise without an agent update.
+  v0.89.0 adds two further server-side corrections: memory/disk event IDs are only counted as hardware errors when they come from a genuine hardware source (see [Hardware Errors](#hardware-errors)), and failures of BL4CK's own services no longer count against the service-failure factor (see [Service Failures](#service-failures)). Both apply on the next recompute — affected scores rise without an agent update.
 </Aside>
 
 ### Trend Direction
@@ -138,7 +138,7 @@ Detected when system services terminate unexpectedly or fail to start.
 | `recovered` | boolean | Whether the service auto-recovered |
 
 <Aside type="note">
-  Failures of Breeze's own agent, watchdog, and helper services do **not** count against the reliability score. These are most commonly logged during agent auto-updates, when the operating system briefly reports the Breeze service as "terminated unexpectedly" — indistinguishable at the OS level from a real crash. The events are still recorded and remain visible in the failure counts and the offenders drill-down, annotated "from Breeze services, not scored" — they just don't lower the score.
+  Failures of BL4CK's own agent, watchdog, and helper services do **not** count against the reliability score. These are most commonly logged during agent auto-updates, when the operating system briefly reports the BL4CK service as "terminated unexpectedly" — indistinguishable at the OS level from a real crash. The events are still recorded and remain visible in the failure counts and the offenders drill-down, annotated "from BL4CK services, not scored" — they just don't lower the score.
 </Aside>
 
 ### Hardware Errors
@@ -194,7 +194,7 @@ Hardware errors are further classified by severity:
     - **System crashes**: Critical-level system events containing "shutdown"
     - **Hardware errors**: Messages with "i/o error" or "memory" keywords
 
-    **v0.86.0 classification improvements**: Breeze now filters macOS reliability data server-side. Non-hardware system-log noise (IOKit plugin chatter, App Store activity, and similar routine messages) no longer inflates the hardware-error count, and routine per-application crash reports are weighted far below a kernel panic. Expect macOS scores to rise after the server is upgraded to v0.86.0 — this applies even to devices still on older agents, because the cleanup runs on the server.
+    **v0.86.0 classification improvements**: BL4CK now filters macOS reliability data server-side. Non-hardware system-log noise (IOKit plugin chatter, App Store activity, and similar routine messages) no longer inflates the hardware-error count, and routine per-application crash reports are weighted far below a kernel panic. Expect macOS scores to rise after the server is upgraded to v0.86.0 — this applies even to devices still on older agents, because the cleanup runs on the server.
   </TabItem>
   <TabItem label="Linux">
     The Linux collector reads from journald/syslog. Detected signals include:
@@ -205,7 +205,7 @@ Hardware errors are further classified by severity:
     - **Process hangs**: Messages containing "hang", "not responding", or "blocked for more than"
     - **Hardware errors**: Messages with "i/o error", "edac", or "mce" keywords
 
-    **v0.86.0 classification improvements**: Breeze now filters Linux reliability data server-side. Routine kernel chatter (USB and ACPI messages, and similar non-fault log noise) no longer inflates the hardware-error count, and routine per-application crash reports are weighted far below a kernel panic. Expect Linux scores to rise after the server is upgraded to v0.86.0 — this applies even to devices still on older agents, because the cleanup runs on the server.
+    **v0.86.0 classification improvements**: BL4CK now filters Linux reliability data server-side. Routine kernel chatter (USB and ACPI messages, and similar non-fault log noise) no longer inflates the hardware-error count, and routine per-application crash reports are weighted far below a kernel panic. Expect Linux scores to rise after the server is upgraded to v0.86.0 — this applies even to devices still on older agents, because the cleanup runs on the server.
   </TabItem>
 </Tabs>
 
@@ -226,11 +226,11 @@ The **Devices** list includes a sortable **Reliability** column. Each device sho
 Open a device and find the **Reliability** card. It is designed to explain the score, not just display it:
 
 - **All five factors as rows.** Every factor (uptime, crashes, application hangs, service failures, hardware errors) is shown as a row with its points earned out of points available (e.g. "18 / 36 pts"), so you can see how the rows sum to the total score. Rows are sorted worst-first; hovering a row shows the exact figures. A weight-segmented score bar above the rows shows each factor's share of the score at a glance.
-- **Humanized evidence per factor.** Problem factors show a plain-language evidence line (e.g. "24 in 30d · 11 in last 7d · 3 recovered"). Where per-event data exists (service failures, hardware errors, hangs), a **details** link expands a drill-down listing the top offending services, hardware components, and processes with event counts and last-occurrence dates. Service failures caused by Breeze's own agent/watchdog/helper services are annotated "from Breeze services, not scored."
+- **Humanized evidence per factor.** Problem factors show a plain-language evidence line (e.g. "24 in 30d · 11 in last 7d · 3 recovered"). Where per-event data exists (service failures, hardware errors, hangs), a **details** link expands a drill-down listing the top offending services, hardware components, and processes with event counts and last-occurrence dates. Service failures caused by BL4CK's own agent/watchdog/helper services are annotated "from BL4CK services, not scored."
 - **Headline stat.** Servers and always-on infrastructure show 30-day uptime as the headline stat. Workstations — where uptime carries no weight — instead show **Biggest drag**: the factor costing the most points and its 30-day event count, so the headline is always meaningful.
 - **Trend and MTBF** are shown alongside the score, and the "At risk" badge (score ≤ 70) names the biggest-drag factor in its tooltip.
 
-One action is available: **Ask AI about reliability** — hands the device's reliability snapshot to the Breeze AI assistant for a plain-language diagnosis and suggested next steps.
+One action is available: **Ask AI about reliability** — hands the device's reliability snapshot to the BL4CK AI assistant for a plain-language diagnosis and suggested next steps.
 
 ### Fleet Overview
 
@@ -332,7 +332,7 @@ Each data point in the response represents one day and includes:
 
 ## AI Integration
 
-The Breeze AI assistant can query device reliability data through its built-in tool system. The `query_device_reliability` tool allows natural language questions about fleet reliability to be answered with real data.
+The BL4CK AI assistant can query device reliability data through its built-in tool system. The `query_device_reliability` tool allows natural language questions about fleet reliability to be answered with real data.
 
 The AI tool supports the same filters as the list API: organization, score range, trend direction, issue type, and score bounds. When invoked, it returns the same paginated results with a summary section, allowing the AI to answer questions like:
 

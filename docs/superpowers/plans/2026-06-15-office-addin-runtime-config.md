@@ -137,7 +137,7 @@ Replace the entire contents of `packages/office-addin-core/src/config.ts` with:
  * (scripts/generate-manifest.mjs). config.json covers only the JS bundle.
  */
 export type RuntimeConfig = {
-  /** Origin of the Breeze API, no trailing slash, e.g. https://us.2breeze.app */
+  /** Origin of the BL4CK API, no trailing slash, e.g. https://us.2breeze.app */
   apiBaseUrl: string;
   /** Entra app-registration client ID; must equal the API's CLIENT_AI_ENTRA_CLIENT_ID. */
   entraClientId: string;

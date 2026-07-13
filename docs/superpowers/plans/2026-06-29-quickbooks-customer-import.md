@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let a partner browse their QuickBooks customers and import selected ones into Breeze as Organizations, each with one default Site, carrying contact + address data, idempotently.
+**Goal:** Let a partner browse their QuickBooks customers and import selected ones into BL4CK as Organizations, each with one default Site, carrying contact + address data, idempotently.
 
 **Architecture:** Implement the stubbed `QuickbooksProvider.listRemoteCustomers` against the QBO query API. A new service (`quickbooksCustomerImport.ts`) fetches customers (handling token refresh) and creates org+site rows under the tenant-create RLS escape (`runOutsideDbContext(() => withSystemDbAccessContext(...))`). Two new routes under `/accounting/:provider` (list + import) mirror the catalog distributor import pattern. A new web component renders a selectable table inside the existing QuickBooks integration panel.
 
@@ -52,7 +52,7 @@
 Create `apps/api/migrations/2026-06-29-org-accounting-external-id.sql`:
 
 ```sql
--- Link Breeze organizations back to the external accounting customer they were
+-- Link BL4CK organizations back to the external accounting customer they were
 -- imported from, so re-imports are idempotent. Generic (provider, external_id)
 -- so Xero can reuse it later. Partial unique index enforces "skip dupes" even
 -- under concurrent imports. Does not change the org RLS tenancy shape.

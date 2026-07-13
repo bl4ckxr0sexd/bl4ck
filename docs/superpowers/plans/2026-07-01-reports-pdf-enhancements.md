@@ -366,10 +366,10 @@ async function emailReportRun(opts: {
       : `Your scheduled report "${opts.reportName}" has been generated.`;
   const attachmentNote =
     attachments.length === 0
-      ? 'Open Breeze to view and download the formatted report.'
+      ? 'Open BL4CK to view and download the formatted report.'
       : attachments[0]!.contentType === 'application/pdf'
         ? 'The formatted report is attached as a PDF.'
-        : 'The data is attached as CSV; open Breeze for the fully formatted report.';
+        : 'The data is attached as CSV; open BL4CK for the fully formatted report.';
   // ... sendEmail call unchanged (subject/html/text/attachments)
 }
 ```

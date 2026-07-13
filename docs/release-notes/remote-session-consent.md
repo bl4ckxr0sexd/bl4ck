@@ -8,7 +8,7 @@
 
 ## Behavior change: remote sessions now show a start notice by default
 
-Starting with this release, every device that has the **Breeze Helper** installed will
+Starting with this release, every device that has the **BL4CK Helper** installed will
 display a brief "Technician X connected to your computer" notification each time a
 remote desktop session starts. A persistent top-center pill ("Remote session active")
 is shown for the duration of the session, and a session-ended notice is sent when
@@ -19,7 +19,7 @@ This is intentional — `session_prompt_mode` defaults to **`notify`** (privacy-
 
 ### Who is affected
 
-- Any managed device running the Breeze Helper (Tauri assist helper).
+- Any managed device running the BL4CK Helper (Tauri assist helper).
 - Devices **without** the Helper (headless / unattended / login-screen only) are
   unaffected: no Helper means no surfaces, and the consent gate uses
   `consent_unavailable_behavior: proceed` by default, so remote sessions are not
