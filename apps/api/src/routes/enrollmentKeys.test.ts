@@ -1329,16 +1329,19 @@ describe("GET /:id/installer/macos — app-bundle path", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/zip");
     const cd = res.headers.get("Content-Disposition") ?? "";
-    expect(cd).toBe('attachment; filename="breeze-agent-macos-installer.zip"');
+    expect(cd).toBe('attachment; filename="bl4ck-agent-macos-installer.zip"');
     expect(cd).not.toContain("ABC1234567");
     expect(res.headers.get("Cache-Control")).toBe("no-store");
 
-    // renameAppInZip was called with correct args
+    // renameAppInZip was called with correct args. oldAppName stays "Breeze
+    // Installer.app" (matches the CI-signed source bundle); the bootstrap payload
+    // name stays hardcoded to match the installer's lookup; only the user-visible
+    // newAppName is rebranded.
     expect(vi.mocked(renameAppInZip)).toHaveBeenCalledWith(
       Buffer.from("fixture-app-zip"),
       expect.objectContaining({
         oldAppName: "Breeze Installer.app",
-        newAppName: "Breeze Installer.app",
+        newAppName: "Bl4ck Installer.app",
         extraFiles: [
           {
             path: "Breeze Installer.bootstrap.json",
@@ -1378,12 +1381,12 @@ describe("GET /:id/installer/macos — app-bundle path", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Disposition") ?? "").toContain(
-      "Breeze Installer [ABC1234567@api.example.com].app.zip",
+      "Bl4ck Installer [ABC1234567@api.example.com].app.zip",
     );
     expect(vi.mocked(renameAppInZip)).toHaveBeenCalledWith(
       Buffer.from("fixture-app-zip"),
       expect.objectContaining({
-        newAppName: "Breeze Installer [ABC1234567@api.example.com].app",
+        newAppName: "Bl4ck Installer [ABC1234567@api.example.com].app",
       }),
     );
     expect(vi.mocked(renameAppInZip).mock.calls[0]?.[1]).not.toHaveProperty(
