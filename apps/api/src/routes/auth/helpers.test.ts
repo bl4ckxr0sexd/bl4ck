@@ -1,6 +1,23 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import type { Context } from 'hono';
 import { createHash } from 'crypto';
-import { getAllowedOrigins, hashRecoveryCode, userRequiresSetup } from './helpers';
+import {
+  getAllowedOrigins,
+  hashRecoveryCode,
+  userRequiresSetup,
+  validateCookieCsrfRequest,
+} from './helpers';
+
+/** Minimal Hono Context stub exposing only header() over a case-insensitive map. */
+function makeCsrfContext(headers: Record<string, string>): Context {
+  const lower = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  return {
+    req: { header: (name: string) => lower.get(name.toLowerCase()) },
+  } as unknown as Context;
+}
+
+const CSRF = 'a'.repeat(64);
+const csrfCookie = `breeze_csrf_token=${CSRF}`;
 
 describe('getAllowedOrigins (G5 — dev-origin gating)', () => {
   const originalNodeEnv = process.env.NODE_ENV;
@@ -49,6 +66,57 @@ describe('getAllowedOrigins (G5 — dev-origin gating)', () => {
 
     expect(origins.has('http://localhost:4321')).toBe(true);
     expect(origins.has('https://app.example.com')).toBe(true);
+  });
+});
+
+describe('validateCookieCsrfRequest (same-origin allowance)', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalCorsOrigins = process.env.CORS_ALLOWED_ORIGINS;
+
+  beforeEach(() => {
+    process.env.NODE_ENV = 'production';
+    // Deliberately do NOT list the request's own origin — reproduces the
+    // misconfig that logged users out on reload (#refresh 403).
+    process.env.CORS_ALLOWED_ORIGINS = 'https://someone-else.example.com';
+  });
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalCorsOrigins === undefined) delete process.env.CORS_ALLOWED_ORIGINS;
+    else process.env.CORS_ALLOWED_ORIGINS = originalCorsOrigins;
+  });
+
+  it('accepts a same-origin request even when the origin is not in the allowlist', () => {
+    const c = makeCsrfContext({
+      'x-breeze-csrf': CSRF,
+      cookie: csrfCookie,
+      origin: 'https://v1.kd3.pro',
+      host: 'v1.kd3.pro',
+      'sec-fetch-site': 'same-origin',
+    });
+    expect(validateCookieCsrfRequest(c)).toBeNull();
+  });
+
+  it('honors X-Forwarded-Host from the reverse proxy for the same-origin match', () => {
+    const c = makeCsrfContext({
+      'x-breeze-csrf': CSRF,
+      cookie: csrfCookie,
+      origin: 'https://v1.kd3.pro',
+      host: 'api-internal:3001',
+      'x-forwarded-host': 'v1.kd3.pro',
+    });
+    expect(validateCookieCsrfRequest(c)).toBeNull();
+  });
+
+  it('still blocks a cross-origin request whose origin is not allowlisted', () => {
+    const c = makeCsrfContext({
+      'x-breeze-csrf': CSRF,
+      cookie: csrfCookie,
+      origin: 'https://evil.example.com',
+      host: 'v1.kd3.pro',
+    });
+    expect(validateCookieCsrfRequest(c)).toBe('Invalid request origin');
   });
 });
 
