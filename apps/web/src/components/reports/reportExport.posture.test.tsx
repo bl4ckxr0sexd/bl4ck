@@ -48,7 +48,7 @@ import { exportReport, type PostureSummary } from './reportExport';
 import type { ReportBranding } from '@breeze/shared/reportPdf';
 
 // Pass branding explicitly so the PDF path never hits the network branding fetch.
-const noBranding: ReportBranding = { name: 'Breeze', logoDataUrl: null, logoAspect: null };
+const noBranding: ReportBranding = { name: 'BL4CK', logoDataUrl: null, logoAspect: null };
 
 const summary: PostureSummary = {
   org: { id: 'o1', name: 'Acme Co' },

@@ -117,7 +117,7 @@ export default function ForcedMfaSetupPage() {
           className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
         >
           Your role requires multi-factor authentication. You must enroll an authenticator app before
-          you can continue using Breeze.
+          you can continue using BL4CK.
         </div>
       )}
 

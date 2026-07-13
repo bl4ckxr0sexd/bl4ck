@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the Breeze Invoice Engine — MSP-bills-customer invoices assembled from time entries, ticket parts, catalog items, bundles, and manual lines, with a draft→sent→partially_paid→overdue→paid→void lifecycle, partial manual payments, async PDF, email, and a read-only customer portal view.
+**Goal:** Build the BL4CK Invoice Engine — MSP-bills-customer invoices assembled from time entries, ticket parts, catalog items, bundles, and manual lines, with a draft→sent→partially_paid→overdue→paid→void lifecycle, partial manual payments, async PDF, email, and a read-only customer portal view.
 
 **Architecture:** Materialize-on-draft (source rows are snapshot-copied into `invoice_lines` immediately; lines are editable until issue, then frozen). All pricing flows through the shipped `catalogService.resolvePrice` / `computeBundleEconomics`. Service-layer-first: all logic in `invoiceService` + pure helpers; routes, AI tools, portal, and BullMQ jobs are thin consumers. RLS shape 1 (direct/denormalized `org_id`) on all three core tables; partner-axis sequence table for numbering.
 

@@ -5,7 +5,7 @@ description: Detect and audit software installs, service changes, network modifi
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Change Tracking gives you a continuous audit trail of what changed on every managed device. The Breeze agent monitors six categories of system changes -- software installs and removals, Windows service modifications, startup item additions, network adapter changes, scheduled task updates, and user account mutations -- and ships them to the API in compressed batches. Every change is fingerprinted with a SHA-256 hash to prevent duplicates, then stored with before/after snapshots so you can see exactly what was modified.
+Change Tracking gives you a continuous audit trail of what changed on every managed device. The BL4CK agent monitors six categories of system changes -- software installs and removals, Windows service modifications, startup item additions, network adapter changes, scheduled task updates, and user account mutations -- and ships them to the API in compressed batches. Every change is fingerprinted with a SHA-256 hash to prevent duplicates, then stored with before/after snapshots so you can see exactly what was modified.
 
 This feature is designed for compliance auditing, troubleshooting, and drift detection. When a user reports that something stopped working, you can pull up the device's change timeline and see that a critical service was disabled 20 minutes earlier. When you need to prove to an auditor that no unauthorized software was installed, the change log provides cryptographically deduplicated evidence.
 

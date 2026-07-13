@@ -6,7 +6,7 @@
 
 **Architecture:** Invert today's user-helper-IPC design. The always-running, elevated SYSTEM agent becomes the patch engine: it resolves (and, where absent, provisions) winget, then runs `winget ... --scope machine` directly in-process. The user-helper winget path is retired. Nothing above the agent changes — patches keep flowing as `source='third_party'` into existing ingestion, approval rings, `patchJobExecutor`, and compliance.
 
-**Tech Stack:** Go (agent), `os/exec` for winget/DISM/PowerShell, `crypto/sha256` + `net/http` for artifact fetch/verify, existing `config` manifest-key infra; TypeScript/Hono (Breeze API artifact mirror endpoint).
+**Tech Stack:** Go (agent), `os/exec` for winget/DISM/PowerShell, `crypto/sha256` + `net/http` for artifact fetch/verify, existing `config` manifest-key infra; TypeScript/Hono (BL4CK API artifact mirror endpoint).
 
 ## Global Constraints
 
@@ -15,7 +15,7 @@
 - **SYSTEM context, no login dependency.** Provider registration gates on bootstrap success, NOT on `sessionBroker != nil`.
 - **Exactly one winget provider** registered at a time. The user-helper winget registration is removed.
 - **Supply chain:** every downloaded bootstrap artifact MUST be SHA-256 verified against a Breeze-served manifest before use; the manifest is Ed25519-signed and verified with the existing `config` manifest public keys. No unpinned "latest" runtime fetch. On hash/signature mismatch: abort provision, report `unavailable`, do NOT install.
-- **No new required endpoint egress** on customer machines: bootstrap artifacts come from the Breeze API (`ServerURL`), never github.com / aka.ms / nuget.org.
+- **No new required endpoint egress** on customer machines: bootstrap artifacts come from the BL4CK API (`ServerURL`), never github.com / aka.ms / nuget.org.
 - **Skip-and-report on bootstrap failure.** Never crash or block the patch scan loop.
 - **winget provider `ID()` stays `"winget"`** so `heartbeat.go` provider→source mapping (`third_party`) is unchanged.
 - **No internal infra values (IPs/hostnames) in tracked files.**
@@ -383,7 +383,7 @@ git commit -m "feat(agent): winget bootstrap decision matrix (use/provision/unav
 
 ### Task 4: Artifact fetch + SHA-256 verification (Breeze-served)
 
-Download a pinned bootstrap artifact from the Breeze API and verify its SHA-256 before use. Signature verification of the manifest reuses existing `config` keys (call site referenced; hashing is stdlib).
+Download a pinned bootstrap artifact from the BL4CK API and verify its SHA-256 before use. Signature verification of the manifest reuses existing `config` keys (call site referenced; hashing is stdlib).
 
 **Files:**
 - Modify: `agent/internal/patching/winget_bootstrap_windows.go` (add fetch/verify helpers)
@@ -506,7 +506,7 @@ func fetchArtifact(client *http.Client, baseURL string, ref artifactRef) ([]byte
 
 Consolidate imports at the top of the file (merge with Task 3's block).
 
-NOTE for implementer: the artifact **manifest** (the JSON listing `artifactRef`s + version) is fetched from the Breeze endpoint added in Task 8 and its Ed25519 signature verified with the existing manifest public keys in `agent/internal/config/manifestkeys.go` (mirror the verification call used in `agent/internal/updater/updater.go`). Wire that in Task 6 where the bootstrap is orchestrated; this task only covers per-file hash verification.
+NOTE for implementer: the artifact **manifest** (the JSON listing `artifactRef`s + version) is fetched from the BL4CK endpoint added in Task 8 and its Ed25519 signature verified with the existing manifest public keys in `agent/internal/config/manifestkeys.go` (mirror the verification call used in `agent/internal/updater/updater.go`). Wire that in Task 6 where the bootstrap is orchestrated; this task only covers per-file hash verification.
 
 - [ ] **Step 4: Run, expect pass**
 
@@ -755,7 +755,7 @@ func EnsureWinget(deps EnsureDeps) EnsureResult {
 }
 ```
 
-NOTE for implementer: production wiring builds `EnsureDeps` from `newWingetLocator().Locate`, `func() bool { return appxStackAvailable(defaultRunner) }`, and a `Provision` closure that (1) fetches the signed artifact manifest from the Breeze API (`config` ServerURL) verifying its Ed25519 signature per `updater/updater.go`, (2) `fetchArtifact`s each ref to a temp dir, (3) runs `powershell.exe buildProvisionArgs(...)` via `defaultRunner`. `defaultRunner` is a thin `os/exec` wrapper with `hideWindow`. Keep that assembly in a non-test function `newEnsureDeps(cfg *config.Config) EnsureDeps`; it is exercised by the integration test in Task 10, not unit tests.
+NOTE for implementer: production wiring builds `EnsureDeps` from `newWingetLocator().Locate`, `func() bool { return appxStackAvailable(defaultRunner) }`, and a `Provision` closure that (1) fetches the signed artifact manifest from the BL4CK API (`config` ServerURL) verifying its Ed25519 signature per `updater/updater.go`, (2) `fetchArtifact`s each ref to a temp dir, (3) runs `powershell.exe buildProvisionArgs(...)` via `defaultRunner`. `defaultRunner` is a thin `os/exec` wrapper with `hideWindow`. Keep that assembly in a non-test function `newEnsureDeps(cfg *config.Config) EnsureDeps`; it is exercised by the integration test in Task 10, not unit tests.
 
 - [ ] **Step 4: Run, expect pass**
 
@@ -980,9 +980,9 @@ git commit -m "feat(agent): SYSTEM-context winget provider (machine scope, winge
 
 ---
 
-### Task 8: Breeze API — signed winget bootstrap artifact manifest + files
+### Task 8: BL4CK API — signed winget bootstrap artifact manifest + files
 
-Serve the pinned App Installer bundle set + a signed manifest from the Breeze API, mirroring the existing signed-artifact pattern.
+Serve the pinned App Installer bundle set + a signed manifest from the BL4CK API, mirroring the existing signed-artifact pattern.
 
 **Files:**
 - Create: `apps/api/src/routes/agents/wingetBootstrap.ts`

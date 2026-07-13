@@ -6,7 +6,7 @@
 
 ## Summary
 
-Let an MSP connect their own Microsoft 365 shared support mailbox (e.g. `support@msp.com`) directly to Breeze ticketing via Microsoft Graph, so inbound customer email becomes tickets and outbound replies are sent from that real mailbox — with **no MX changes and no forwarding rules**. Breeze reads and sends through the mailbox using an app-only (client-credentials) Graph connection that the MSP's Global Admin consents to once.
+Let an MSP connect their own Microsoft 365 shared support mailbox (e.g. `support@msp.com`) directly to BL4CK ticketing via Microsoft Graph, so inbound customer email becomes tickets and outbound replies are sent from that real mailbox — with **no MX changes and no forwarding rules**. BL4CK reads and sends through the mailbox using an app-only (client-credentials) Graph connection that the MSP's Global Admin consents to once.
 
 This is the API-based realization of the "Model B custom-domain" inbound path that Phase 4 deferred. It bolts a new feeder (delta-poll worker) and a new sender (Graph reply) onto the **existing** email-to-ticket pipeline; the core `processInboundEmail` / ticketing / SLA logic is unchanged.
 
@@ -16,8 +16,8 @@ Microsoft Teams is explicitly **out of scope** here and will be specced separate
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Auth model | App-only client-credentials, single multi-tenant Breeze Azure app, per-MSP admin consent | Survives staff turnover; true service-account; no per-user token. Microsoft retired Basic Auth + EWS, so OAuth/Graph is the only path. |
-| App registration | **Separate** "Breeze Ticketing" app (own `TICKET_MAILBOX_M365_CLIENT_ID/SECRET`), distinct from the existing C2C backup app | Least privilege (only `Mail.ReadWrite` + `Mail.Send`); clean per-feature Application Access Policy scoping; admin consents to mail permissions separately from backup. |
+| Auth model | App-only client-credentials, single multi-tenant BL4CK Azure app, per-MSP admin consent | Survives staff turnover; true service-account; no per-user token. Microsoft retired Basic Auth + EWS, so OAuth/Graph is the only path. |
+| App registration | **Separate** "BL4CK Ticketing" app (own `TICKET_MAILBOX_M365_CLIENT_ID/SECRET`), distinct from the existing C2C backup app | Least privilege (only `Mail.ReadWrite` + `Mail.Send`); clean per-feature Application Access Policy scoping; admin consents to mail permissions separately from backup. |
 | Tenancy axis | Per-partner (MSP's own support mailbox) | Matches existing partner-axis email-to-ticket model (`partner_inbound_domains`, partner-scoped ingest). |
 | Inbound delivery | Scheduled **delta-query polling** (no webhooks) | No public webhook validation, no subscription renewal, naturally resilient to downtime. ~60–90s latency acceptable. |
 | Mailbox hygiene | **Mark ingested messages read** (`Mail.ReadWrite`) | Human-visible mailbox reflects handled state; non-destructive. Delta cursor + dedup index are the real idempotency guarantee. |
@@ -85,7 +85,7 @@ ticket.assigned / tech notes ─────────────────
 | `created_by` uuid / `created_at` / `updated_at` | |
 
 - Unique `(partner_id, mailbox_address)`. Multiple mailboxes per partner allowed.
-- **No secret column.** Breeze's app secret lives in env; per-partner we store only the non-sensitive tenant GUID.
+- **No secret column.** BL4CK's app secret lives in env; per-partner we store only the non-sensitive tenant GUID.
 - App-only tokens are short-lived and **cached in-memory** keyed by `tenant_id` (re-acquired on 5-min buffer via `acquireClientCredentialsToken`). No token persisted; no refresh rotation (client-credentials has no refresh token). `delta_link` is the only durable cursor.
 
 ### RLS / tenancy contract (per CLAUDE.md)
@@ -130,8 +130,8 @@ In `ticketNotifyWorker`, customer-facing branches (`ticket.commented` public, re
 "Connect Microsoft 365 mailbox" card in partner ticketing settings (admin + MFA-gated, mirroring the accounting card):
 1. Admin enters support mailbox address → **Connect** → `GET …/mailbox/connect` builds admin-consent URL (`buildAdminConsentUrl`, signed-state JWT + CSRF cookie), redirects browser. Row created `status='pending_consent'`.
 2. Callback (`GET …/mailbox/callback`, **unauthenticated at middleware** — Microsoft redirects the browser with no Bearer; authenticated via signed state + cookie; written under system context) captures `?tenant=` GUID, persists it.
-3. Breeze probes: acquire token + `GET /users/{mailbox}/messages?$top=1`. Success → `connected`; failure (commonly Application Access Policy not yet scoped) → `error` with remediation hint.
-4. **Documented admin step:** MSP admin runs `New-ApplicationAccessPolicy` (Exchange Online PowerShell) to scope Breeze's app to *only* the support mailbox (least privilege — `Mail.ReadWrite`/`Mail.Send` are tenant-wide otherwise). Card shows the exact snippet with their mailbox + Breeze's app id. **Re-test** button re-runs the probe.
+3. BL4CK probes: acquire token + `GET /users/{mailbox}/messages?$top=1`. Success → `connected`; failure (commonly Application Access Policy not yet scoped) → `error` with remediation hint.
+4. **Documented admin step:** MSP admin runs `New-ApplicationAccessPolicy` (Exchange Online PowerShell) to scope BL4CK's app to *only* the support mailbox (least privilege — `Mail.ReadWrite`/`Mail.Send` are tenant-wide otherwise). Card shows the exact snippet with their mailbox + BL4CK's app id. **Re-test** button re-runs the probe.
 
 Disconnect → `status='disabled'`, stops polling, drops cached token (admin separately revokes consent in Entra — show the link).
 

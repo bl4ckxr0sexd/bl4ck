@@ -1,6 +1,6 @@
 ---
 title: Code Signing
-description: Code signing for Breeze agent, viewer, and helper binaries on Windows and macOS.
+description: Code signing for BL4CK agent, viewer, and helper binaries on Windows and macOS.
 sidebar:
   order: 7
   label: Code Signing
@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-All Breeze release binaries — the agent, the native viewer, and the Helper tray app — are code-signed to establish authenticity and prevent tampering warnings from operating system gatekeepers and endpoint security tools.
+All BL4CK release binaries — the agent, the native viewer, and the Helper tray app — are code-signed to establish authenticity and prevent tampering warnings from operating system gatekeepers and endpoint security tools.
 
 ---
 
@@ -29,12 +29,12 @@ The CI/CD release pipeline signs the following artifacts:
 
 | Artifact | Platform | Format | Signing Method |
 |----------|----------|--------|----------------|
-| Breeze Agent | Windows | `.exe`, `.msi` | Azure Code Signing (EV certificate) |
-| Breeze Agent | macOS | `.pkg`, binary | Apple Developer ID + notarization |
-| Breeze Viewer | Windows | `.exe`, `.msi` | Azure Code Signing (EV certificate) |
-| Breeze Viewer | macOS | `.app`, `.dmg` | Apple Developer ID + notarization |
-| Breeze Helper | Windows | `.exe` | Azure Code Signing (EV certificate) |
-| Breeze Helper | macOS | `.app` | Apple Developer ID + notarization |
+| BL4CK Agent | Windows | `.exe`, `.msi` | Azure Code Signing (EV certificate) |
+| BL4CK Agent | macOS | `.pkg`, binary | Apple Developer ID + notarization |
+| BL4CK Viewer | Windows | `.exe`, `.msi` | Azure Code Signing (EV certificate) |
+| BL4CK Viewer | macOS | `.app`, `.dmg` | Apple Developer ID + notarization |
+| BL4CK Helper | Windows | `.exe` | Azure Code Signing (EV certificate) |
+| BL4CK Helper | macOS | `.app` | Apple Developer ID + notarization |
 
 ---
 
@@ -107,7 +107,7 @@ spctl --assess --verbose /path/to/breeze-agent
 
 ## Installer Download Signing
 
-When you download a pre-configured MSI installer from the dashboard or a public installer link, Breeze can automatically code-sign the installer before delivery. This ensures that the patched MSI — which contains your enrollment key and site assignment — is trusted by Windows SmartScreen and antivirus tools.
+When you download a pre-configured MSI installer from the dashboard or a public installer link, BL4CK can automatically code-sign the installer before delivery. This ensures that the patched MSI — which contains your enrollment key and site assignment — is trusted by Windows SmartScreen and antivirus tools.
 
 ### How it works
 

@@ -269,7 +269,7 @@ describe('HuntressIntegration', () => {
     );
   });
 
-  it('maps a discovered Huntress organization to a Breeze organization', async () => {
+  it('maps a discovered Huntress organization to a BL4CK organization', async () => {
     const user = userEvent.setup();
     useOrgStore.setState({ currentOrgId: null });
     mockPartnerLoad({ integration: existingIntegration, mappings: [discoveredHuntressOrg] });
@@ -445,11 +445,11 @@ describe('HuntressIntegration', () => {
     await waitFor(() => expect(screen.getByText('Example Org A')).toBeInTheDocument());
     expect(screen.getByText('Example Org B')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText(/Search Huntress or Breeze organizations/), { target: { value: 'example org b' } });
+    fireEvent.change(screen.getByPlaceholderText(/Search Huntress or BL4CK organizations/), { target: { value: 'example org b' } });
     expect(screen.queryByText('Example Org A')).not.toBeInTheDocument();
     expect(screen.getByText('Example Org B')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText(/Search Huntress or Breeze organizations/), { target: { value: '' } });
+    fireEvent.change(screen.getByPlaceholderText(/Search Huntress or BL4CK organizations/), { target: { value: '' } });
     fireEvent.click(screen.getByLabelText('Unmapped only'));
     expect(screen.queryByText('Example Org A')).not.toBeInTheDocument();
     expect(screen.getByText('Example Org B')).toBeInTheDocument();

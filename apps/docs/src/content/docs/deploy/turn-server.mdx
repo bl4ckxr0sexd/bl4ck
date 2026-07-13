@@ -10,14 +10,14 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 WebRTC remote desktop and terminal sessions need a TURN relay when a direct peer-to-peer connection is not possible — symmetric NAT, restrictive corporate firewalls, or carrier-grade NAT all prevent direct connections. Without TURN, these sessions will fail for affected users.
 
-The Breeze `docker-compose.yml` includes a bundled coturn container that works when the server has a public IP. However, if your Breeze stack runs behind Cloudflare Tunnel (or any other tunnel/proxy that only handles HTTP), **TURN must run on a separate host** because TURN uses UDP, which tunnels cannot carry.
+The BL4CK `docker-compose.yml` includes a bundled coturn container that works when the server has a public IP. However, if your BL4CK stack runs behind Cloudflare Tunnel (or any other tunnel/proxy that only handles HTTP), **TURN must run on a separate host** because TURN uses UDP, which tunnels cannot carry.
 
 ## Architecture Options
 
 | Setup | TURN Location | When to use |
 |---|---|---|
-| **Bundled** | Same host as Breeze | Server has a public IP with UDP ports open |
-| **External** | Dedicated VPS | Breeze is behind Cloudflare Tunnel, NAT, or a load balancer that doesn't pass UDP |
+| **Bundled** | Same host as BL4CK | Server has a public IP with UDP ports open |
+| **External** | Dedicated VPS | BL4CK is behind Cloudflare Tunnel, NAT, or a load balancer that doesn't pass UDP |
 
 <Aside type="tip">
   A dedicated TURN server costs as little as $4/month (512 MB RAM is more than enough). coturn is very lightweight — it just relays UDP packets.
@@ -174,11 +174,11 @@ ssh root@YOUR_TURN_IP systemctl status coturn
 
 ---
 
-## Configure Breeze to Use External TURN
+## Configure BL4CK to Use External TURN
 
 ### 1. Update `.env`
 
-Add or update these variables in your Breeze `.env` file:
+Add or update these variables in your BL4CK `.env` file:
 
 ```bash
 TURN_HOST=YOUR_TURN_IP
@@ -207,14 +207,14 @@ The API will now generate TURN credentials pointing to your external TURN server
 
 ## Using the Bundled TURN Server
 
-If your Breeze server has a public IP (not behind a tunnel), the bundled coturn container works out of the box. Set these in `.env`:
+If your BL4CK server has a public IP (not behind a tunnel), the bundled coturn container works out of the box. Set these in `.env`:
 
 ```bash
 TURN_HOST=YOUR_SERVER_PUBLIC_IP
 TURN_SECRET=$(openssl rand -hex 32)
 ```
 
-Then start Breeze with the `turn` profile enabled:
+Then start BL4CK with the `turn` profile enabled:
 
 ```bash
 docker compose --profile turn up -d
@@ -247,7 +247,7 @@ Edit `min-port` and `max-port` in the coturn config and match the firewall rule.
 
 ## How Credentials Work
 
-Breeze uses the TURN **time-limited credential** mechanism (RFC 5766 long-term credentials with a shared secret):
+BL4CK uses the TURN **time-limited credential** mechanism (RFC 5766 long-term credentials with a shared secret):
 
 1. The API receives a request for ICE servers from a desktop-session or viewer-token endpoint.
 2. It verifies the caller is bound to an active desktop session, then generates a temporary username containing the Unix expiry, user/session/device scope, and random nonce.
@@ -265,11 +265,11 @@ Clients never see `TURN_SECRET` — they only receive short-lived derived creden
 - Verify the TURN server is reachable: `nc -z -w 3 TURN_IP 3478` (TCP) and `nc -u -z -w 3 TURN_IP 3478` (UDP)
 - Check coturn logs: `ssh root@TURN_IP journalctl -u coturn -f`
 - Confirm `TURN_HOST` in `.env` matches the TURN server's public IP exactly
-- Ensure the firewall allows **both TCP and UDP** on port 3478 and the relay port range — Breeze advertises `transport=tcp` and `transport=udp` TURN URLs
+- Ensure the firewall allows **both TCP and UDP** on port 3478 and the relay port range — BL4CK advertises `transport=tcp` and `transport=udp` TURN URLs
 
 **Coturn starts but clients can't allocate**
 - Check `external-ip` in `/etc/turnserver.conf` — it must be the server's actual public IP
-- Verify `static-auth-secret` matches `TURN_SECRET` in Breeze's `.env`
+- Verify `static-auth-secret` matches `TURN_SECRET` in BL4CK's `.env`
 - Check for `realm` mismatch between coturn config and `TURN_REALM`
 
 **High bandwidth usage on the TURN server**

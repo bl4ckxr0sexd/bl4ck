@@ -1,6 +1,6 @@
 ---
 title: Upgrade Guide
-description: How to upgrade a self-hosted Breeze RMM deployment to a new version.
+description: How to upgrade a self-hosted BL4CK RMM deployment to a new version.
 sidebar:
   order: 4
   label: Upgrade Guide
@@ -144,7 +144,7 @@ Pins gate *alongside* the update policy and maintenance window, not instead of t
 
 ## Agent Update Scheduling
 
-In addition to the per-device auto-update toggle and the partner-level controlled rollout, Breeze supports a structured **maintenance window** for agent updates. When a maintenance window is configured, agents only accept update signals from the server during the allowed window — outside of it, update prompts are deferred until the next eligible window.
+In addition to the per-device auto-update toggle and the partner-level controlled rollout, BL4CK supports a structured **maintenance window** for agent updates. When a maintenance window is configured, agents only accept update signals from the server during the allowed window — outside of it, update prompts are deferred until the next eligible window.
 
 ### Setting a maintenance window
 
@@ -291,7 +291,7 @@ You can test a release candidate before making it available to users:
    docker compose up -d
    ```
 
-3. **Sync agents to the RC** using the `sync-github` endpoint. This fetches the release assets from GitHub and registers them in the Breeze database so agents know a new version is available.
+3. **Sync agents to the RC** using the `sync-github` endpoint. This fetches the release assets from GitHub and registers them in the BL4CK database so agents know a new version is available.
 
    ```bash
    curl -X POST "https://your-domain/api/v1/agent-versions/sync-github?version=v0.11.3-rc.1" \

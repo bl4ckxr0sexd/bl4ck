@@ -1,4 +1,4 @@
-# Breeze RMM — Enterprise Backup: Next Phases
+# BL4CK RMM — Enterprise Backup: Next Phases
 
 ## Context
 
@@ -140,7 +140,7 @@ On Windows, VSS (Phase 1) runs first for consistency — system state files are 
 
 ### 3B: Bare Metal Recovery
 
-Recovery approach: fresh OS install → Breeze agent install → agent restores system state + files → post-restore fixup.
+Recovery approach: fresh OS install → BL4CK agent install → agent restores system state + files → post-restore fixup.
 
 **New package**: `agent/internal/backup/bmr/`
 
@@ -152,11 +152,11 @@ Recovery approach: fresh OS install → Breeze agent install → agent restores 
 | `restore_linux.go` | Apply Linux state: restore `/etc/`, reinstall packages from saved list, restore systemd configs, apply firewall rules, restore crontabs |
 | `drivers_windows.go` | Inject drivers from the backup's driver pack into the fresh OS (`pnputil /add-driver *.inf /install /subdirs`) — handles dissimilar hardware by matching PnP device IDs |
 | `validate.go` | Post-restore validation: verify services started, network connectivity, critical files present, boot config intact |
-| `reenroll.go` | Re-enrollment: agent maps back to original device record in Breeze API, preserving history |
+| `reenroll.go` | Re-enrollment: agent maps back to original device record in BL4CK API, preserving history |
 
 **Recovery media**: Rather than building custom WinPE ISOs (massive complexity), provide:
-1. **Recovery guide generator** — API generates a device-specific PDF/HTML recovery runbook with: hardware profile, OS version, required drivers download link, step-by-step instructions, Breeze agent installer URL with pre-configured recovery token
-2. **PXE/network boot** (optional) — iPXE script that chain-loads a standard OS installer + injects Breeze agent auto-install script
+1. **Recovery guide generator** — API generates a device-specific PDF/HTML recovery runbook with: hardware profile, OS version, required drivers download link, step-by-step instructions, BL4CK agent installer URL with pre-configured recovery token
+2. **PXE/network boot** (optional) — iPXE script that chain-loads a standard OS installer + injects BL4CK agent auto-install script
 3. **Recovery token** — one-time auth token that lets a freshly installed agent identify itself as a recovery target and pull the right backup
 
 **New table**:
@@ -184,13 +184,13 @@ CREATE TABLE recovery_tokens (
 **Bare metal recovery flow**:
 1. Admin generates recovery token from web UI for a device's latest backup
 2. Admin installs fresh OS on replacement hardware (standard process, or PXE)
-3. Admin installs Breeze agent with recovery token: `breeze-agent install --recovery-token=<token>`
+3. Admin installs BL4CK agent with recovery token: `breeze-agent install --recovery-token=<token>`
 4. Agent authenticates with API, downloads system state + file backup
 5. Agent applies system state (registry, drivers, certs, services, configs)
 6. Agent restores all backed-up files to original paths
 7. Agent validates (services running, network up, critical files present)
 8. Agent re-enrolls with original device record, reboot recommended
-9. Device shows up in Breeze dashboard with restored history
+9. Device shows up in BL4CK dashboard with restored history
 
 ### 3C: VM Restore (from System State + File Backups)
 
@@ -209,7 +209,7 @@ Restore a backed-up machine as a new VM — useful for P2V migration or spinning
 2. Chooses hypervisor (Hyper-V on a target host device, or download OVA/VHDX)
 3. For Hyper-V on a managed host: API dispatches `vm_restore_from_backup` command to the host agent
 4. Host agent creates VM, mounts blank disk, restores system state + files, injects VM-appropriate drivers, fixes boot config
-5. VM boots with restored OS + data, Breeze agent inside re-enrolls
+5. VM boots with restored OS + data, BL4CK agent inside re-enrolls
 
 **New commands**: `vm_restore_from_backup` (on the target Hyper-V host), `vm_restore_estimate` (returns estimated disk/memory/CPU needs)
 

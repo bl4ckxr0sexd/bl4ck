@@ -11,7 +11,7 @@ vi.mock('../../stores/auth', () => ({
 }));
 
 // PamRequestsTab imports PamRespondModal, which calls getApprovalAssertion in the
-// approve flow (Breeze Authenticator step-up). Mock it to the graceful "no approver
+// approve flow (BL4CK Authenticator step-up). Mock it to the graceful "no approver
 // device" path so it never runs the real WebAuthn ceremony or issues its own
 // fetchWithAuth — an unmocked call would desequence the shared fetch mock queue and
 // (because vi.clearAllMocks doesn't drain mockResolvedValueOnce) cascade into later

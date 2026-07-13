@@ -1,8 +1,8 @@
-# Breeze AI for Office — Design Spec
+# BL4CK AI for Office — Design Spec
 
 **Date:** 2026-06-12
 **Status:** Approved design, pre-implementation
-**Product:** Excel add-in delivering a governed AI assistant to MSP *client end-users*, with Breeze as the control plane (auth, tenancy, policy, DLP, audit, metering). Client users never see RMM concepts.
+**Product:** Excel add-in delivering a governed AI assistant to MSP *client end-users*, with BL4CK as the control plane (auth, tenancy, policy, DLP, audit, metering). Client users never see RMM concepts.
 
 ## 1. Positioning & decisions
 
@@ -24,15 +24,15 @@ Decisions locked during brainstorm:
 
 1. **Excel add-in** — new app `apps/excel-addin/` (Office.js + React task pane), built on the shared host-neutral `packages/office-addin-core`. Distribution: M365 **centralized deployment** pushed by the MSP via the client tenant's M365 admin center (the MSP already manages these tenants). Sideload manifest for dev. AppSource listing is post-v1.
 2. **Client AI API** — new route namespace `apps/api/src/routes/clientAi/` mounted at `/client-ai/*`. Separate from technician `/ai` routes and portal routes, with its own auth middleware.
-3. **MSP admin surface** — new "AI for Office" section in the existing Breeze web dashboard (no separate app).
+3. **MSP admin surface** — new "AI for Office" section in the existing BL4CK web dashboard (no separate app).
 
 ## 3. Identity & tenancy
 
-- The add-in acquires an Entra ID token silently via Office SSO/NAA (the user is already signed into Excel with their work account). It calls `POST /client-ai/auth/exchange`; Breeze verifies the JWT against Microsoft's JWKS (signature, audience, expiry), extracts `tid` (Entra tenant), `oid`, and email.
+- The add-in acquires an Entra ID token silently via Office SSO/NAA (the user is already signed into Excel with their work account). It calls `POST /client-ai/auth/exchange`; BL4CK verifies the JWT against Microsoft's JWKS (signature, audience, expiry), extracts `tid` (Entra tenant), `oid`, and email.
 - **Interactive fallback:** when silent SSO fails (or for non-centrally-deployed installs), the add-in falls back to an MSAL popup sign-in; first-run user consent lands there too.
-- **Tenant mapping:** `client_ai_tenant_mappings` binds Entra tenant ID → Breeze `org_id`. Unique on tenant ID — a tenant maps to exactly one org. This is the tenant-isolation linchpin. No mapping → the add-in shows "not provisioned by your IT provider."
+- **Tenant mapping:** `client_ai_tenant_mappings` binds Entra tenant ID → BL4CK `org_id`. Unique on tenant ID — a tenant maps to exactly one org. This is the tenant-isolation linchpin. No mapping → the add-in shows "not provisioned by your IT provider."
 - **User principal:** extend `portal_users` (the established end-user concept) with `entraOid`, `entraTenantId`, `authMethod` (`password` | `entra`); `passwordHash` nullable for SSO rows. Users auto-provision on first exchange, subject to org policy (`all` vs `selected` users). Add-in sessions are Redis-backed bearer tokens (24h TTL), org-bound — same shape as portal sessions.
-- **Entra app registration:** one Breeze multi-tenant app; the MSP grants admin consent per client tenant during onboarding.
+- **Entra app registration:** one BL4CK multi-tenant app; the MSP grants admin consent per client tenant during onboarding.
 - **Reuse check (plan-phase task):** the repo already has per-org M365 customer-tenant connections (see `delegantM365ConnectionId` on `ai_sessions` and the M365 integration that established those connections, including its consent flow). Audit it first — best case the onboarding wizard reuses the existing connection's tenant ID and adds one more admin-consent grant for the add-in app, rather than building a parallel consent system.
 
 ## 4. AI loop & session model
@@ -56,7 +56,7 @@ Decisions locked during brainstorm:
 
 ## 6. DLP / redaction pipeline
 
-New service `clientAiDlp.ts`, a single chokepoint: **every payload leaving Breeze for the provider** (user prompt, workbook `tool_result` data, template content) passes through it. Nothing reaches the model un-scanned.
+New service `clientAiDlp.ts`, a single chokepoint: **every payload leaving BL4CK for the provider** (user prompt, workbook `tool_result` data, template content) passes through it. Nothing reaches the model un-scanned.
 
 - **Built-in detectors:** credit cards (Luhn-validated), SSN/national IDs, IBAN, API-key/token shapes, email/phone (off by default). Per-org **custom regex rules**. The existing `aiInputSanitizer` patterns seed this; workbook-scale scanning (thousands of cells per `read_range`) with cell-level granularity is new code.
 - **Per-rule actions:** `redact` (replace with `[REDACTED:type]`; the model sees the redacted form), `block` (refuse the request and tell the user why), `log-only`. Defaults: redact for financial/credential types.
@@ -72,11 +72,11 @@ Fields: `enabled`; user access (`all` | `selected` + user list); `allowedModels`
 
 ## 8. Metering & billing
 
-- Provider spend keeps flowing through the existing partner-level AI-credits integration (`checkBillingCredits` / `deductBillingCredits`) — Breeze bills the MSP; nothing new there.
+- Provider spend keeps flowing through the existing partner-level AI-credits integration (`checkBillingCredits` / `deductBillingCredits`) — BL4CK bills the MSP; nothing new there.
 - New `client_ai_usage` table mirrors the `ai_cost_usage` daily/monthly bucket pattern **plus a per-user dimension**: `(org_id, client_user_id, period, period_key)` → tokens, cost cents, session/message counts. This enables MSP resale invoicing.
-- Dashboard usage report per org/user/month with **CSV export** — the MSP's invoicing artifact. Resale margin is the MSP's business; Breeze does not bill client orgs directly.
+- Dashboard usage report per org/user/month with **CSV export** — the MSP's invoicing artifact. Resale margin is the MSP's business; BL4CK does not bill client orgs directly.
 
-## 9. MSP admin surface (Breeze dashboard)
+## 9. MSP admin surface (BL4CK dashboard)
 
 1. **Onboarding wizard per client org** — reuse/verify existing M365 connection for tenant ID; generate the admin-consent URL for the add-in app registration; poll/confirm consent; write the tenant mapping; link to centralized-deployment instructions. Status chip per org (not provisioned / consent pending / active).
 2. **Policy editor** — all `client_ai_org_policies` knobs; DLP rules get a toggle list for built-ins plus custom-regex entry with a live test box.

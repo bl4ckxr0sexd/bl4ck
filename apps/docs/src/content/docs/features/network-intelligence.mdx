@@ -5,7 +5,7 @@ description: Network baseline computation, change detection, known guest managem
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Network Intelligence extends Breeze's discovery engine with continuous monitoring of your network environment. While discovery answers "what is on this network right now?", Network Intelligence answers "what has changed, what is normal, and what is suspicious?" It tracks network baselines per subnet, detects when devices appear, disappear, or change characteristics, manages known guest devices that should not trigger alerts, records the full IP assignment history of every enrolled device, and fires anomaly alerts when deviations from established patterns occur.
+Network Intelligence extends BL4CK's discovery engine with continuous monitoring of your network environment. While discovery answers "what is on this network right now?", Network Intelligence answers "what has changed, what is normal, and what is suspicious?" It tracks network baselines per subnet, detects when devices appear, disappear, or change characteristics, manages known guest devices that should not trigger alerts, records the full IP assignment history of every enrolled device, and fires anomaly alerts when deviations from established patterns occur.
 
 The system operates on three interconnected pillars: **baselines** that define what normal looks like for a given subnet, **change events** that record every deviation from those baselines, and **known guests** that whitelist expected transient devices so they do not generate noise.
 
@@ -175,7 +175,7 @@ Both policies can be set simultaneously. A device that matches either condition 
 | `acknowledgedBy` | UUID | User who acknowledged |
 | `acknowledgedAt` | timestamp | When acknowledgment occurred |
 | `alertId` | UUID | Linked alert, if one was created |
-| `linkedDeviceId` | UUID | Linked enrolled Breeze device, if resolved |
+| `linkedDeviceId` | UUID | Linked enrolled BL4CK device, if resolved |
 | `notes` | text | Operator notes (up to 2,000 characters) |
 
 ### Viewing Change Events
@@ -318,7 +318,7 @@ The IP History system tracks every IP address assignment for every enrolled devi
 
 ### How IP History is Collected
 
-The Breeze agent reports IP address changes as part of its heartbeat cycle. Each update can include three categories of changes:
+The BL4CK agent reports IP address changes as part of its heartbeat cycle. Each update can include three categories of changes:
 
 | Category | Description |
 |----------|-------------|
@@ -370,7 +370,7 @@ IP history entries are deduplicated by the composite key `(interfaceName, ipAddr
 
 ## Anomaly Alerting
 
-When the baseline comparison engine detects a change event and the corresponding alert setting is enabled, it creates an alert through the standard Breeze alert system.
+When the baseline comparison engine detects a change event and the corresponding alert setting is enabled, it creates an alert through the standard BL4CK alert system.
 
 ### Alert Creation Flow
 
@@ -461,7 +461,7 @@ Alert templates support `{{ variable }}` interpolation with the following contex
 ## Troubleshooting
 
 **Baseline scan stays pending and never completes.**
-Baseline scans are dispatched through BullMQ and require Redis to be running. Verify Redis is accessible with `redis-cli ping`. Also confirm that at least one Breeze agent is online at the baseline's site -- the scan worker selects an online agent from the same site to execute the discovery. Check the API logs for "Background job service unavailable" messages.
+Baseline scans are dispatched through BullMQ and require Redis to be running. Verify Redis is accessible with `redis-cli ping`. Also confirm that at least one BL4CK agent is online at the baseline's site -- the scan worker selects an online agent from the same site to execute the discovery. Check the API logs for "Background job service unavailable" messages.
 
 **New device alerts fire repeatedly for the same device.**
 The deduplication window is 24 hours. If the same new device is detected in scans more than 24 hours apart without being added to the known device list, a new event is created each time. Acknowledge the event and ensure baselines are scanning frequently enough that the known device list stays current. Once a device has been seen in a scan, it is added to the known devices list and subsequent scans will not generate new device events for it.
@@ -470,7 +470,7 @@ The deduplication window is 24 hours. If the same new device is detected in scan
 Rogue device alerting requires two things: (1) the baseline's `alertSettings.rogueDevice` must be `true`, and (2) the organization must have a network policy configured with either `blockedManufacturers` or `allowedAssetTypes` in its settings JSONB. Without a policy, no device matches the rogue criteria.
 
 **Change events show `linkedDeviceId: null` even though the device is enrolled.**
-Device resolution uses a five-strategy cascade. If none of the strategies can match the change event's IP or MAC to an enrolled device, the link remains null. This commonly happens when the discovered device is not enrolled in Breeze (e.g., a printer or switch). You can manually link it using `POST /network/changes/:id/link-device`.
+Device resolution uses a five-strategy cascade. If none of the strategies can match the change event's IP or MAC to an enrolled device, the link remains null. This commonly happens when the discovered device is not enrolled in BL4CK (e.g., a printer or switch). You can manually link it using `POST /network/changes/:id/link-device`.
 
 **Known guest MAC is not suppressing alerts.**
 Known guests are managed at the partner level, but baselines operate at the organization/site level. Verify that the known guest entry exists with the correct MAC address (normalized to lowercase colon-separated format). Also note that the known guest list must be checked during the baseline comparison process -- if the comparison does not consult the known guest list, the MAC will not be suppressed.

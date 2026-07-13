@@ -41,11 +41,11 @@ the existing `software_versions.supportedOs` field with no rework.
 ### Integrations (partner-scoped)
 - **Huntress** — `huntress_integrations` (partner-scoped, `api_key_encrypted`,
   `account_id`, `is_active`) + `huntress_org_mappings` which **already stores
-  `huntress_org_key` and `huntress_account_id` per mapped Breeze org**.
+  `huntress_org_key` and `huntress_account_id` per mapped BL4CK org**.
 - **SentinelOne** — `s1_integrations` (partner-scoped, `api_token_encrypted`,
   `management_url`, `is_active`) + `s1_org_mappings` storing `s1_site_id` per mapped
-  Breeze org. **The S1 site enrollment token is not stored yet.**
-- Both are configured once at partner scope and mapped to Breeze orgs via
+  BL4CK org. **The S1 site enrollment token is not stored yet.**
+- Both are configured once at partner scope and mapped to BL4CK orgs via
   `*_org_mappings`. Activation state = `is_active` + `last_sync_status`.
 - Secrets are encrypted via `apps/api/src/services/secretCrypto.ts` (AES-256-GCM,
   v3 AAD-bound to `table.column`).

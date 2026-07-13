@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close every code-level finding from the 2026-05-24 launch-readiness audit so Breeze is ready to onboard Tier 1 customers (own/friendly MSPs) and credibly start the Tier 2 + insurance path.
+**Goal:** Close every code-level finding from the 2026-05-24 launch-readiness audit so BL4CK is ready to onboard Tier 1 customers (own/friendly MSPs) and credibly start the Tier 2 + insurance path.
 
 **Architecture:** Thirty independent, commit-sized fixes spanning the API, agent, and config layers. Each task is self-contained — one finding, one commit, one PR if desired. No shared state between tasks except where explicitly noted (Phase 1 must precede Phase 5's audit-related task). Tasks are grouped into 8 phases that map to the sprint timeline in the consultant verdict.
 

@@ -1,4 +1,4 @@
-# Breeze Customer Launch Security Readiness
+# BL4CK Customer Launch Security Readiness
 
 Date: 2026-05-24
 Reviewer: Codex acting as outside security/launch consultant
@@ -7,7 +7,7 @@ Reviewer: Codex acting as outside security/launch consultant
 
 **No-go for broad customer launch today.**
 
-Breeze has a substantially better security posture than a typical early-stage RMM project: JWT/session handling, agent token design, RLS-backed tenant isolation, MFA gates on many dangerous actions, production deployment hardening, audit logs, and a deep prior remediation trail are all present. I did not find evidence of a simple cross-tenant data break in the areas reviewed.
+BL4CK has a substantially better security posture than a typical early-stage RMM project: JWT/session handling, agent token design, RLS-backed tenant isolation, MFA gates on many dangerous actions, production deployment hardening, audit logs, and a deep prior remediation trail are all present. I did not find evidence of a simple cross-tenant data break in the areas reviewed.
 
 The no-go is driven by launch-class control failures, not polish:
 

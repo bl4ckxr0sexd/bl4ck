@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the Breeze Recurring Contracts engine — MSP-defines-a-recurring-agreement that auto-generates draft invoices on a cadence from flat / per-device / per-seat / manual lines, with a `draft → active → paused → cancelled / expired` lifecycle and guaranteed once-per-period billing.
+**Goal:** Build the BL4CK Recurring Contracts engine — MSP-defines-a-recurring-agreement that auto-generates draft invoices on a cadence from flat / per-device / per-seat / manual lines, with a `draft → active → paused → cancelled / expired` lifecycle and guaranteed once-per-period billing.
 
 **Architecture:** Contracts are a *producer* for the Invoice Engine (sub-project 2, merged #1383), not a second invoicing system. A daily BullMQ sweep finds contracts due to bill, resolves each contract line's quantity as-of generation time, and creates an ordinary **draft** invoice through the existing `invoiceService` (pricing via the catalog's `resolvePrice`, line totals via `computeLineTotal`). A `contract_billing_periods` ledger with a `UNIQUE (contract_id, period_start)` constraint makes double-billing physically impossible. No proration: every period bills the full amount at the count taken at generation time.
 

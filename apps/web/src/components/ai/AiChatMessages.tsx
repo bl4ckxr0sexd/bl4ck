@@ -123,7 +123,7 @@ export default function AiChatMessages({
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-6">
         <Bot className="h-10 w-10 text-muted-foreground" />
-        <h3 className="mt-3 text-sm font-medium text-foreground">Breeze AI Assistant</h3>
+        <h3 className="mt-3 text-sm font-medium text-foreground">BL4CK AI Assistant</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           Ask about your devices, alerts, metrics, or troubleshoot issues.
         </p>

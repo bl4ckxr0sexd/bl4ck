@@ -203,7 +203,7 @@ export default function M365Integration() {
         <h2 className="text-lg font-semibold">Connection</h2>
         <p className="mb-4 text-sm text-muted-foreground">
           Enter the tenant id, app (client) id, and a client secret from your Entra app registration.
-          Breeze makes a live Graph call to verify the credentials before saving.
+          BL4CK makes a live Graph call to verify the credentials before saving.
           {!isConnected && ' Saving requires MFA verification.'}
         </p>
 

@@ -5,7 +5,7 @@ description: Scan your network to discover devices, hosts, and services using AR
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Network Discovery lets you scan subnets across your managed sites to find devices, identify their type and manufacturer, map open services, and build a topology of how hosts connect through routers and switches. Scans are executed by the Breeze agent running on a device within the target network. The agent performs ARP resolution, ICMP ping sweeps, TCP port scans, and SNMP queries, then reports results back to the API via WebSocket. Discovered assets are stored per-organization and automatically linked to enrolled devices when a MAC or IP address match is found.
+Network Discovery lets you scan subnets across your managed sites to find devices, identify their type and manufacturer, map open services, and build a topology of how hosts connect through routers and switches. Scans are executed by the BL4CK agent running on a device within the target network. The agent performs ARP resolution, ICMP ping sweeps, TCP port scans, and SNMP queries, then reports results back to the API via WebSocket. Discovered assets are stored per-organization and automatically linked to enrolled devices when a MAC or IP address match is found.
 
 Discovery profiles define what to scan and how. A profile is scoped to a single site and contains target subnets, scan methods, port ranges, SNMP communities, and a schedule. When a scan is triggered, a discovery job is created and dispatched through a background queue to an online agent at the profile's site. Results are processed asynchronously — assets are created or updated, topology edges are enriched, and the job record is updated with summary statistics.
 
@@ -34,7 +34,7 @@ Each unique IP address found during a scan is stored as a discovered asset withi
 |--------|---------|
 | `new` | Recently discovered, not yet reviewed |
 | `identified` | Reviewed and classified but not linked to an enrolled device |
-| `managed` | Linked to an enrolled Breeze agent device |
+| `managed` | Linked to an enrolled BL4CK agent device |
 | `ignored` | Explicitly excluded from monitoring and reports |
 | `offline` | Previously seen but not found in the most recent scan |
 
@@ -54,7 +54,7 @@ Each unique IP address found during a scan is stored as a discovered asset withi
 
 ### Network Topology
 
-Discovery builds an interactive map of how your network actually fits together -- a measured backbone of switches and routers with the hosts attached to them -- and lets you hand-map anything discovery can't see. Connections carry their provenance (how Breeze knows about them) so you can tell measured links from ones you drew yourself. See [Network Topology](#network-topology) below.
+Discovery builds an interactive map of how your network actually fits together -- a measured backbone of switches and routers with the hosts attached to them -- and lets you hand-map anything discovery can't see. Connections carry their provenance (how BL4CK knows about them) so you can tell measured links from ones you drew yourself. See [Network Topology](#network-topology) below.
 
 ---
 
@@ -323,11 +323,11 @@ The page has two tabs — **Overview** (identity, IP/MAC, manufacturer/model, SN
 
 From the **Overview** tab you can override the auto-detected device type using the **Asset Type** dropdown. If a device's type was set manually, a **Reset to auto-detected** link appears so you can revert to the type the scan originally detected.
 
-From the **Monitoring** tab you can **Unlink** a device that was manually linked to an enrolled Breeze device — the Unlink action only appears for manually-linked devices, since auto-linked devices are kept in sync automatically by future scans. To link an asset to a device for the first time, use the **Manage in Discovery** link near the top of the page, which opens the asset in the Discovery view where you can complete the link (see [Linking an Asset to a Device](#linking-an-asset-to-a-device) below) and reach Proxy Access (see [Connecting to a discovered device's web UI](#connecting-to-a-discovered-devices-web-ui)).
+From the **Monitoring** tab you can **Unlink** a device that was manually linked to an enrolled BL4CK device — the Unlink action only appears for manually-linked devices, since auto-linked devices are kept in sync automatically by future scans. To link an asset to a device for the first time, use the **Manage in Discovery** link near the top of the page, which opens the asset in the Discovery view where you can complete the link (see [Linking an Asset to a Device](#linking-an-asset-to-a-device) below) and reach Proxy Access (see [Connecting to a discovered device's web UI](#connecting-to-a-discovered-devices-web-ui)).
 
 ### Linking an Asset to a Device
 
-Manually link a discovered asset to an enrolled device. This sets the asset status to `managed` and is used for **identity and asset tracking only** — it records which enrolled Breeze device corresponds to this discovered asset. Linking alone does not open remote access; see [Connecting to a discovered device's web UI](#connecting-to-a-discovered-devices-web-ui) below for proxy access.
+Manually link a discovered asset to an enrolled device. This sets the asset status to `managed` and is used for **identity and asset tracking only** — it records which enrolled BL4CK device corresponds to this discovered asset. Linking alone does not open remote access; see [Connecting to a discovered device's web UI](#connecting-to-a-discovered-devices-web-ui) below for proxy access.
 
 ```bash
 POST /discovery/assets/:id/link
@@ -344,7 +344,7 @@ Content-Type: application/json
 
 ### Connecting to a discovered device's web UI
 
-The asset panel on the **Discovery** page includes a **Proxy Access** section that lets you open a LAN device's built-in web interface (router admin page, NAS panel, printer UI, switch management port, etc.) directly inside Breeze — no VPN required.
+The asset panel on the **Discovery** page includes a **Proxy Access** section that lets you open a LAN device's built-in web interface (router admin page, NAS panel, printer UI, switch management port, etc.) directly inside BL4CK — no VPN required.
 
 <Steps>
 
@@ -354,11 +354,11 @@ The asset panel on the **Discovery** page includes a **Proxy Access** section th
 
 3. Choose a **bridge agent** from the dropdown. Only online agents are shown; the dropdown defaults to the linked enrolled device if it is currently online.
 
-4. Click **Connect**. The device's web UI loads in an iframe inside Breeze, with an **Open in new tab** option for a full-window view.
+4. Click **Connect**. The device's web UI loads in an iframe inside BL4CK, with an **Open in new tab** option for a full-window view.
 
 </Steps>
 
-Traffic is tunneled over the bridge agent's existing WebSocket connection to Breeze — no additional firewall rules or port forwarding required. See [Network Proxy](/features/remote-access/#network-proxy) in the Remote Access docs for allowlist configuration and the full security model.
+Traffic is tunneled over the bridge agent's existing WebSocket connection to BL4CK — no additional firewall rules or port forwarding required. See [Network Proxy](/features/remote-access/#network-proxy) in the Remote Access docs for allowlist configuration and the full security model.
 
 ### Ignoring an Asset
 
@@ -387,11 +387,11 @@ Deleting an asset also removes all associated SNMP devices (and their metrics an
 
 ## Network Topology
 
-The **Topology** tab on the Discovery page renders your network as an interactive map: subnets group their hosts, and lines show how infrastructure and endpoints connect. Every connection is labeled with how Breeze learned it, so you can trust what you're looking at.
+The **Topology** tab on the Discovery page renders your network as an interactive map: subnets group their hosts, and lines show how infrastructure and endpoints connect. Every connection is labeled with how BL4CK learned it, so you can trust what you're looking at.
 
 ### How connections are measured
 
-Instead of guessing relationships from IP subnets, Breeze measures the backbone from the network devices themselves during SNMP-enabled scans:
+Instead of guessing relationships from IP subnets, BL4CK measures the backbone from the network devices themselves during SNMP-enabled scans:
 
 | Connection | How it's measured | Confidence |
 |---|---|---|

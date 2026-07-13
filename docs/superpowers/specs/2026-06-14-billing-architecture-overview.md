@@ -2,7 +2,7 @@
 
 **Status:** Design accepted 2026-06-14. Cross-cutting frame for a multi-spec build.
 
-This document is the shared architectural contract for the Breeze billing/invoicing
+This document is the shared architectural contract for the BL4CK billing/invoicing
 program. It is intentionally thin: it fixes the cross-cutting conventions **once** so
 the four sub-projects below interlock cleanly even though each is specced, planned, and
 shipped independently. Individual sub-project specs own their own detail.

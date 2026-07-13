@@ -253,7 +253,7 @@ import { partners } from '../../db/schema/orgs';
 ```ts
 clientAiAdminRoutes.use('*', async (c, next) => {
   if (!CLIENT_AI_ENTRA_CLIENT_ID) {
-    return c.json({ error: 'Breeze AI for Office is not enabled' }, 404);
+    return c.json({ error: 'BL4CK AI for Office is not enabled' }, 404);
   }
   await next();
 });
@@ -264,7 +264,7 @@ with one that also checks the caller partner's entitlement:
 ```ts
 clientAiAdminRoutes.use('*', async (c, next) => {
   if (!CLIENT_AI_ENTRA_CLIENT_ID) {
-    return c.json({ error: 'Breeze AI for Office is not enabled' }, 404);
+    return c.json({ error: 'BL4CK AI for Office is not enabled' }, 404);
   }
   // A non-enabled partner's MSP admin can't configure AI for Office. System
   // callers (no partnerId) pass this layer — they aren't partner-scoped.
@@ -276,7 +276,7 @@ clientAiAdminRoutes.use('*', async (c, next) => {
       .where(eq(partners.id, auth.partnerId))
       .limit(1);
     if (!partner?.aiForOfficeEnabled) {
-      return c.json({ error: 'Breeze AI for Office is not enabled' }, 404);
+      return c.json({ error: 'BL4CK AI for Office is not enabled' }, 404);
     }
   }
   await next();
@@ -525,7 +525,7 @@ git commit -m "feat(web): gate AI for Office nav on the per-partner entitlement 
 In `apps/web/src/lib/featureFlags.ts`, delete the entire `ENABLE_AI_FOR_OFFICE` block:
 
 ```ts
-// Breeze AI for Office (Excel/Word/etc. add-in admin surface). Off by default.
+// BL4CK AI for Office (Excel/Word/etc. add-in admin surface). Off by default.
 // This flag controls only the left-nav entry's visibility (combined with the
 // existing partner-scope check). The admin pages behind it stay dark until the
 // API has CLIENT_AI_ENTRA_CLIENT_ID set, which 404s the /client-ai/admin group

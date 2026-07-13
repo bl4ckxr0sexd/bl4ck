@@ -4,7 +4,7 @@
 
 **Goal:** Let an MSP register a single self-hosted UniFi Network controller (one VM serving many customer sites) by URL + collector agent + local API key — with no UniFi cloud (`api.ui.com`) involvement — and have that one controller deliver both inventory and deep telemetry, routed to the correct customer org per site.
 
-**Architecture:** Add a `connection_type` discriminator (`'cloud' | 'self_hosted'`) to `unifi_integrations`. For self-hosted, the existing agent collector loop and telemetry-ingest pipeline are reused almost verbatim — the agent already enumerates every site on the controller and tags each device/client with its `unifi_site_id`, and `reconcileTelemetry` already routes rows to the right Breeze site via `unifi_site_mappings`. The work is: relax the host-id-keyed collector constraints so one controller (no cloud host) can exist and fan out to many site mappings; add an agent-reported controller-site discovery list so the mapping UI has something to map; reconcile telemetry devices into `discovered_assets` for inventory parity; and add the self-hosted connect/register/map UI.
+**Architecture:** Add a `connection_type` discriminator (`'cloud' | 'self_hosted'`) to `unifi_integrations`. For self-hosted, the existing agent collector loop and telemetry-ingest pipeline are reused almost verbatim — the agent already enumerates every site on the controller and tags each device/client with its `unifi_site_id`, and `reconcileTelemetry` already routes rows to the right BL4CK site via `unifi_site_mappings`. The work is: relax the host-id-keyed collector constraints so one controller (no cloud host) can exist and fan out to many site mappings; add an agent-reported controller-site discovery list so the mapping UI has something to map; reconcile telemetry devices into `discovered_assets` for inventory parity; and add the self-hosted connect/register/map UI.
 
 **Tech Stack:** PostgreSQL + Drizzle ORM, Hono (TypeScript) API, BullMQ workers, Go agent, Astro + React (web). Tests: Vitest (API/web), `go test -race` (agent), RLS integration test (`vitest.config.rls.ts` / `rls-coverage.integration.test.ts`).
 
@@ -588,7 +588,7 @@ unifiRoutes.put('/controllers', partnerScopes, writePerm, requireMfa(), zValidat
   }
   const body = c.req.valid('json');
   const [site] = await db.select({ id: sites.id, orgId: sites.orgId }).from(sites).where(eq(sites.id, body.siteId)).limit(1);
-  if (!site) return c.json({ success: false, message: `Unknown Breeze site: ${body.siteId}` }, 400);
+  if (!site) return c.json({ success: false, message: `Unknown BL4CK site: ${body.siteId}` }, 400);
   if (!auth.canAccessOrg(site.orgId)) return c.json({ success: false, message: 'Access to target organization denied' }, 403);
   const [dev] = await db.select({ id: devices.id, orgId: devices.orgId }).from(devices).where(eq(devices.id, body.collectorDeviceId)).limit(1);
   if (!dev) return c.json({ success: false, message: 'Unknown collector agent' }, 400);
@@ -1018,7 +1018,7 @@ Read `apps/web/src/components/integrations/UnifiIntegration.tsx` fully to learn 
 
 - [ ] **Step 2: Add connection-type state + a mode toggle on the connect screen**
 
-In the not-connected branch, add a two-option selector (radio or segmented control) bound to a `connectMode: 'cloud' | 'self_hosted'` state (default `'cloud'`). When `'cloud'`, render the existing API-key form unchanged. When `'self_hosted'`, render an optional **Account label** text input and a **Connect** button. Keep copy concrete: cloud = "Connect your UniFi Site Manager account with a cloud API key"; self-hosted = "Connect a self-hosted UniFi Network controller. A Breeze agent on the controller's network polls it directly — no UniFi cloud account needed."
+In the not-connected branch, add a two-option selector (radio or segmented control) bound to a `connectMode: 'cloud' | 'self_hosted'` state (default `'cloud'`). When `'cloud'`, render the existing API-key form unchanged. When `'self_hosted'`, render an optional **Account label** text input and a **Connect** button. Keep copy concrete: cloud = "Connect your UniFi Site Manager account with a cloud API key"; self-hosted = "Connect a self-hosted UniFi Network controller. A BL4CK agent on the controller's network polls it directly — no UniFi cloud account needed."
 
 - [ ] **Step 3: Add the self-hosted connect handler**
 
@@ -1063,11 +1063,11 @@ git commit -m "feat(web): UniFi connect screen offers self-hosted controller mod
 
 **Interfaces:**
 - Consumes: `PUT /unifi/controllers`, `GET /unifi/controller-sites`, `PUT /unifi/mappings` (existing), `GET /devices?limit=500` (existing agent list).
-- Produces: a self-hosted controllers panel: register controller(s) (Controller URL, Collector agent, Local API key), then map each agent-discovered local site → a Breeze site.
+- Produces: a self-hosted controllers panel: register controller(s) (Controller URL, Collector agent, Local API key), then map each agent-discovered local site → a BL4CK site.
 
 - [ ] **Step 1: Controller registration form**
 
-In the self-hosted connected view, render a "Controllers" card with fields: **Controller URL** (`placeholder="https://192.168.1.1"`), **Collector agent** (`<select>` sourced from the existing `agents` list loaded via `GET /devices?limit=500`), **Site this controller serves** (a Breeze `<select>` grouped by org from the existing `sitesByOrg`), and **Local API key** (password). Submit via `runAction` to `PUT /unifi/controllers` with `{ siteId, collectorDeviceId, controllerUrl, apiKey }`. On success, reload controllers + controller-sites.
+In the self-hosted connected view, render a "Controllers" card with fields: **Controller URL** (`placeholder="https://192.168.1.1"`), **Collector agent** (`<select>` sourced from the existing `agents` list loaded via `GET /devices?limit=500`), **Site this controller serves** (a BL4CK `<select>` grouped by org from the existing `sitesByOrg`), and **Local API key** (password). Submit via `runAction` to `PUT /unifi/controllers` with `{ siteId, collectorDeviceId, controllerUrl, apiKey }`. On success, reload controllers + controller-sites.
 
 > The "Site this controller serves" picks the collector's *own* org/site (the fallback used by `reconcileTelemetry` for any site that isn't explicitly mapped). Per-customer sites are mapped in Step 2.
 

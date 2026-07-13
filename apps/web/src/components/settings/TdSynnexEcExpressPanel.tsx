@@ -292,7 +292,7 @@ function TdSynnexEcExpressPanel() {
             TD SYNNEX Pricing
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Connect TD SYNNEX EC Express to look up real-time pricing and availability and import hardware into Breeze.
+            Connect TD SYNNEX EC Express to look up real-time pricing and availability and import hardware into BL4CK.
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="td-synnex-ec-status-label">

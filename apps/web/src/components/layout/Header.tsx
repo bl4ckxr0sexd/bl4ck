@@ -214,11 +214,11 @@ export default function Header() {
   const handleSignOut = async () => {
     setIsLoggingOut(true);
 
-    // When CF Access trust is in front of Breeze, a normal SPA-side logout
-    // only clears the Breeze session — CF Access still holds a session for
+    // When CF Access trust is in front of BL4CK, a normal SPA-side logout
+    // only clears the BL4CK session — CF Access still holds a session for
     // the user, so the SSO redirect on the next /login visit silently
     // re-enters them. Route through the server-side cf-access-logout
-    // endpoint, which clears the Breeze refresh cookie and bounces the
+    // endpoint, which clears the BL4CK refresh cookie and bounces the
     // browser through CF Access's own logout endpoint with returnTo set
     // to /login?signedOut=1.
     const cfAccessEnabled = useFeaturesStore.getState().cfAccessLogin.enabled;

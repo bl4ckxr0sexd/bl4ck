@@ -1,9 +1,9 @@
 import { sanitizeImageSrc } from '../../lib/safeImageSrc';
 
 interface BrandHeaderProps {
-  /** Partner logo. Sanitized before render; falls back to the Breeze SVG when null/unsafe. */
+  /** Partner logo. Sanitized before render; falls back to the BL4CK SVG when null/unsafe. */
   logoUrl: string | null;
-  /** Partner name. Falls back to "Breeze" when null/empty. */
+  /** Partner name. Falls back to "BL4CK" when null/empty. */
   name: string | null;
   /** Whether to render the text label (hidden in collapsed sidebar mode). */
   showLabel: boolean;
@@ -28,7 +28,7 @@ const BREEZE_SVG = (
 
 export default function BrandHeader({ logoUrl, name, showLabel }: BrandHeaderProps) {
   const safeLogoUrl = sanitizeImageSrc(logoUrl);
-  const label = name?.trim() || 'Breeze';
+  const label = name?.trim() || 'BL4CK';
 
   return (
     <div className="flex items-center gap-2">

@@ -6,11 +6,11 @@
 
 ## Problem
 
-Automations (Configuration Policy → automation feature, and standalone automations) support four action types today — `run_script`, `execute_command`, `send_notification`, `create_alert` — driven by `schedule` and `event` (e.g. device-online) triggers. There is no way to install software from an automation, even though Breeze already has a complete software-deployment subsystem. MSPs want "keep these apps current on these devices" as a scheduled automation.
+Automations (Configuration Policy → automation feature, and standalone automations) support four action types today — `run_script`, `execute_command`, `send_notification`, `create_alert` — driven by `schedule` and `event` (e.g. device-online) triggers. There is no way to install software from an automation, even though BL4CK already has a complete software-deployment subsystem. MSPs want "keep these apps current on these devices" as a scheduled automation.
 
 ## Key finding: reuse, don't build
 
-Breeze already has the full deployment path:
+BL4CK already has the full deployment path:
 
 - `softwareCatalog` → `softwareVersions` (download URL, checksum, `silentInstallArgs`, `supportedOs`, `isLatest`) → `softwareDeployments` → `deploymentResults` (per-device status: pending/downloading/installing/completed/failed).
 - The agent already accepts a `software_install` command over WebSocket.

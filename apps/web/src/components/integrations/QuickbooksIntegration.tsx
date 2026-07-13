@@ -218,7 +218,7 @@ export default function QuickbooksIntegration() {
           <p className="text-sm text-muted-foreground">
             {needsReauth
               ? 'Your QuickBooks authorization has expired. Reconnect to resume syncing invoices and payments.'
-              : 'Connect your QuickBooks Online company to sync customers, invoices, and payments. Breeze stays your system of record.'}
+              : 'Connect your QuickBooks Online company to sync customers, invoices, and payments. BL4CK stays your system of record.'}
           </p>
           {needsReauth && status?.lastError && (
             <p className="mt-2 text-xs text-amber-700" data-testid="quickbooks-last-error">{status.lastError}</p>

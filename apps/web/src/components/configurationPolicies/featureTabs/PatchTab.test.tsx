@@ -145,7 +145,7 @@ describe('PatchTab', () => {
     const toggle = await screen.findByTestId('patch-exclusive-windows-update-toggle');
     expect(toggle).toBeInTheDocument();
     expect(toggle).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('Manage Windows Update exclusively through Breeze')).toBeInTheDocument();
+    expect(screen.getByText('Manage Windows Update exclusively through BL4CK')).toBeInTheDocument();
   });
 
   it('persists exclusiveWindowsUpdate=true in the save payload when toggled on', async () => {

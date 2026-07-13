@@ -5,7 +5,7 @@ description: Visibility into what tools are actively managing each endpoint — 
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Management Posture Detection gives visibility into what tools are actively managing an endpoint — MDM, RMM, endpoint security, backup agents, identity providers, and more. The Breeze agent scans each device on a regular schedule and reports back a structured snapshot of every detected management tool along with its operational status.
+Management Posture Detection gives visibility into what tools are actively managing an endpoint — MDM, RMM, endpoint security, backup agents, identity providers, and more. The BL4CK agent scans each device on a regular schedule and reports back a structured snapshot of every detected management tool along with its operational status.
 
 This feature is useful for auditing management overlap, identifying unmanaged devices, confirming security tooling is active, and conducting onboarding assessments.
 
@@ -15,7 +15,7 @@ This feature is useful for auditing management overlap, identifying unmanaged de
 
 ### Tool categories
 
-Breeze detects tools across 11 categories:
+BL4CK detects tools across 11 categories:
 
 | Category | Example tools |
 |---|---|
@@ -47,7 +47,7 @@ Each detected tool is reported with one of three statuses:
 
 ### Identity and directory detection
 
-In addition to management tool detection, Breeze reports the device's directory join status. This data is collected in the same scan and displayed alongside tool results.
+In addition to management tool detection, BL4CK reports the device's directory join status. This data is collected in the same scan and displayed alongside tool results.
 
 | Field | Description |
 |---|---|
@@ -143,7 +143,7 @@ The agent may lack the permissions needed to query services or registry keys. On
 
 **macOS MDM not detected**
 
-MDM enrollment detection uses `profiles status -type enrollment`. This command may require elevated permissions on some macOS versions. If the Breeze agent is not running with administrator privileges, the enrollment state may not be readable and the MDM category may be absent or incomplete.
+MDM enrollment detection uses `profiles status -type enrollment`. This command may require elevated permissions on some macOS versions. If the BL4CK agent is not running with administrator privileges, the enrollment state may not be readable and the MDM category may be absent or incomplete.
 
 **Posture not updating**
 

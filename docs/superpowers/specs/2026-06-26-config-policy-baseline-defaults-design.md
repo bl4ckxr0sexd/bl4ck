@@ -1,4 +1,4 @@
-# Design: Virtual Baseline "Breeze Defaults" for Configuration Policies
+# Design: Virtual Baseline "BL4CK Defaults" for Configuration Policies
 
 **Issue:** [#1725 — Ship a default/baseline Configuration Policy that surfaces all out-of-the-box defaults](https://github.com/LanternOps/breeze/issues/1725)
 **Date:** 2026-06-26
@@ -7,7 +7,7 @@
 ## Goal
 
 When any tenant — a fresh install, or an existing one after upgrade — opens Configuration
-Policies, they should see a **"Breeze Defaults"** entry that honestly shows *how their
+Policies, they should see a **"BL4CK Defaults"** entry that honestly shows *how their
 devices behave out of the box with nothing configured*. To change any of it, they create
 their own policy, which overrides the baseline through the normal assignment hierarchy. The
 baseline is never edited, so every install shows the same truthful baseline and the only
@@ -15,7 +15,7 @@ thing that diverges device behavior is policies the admin deliberately added.
 
 This closes the motivating gap from the issue: today, with no policy assigned, Remote
 Desktop / VNC / Remote Tools are **ON** and nothing in the UI explains it. An admin has no
-way to discover "what is Breeze doing to my devices right now if I haven't configured
+way to discover "what is BL4CK doing to my devices right now if I haven't configured
 anything?"
 
 ## Decisions (resolved during brainstorming)
@@ -27,7 +27,7 @@ anything?"
 | Scope | **Config-policy feature types only** (the 17 in `configFeatureTypeEnum`). Out-of-band tenant defaults (AI, SSO, portal, OneDrive) deferred. |
 | Semantics | **Runtime behavior** — what actually happens to an unassigned device (mostly "Not enforced", `remote_access` ON), not aspirational form-fill values. |
 | Source of truth | **Single canonical module.** `remoteAccessPolicy.ts` and `pamSettings.ts` import their applied defaults from it (satisfies AC#1, no duplication). |
-| UI | Baseline node in the per-device effective-config view **+** a dedicated read-only "Breeze Defaults" page with per-feature "Create override" actions. |
+| UI | Baseline node in the per-device effective-config view **+** a dedicated read-only "BL4CK Defaults" page with per-feature "Create override" actions. |
 
 ## Semantics: what "baseline" means per feature
 
@@ -92,7 +92,7 @@ export const POLICY_BASELINE_DEFAULTS: Record<ConfigFeatureType, BaselineEntry>;
   behavior is **unchanged**. The `features` map still contains only real winners.
 - **`true`** (only the effective-config endpoint): for every feature type with no winning
   row, append a synthetic `ResolvedFeature` and an `inheritanceChain` node with
-  `sourceLevel: 'default'`, `sourcePolicyName: 'Breeze Defaults'`, settings drawn from the
+  `sourceLevel: 'default'`, `sourcePolicyName: 'BL4CK Defaults'`, settings drawn from the
   canonical module.
 
 `ResolvedFeature.sourceLevel` and the inheritance-chain level type widen to
@@ -116,10 +116,10 @@ as before.
 ### 4. Web UI
 
 - **Effective-config / resolution view (per device):** render the `'default'` node at the
-  bottom of the inheritance chain, labeled "Breeze Defaults", visually distinct
+  bottom of the inheritance chain, labeled "BL4CK Defaults", visually distinct
   (muted / read-only). A previously unexplained value now reads "Remote Desktop: ON —
-  Breeze Defaults".
-- **New read-only "Breeze Defaults" page** under Configuration Policies: lists every feature
+  BL4CK Defaults".
+- **New read-only "BL4CK Defaults" page** under Configuration Policies: lists every feature
   type with its baseline value + behavior label. Each row has a **"Create override policy"**
   action that deep-links into policy creation pre-seeded with that feature type. There is no
   inline editing anywhere — the only way to change behavior is to create a real policy.
@@ -136,7 +136,7 @@ as before.
   permissive defaults after sourcing `DEFAULTS` from the canonical module — the applied
   defaults must not flip. (Hardening/refactor PRs are the most common source of regressions;
   this path gates remote-session access.)
-- **Web component tests:** Breeze Defaults page renders all feature rows + "Create override"
+- **Web component tests:** BL4CK Defaults page renders all feature rows + "Create override"
   actions; effective-config view renders the baseline node at the bottom of the chain.
 
 ## Out of scope (deferred follow-ups)
@@ -162,7 +162,7 @@ interception), and the compliance UI. It shares no code with this work and is tr
 own systematic-debugging track.
 
 **Synergy worth noting:** the effective-config view built here is the diagnostic tool a user
-in #1854's situation needs. If a feature resolves to `source = Breeze Defaults (Not
+in #1854's situation needs. If a feature resolves to `source = BL4CK Defaults (Not
 enforced)` despite the admin having assigned a policy, that points at an
 assignment/resolution failure rather than a broken worker — narrowing #1854 triage. This
 spec does **not** fix any #1854 enforcement bug.
@@ -171,7 +171,7 @@ spec does **not** fix any #1854 enforcement bug.
 
 - [x] Canonical single-source-of-truth defaults module → `policyBaselineDefaults.ts`;
   `remoteAccessPolicy.ts` / `pamSettings.ts` import from it.
-- [x] Config-policy UI shows a baseline "Breeze Defaults" as the bottom of the hierarchy →
+- [x] Config-policy UI shows a baseline "BL4CK Defaults" as the bottom of the hierarchy →
   dedicated page + inheritance-chain node.
 - [x] Effective-config for an unassigned device shows the baseline as explicit source →
   `sourceLevel: 'default'` via `includeBaseline`.

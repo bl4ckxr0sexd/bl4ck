@@ -5,9 +5,9 @@ description: Collect, ship, and query agent diagnostic logs with gzip compressio
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Log Shipping collects diagnostic logs from the Breeze agent and stores them centrally for querying, correlation, and troubleshooting. Every agent component -- heartbeat, commands, patching, enrollment, discovery, terminal, and more -- writes structured log entries through Go's `slog` package. The logging subsystem intercepts these entries, buffers them in memory, compresses them with gzip, and ships them to the API in batches every 60 seconds. On the server side, logs are stored in PostgreSQL with indexes on device, timestamp, level, and component, making it fast to search across thousands of devices.
+Log Shipping collects diagnostic logs from the BL4CK agent and stores them centrally for querying, correlation, and troubleshooting. Every agent component -- heartbeat, commands, patching, enrollment, discovery, terminal, and more -- writes structured log entries through Go's `slog` package. The logging subsystem intercepts these entries, buffers them in memory, compresses them with gzip, and ships them to the API in batches every 60 seconds. On the server side, logs are stored in PostgreSQL with indexes on device, timestamp, level, and component, making it fast to search across thousands of devices.
 
-This is distinct from the fleet event log system (which collects Windows Event Log, syslog, and application logs from managed devices). Log Shipping specifically handles the Breeze agent's own diagnostic output -- the internal telemetry that helps you understand what the agent is doing, debug enrollment failures, diagnose command execution issues, and monitor agent health across your fleet.
+This is distinct from the fleet event log system (which collects Windows Event Log, syslog, and application logs from managed devices). Log Shipping specifically handles the BL4CK agent's own diagnostic output -- the internal telemetry that helps you understand what the agent is doing, debug enrollment failures, diagnose command execution issues, and monitor agent health across your fleet.
 
 ---
 

@@ -1,15 +1,15 @@
 ---
 title: Privileged Access Management Security Model
-description: Trust boundaries, elevation primitives, the dormant-admin pattern, separation of duties, and the audit guarantees behind Breeze just-in-time elevation -- for security teams evaluating PAM.
+description: Trust boundaries, elevation primitives, the dormant-admin pattern, separation of duties, and the audit guarantees behind BL4CK just-in-time elevation -- for security teams evaluating PAM.
 sidebar:
   label: PAM Security Model
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-This document describes the security model behind Breeze **Privileged Access Management (PAM)** -- the just-in-time elevation system that replaces standing local-administrator rights with short-lived, recorded grants. It is written for security teams assessing Breeze for compliance or risk review. For the day-to-day administrative workflow, see [Privileged Access Management](/features/pam/); for the REST surface, see [PAM API](/reference/pam-api/).
+This document describes the security model behind BL4CK **Privileged Access Management (PAM)** -- the just-in-time elevation system that replaces standing local-administrator rights with short-lived, recorded grants. It is written for security teams assessing BL4CK for compliance or risk review. For the day-to-day administrative workflow, see [Privileged Access Management](/features/pam/); for the REST surface, see [PAM API](/reference/pam-api/).
 
-PAM is a high-trust feature: it lets a Breeze operator grant local-administrator access on a managed endpoint. The model below explains exactly what is trusted, what is not, where credentials live, and what the system does -- and does not -- defend against.
+PAM is a high-trust feature: it lets a BL4CK operator grant local-administrator access on a managed endpoint. The model below explains exactly what is trusted, what is not, where credentials live, and what the system does -- and does not -- defend against.
 
 ---
 
@@ -23,7 +23,7 @@ PAM governs three elevation flows, all recorded on one ledger:
 |---|---|
 | **UAC intercept** (`uac_intercept`) | A Windows UAC consent prompt observed on a managed endpoint. |
 | **Tech JIT admin** (`tech_jit_admin`) | A technician-requested temporary local-admin grant on a device. |
-| **AI tool action** (`ai_tool_action`) | A privileged action proposed by the Breeze AI agent or Helper that requires a human to sign off before it runs. |
+| **AI tool action** (`ai_tool_action`) | A privileged action proposed by the BL4CK AI agent or Helper that requires a human to sign off before it runs. |
 
 ---
 
@@ -34,13 +34,13 @@ PAM spans three trust domains, each with a distinct identity and a distinct set 
 | Domain | Identity | Holds | Cannot |
 |---|---|---|---|
 | **Endpoint agent** (Windows service) | Local `SYSTEM` | The dormant-admin account lifecycle and credential minting | Decide its own approvals; reach across tenants |
-| **Breeze control plane** (API) | Unprivileged DB role under row-level security | The request ledger, rule chain, and decisions | See or transmit any endpoint credential |
+| **BL4CK control plane** (API) | Unprivileged DB role under row-level security | The request ledger, rule chain, and decisions | See or transmit any endpoint credential |
 | **Approver** (technician / mobile / Helper) | Authenticated user with MFA | The approve/deny/revoke decision | Relax automation's own verdict (AI/unmatched actions default to pending) |
 
 The single most important property of this split: **the credential that satisfies a UAC prompt is minted on the endpoint, used on the endpoint, and destroyed on the endpoint.** It is never written to the agent's configuration file and never transmitted to the server. The control plane records *that* an elevation was approved; it never holds the secret that exercises it.
 
 <Aside type="caution">
-  Because Breeze has privileged access to every device it manages, PAM is held to the same standard as the rest of the platform: tenant isolation by forced PostgreSQL row-level security, an unprivileged application database role, MFA on every state-changing decision, and append-only audit. See the [Security Architecture](/security/overview/) overview for the platform-wide controls these inherit from.
+  Because BL4CK has privileged access to every device it manages, PAM is held to the same standard as the rest of the platform: tenant isolation by forced PostgreSQL row-level security, an unprivileged application database role, MFA on every state-changing decision, and append-only audit. See the [Security Architecture](/security/overview/) overview for the platform-wide controls these inherit from.
 </Aside>
 
 ---
@@ -69,7 +69,7 @@ The net effect is admin access that is genuinely just-in-time: it exists only in
 
 On Windows, a UAC prompt (`consent.exe`) runs at high integrity on the secure desktop (`WINSTA0\WINLOGON`). Only Windows processes can natively reach that desktop, and `SendInput` from any process not already attached to it is silently dropped.
 
-Breeze satisfies the prompt the same way a person would -- by typing real credentials into the consent UI -- rather than by injecting a SYSTEM-side approval through a kernel hook. This is **Flavor A**:
+BL4CK satisfies the prompt the same way a person would -- by typing real credentials into the consent UI -- rather than by injecting a SYSTEM-side approval through a kernel hook. This is **Flavor A**:
 
 1. The agent runs as a Windows service under `SYSTEM`, which holds the privileges needed to open the input desktop.
 2. On an approved actuation, the agent mints the `~breeze_elev` credential locally and hands it, in process memory, to the actuator.
@@ -136,7 +136,7 @@ Executable rules and signer groups can trust a binary by its Authenticode signer
 - **Thumbprint pinning (strong).** A rule's `matchSignerThumbprint` field -- or a thumbprint-bearing entry in a signer group -- pins the certificate's **SHA-256 leaf-cert thumbprint**, a 64-character lowercase hex digest unique to the exact signing certificate. A look-alike certificate with a spoofed CN has a different key pair and therefore a different thumbprint; it cannot satisfy a thumbprint-pinned rule no matter how convincingly its display name is forged. `matchSigner` and `matchSignerThumbprint` AND together when both are set on a rule (maximum strength: exact certificate AND expected name); a signer-group entry may likewise pin a CN, a thumbprint, or both.
 
 <Aside type="caution">
-  Thumbprint pinning closes the CN look-alike gap, but it is opt-in per rule and per signer-group entry. A rule or group entry that carries only `matchSigner` / a bare CN string remains at the weak tier by the operator's own configuration -- Breeze does not retroactively upgrade existing CN-only rules. Security teams evaluating PAM should audit signer-based rules and prefer thumbprint pins for any rule carrying an auto-approve verdict.
+  Thumbprint pinning closes the CN look-alike gap, but it is opt-in per rule and per signer-group entry. A rule or group entry that carries only `matchSigner` / a bare CN string remains at the weak tier by the operator's own configuration -- BL4CK does not retroactively upgrade existing CN-only rules. Security teams evaluating PAM should audit signer-based rules and prefer thumbprint pins for any rule carrying an auto-approve verdict.
 </Aside>
 
 **Fail-closed guarantee.** A criterion is only ever satisfied when the candidate's data is present; absent data never satisfies a criterion, even when the rule negates it (see [Decisioning chain and fail-safe behavior](#decisioning-chain-and-fail-safe-behavior)). This applies to the thumbprint criterion without exception: if a binary's signer thumbprint cannot be determined -- because it is unsigned, or because the reporting agent predates thumbprint collection -- a rule or signer-group entry pinned to a thumbprint **never matches**. There is no silent fallback to CN-only matching in that case: a thumbprint-pinned rule that can't see a thumbprint fails closed rather than degrading to the weaker check.
@@ -206,5 +206,5 @@ The **Audit** tab of the Privileged Access console renders this ledger -- filter
 ## Platform-evolution and liability notes
 
 - **Windows Administrator Protection / 24H2.** PAM's detection relies on the documented `Microsoft-Windows-LUA` ETW telemetry provider, which Microsoft extends (rather than replaces) for the Administrator Protection path. The injection path uses the supported SYSTEM-context route to the secure desktop.
-- **CVE-2026-20824 (Credential UI hardening, Jan 2026).** Microsoft tightened which processes can request `uiAccess` and added input-source validation. The hardening targeted remote-input tools (TeamViewer, AnyDesk, RDP); SYSTEM-context injection on the secure desktop was not named as impacted. Breeze tracks the trajectory and validates the path empirically each Windows release.
+- **CVE-2026-20824 (Credential UI hardening, Jan 2026).** Microsoft tightened which processes can request `uiAccess` and added input-source validation. The hardening targeted remote-input tools (TeamViewer, AnyDesk, RDP); SYSTEM-context injection on the secure desktop was not named as impacted. BL4CK tracks the trajectory and validates the path empirically each Windows release.
 - **E&O / SLA implications.** Because PAM lets the MSP grant administrator access, an erroneous or coerced approval can attribute blame to the MSP. This may warrant disclosure on the MSP's errors-and-omissions coverage and explicit carve-outs in MSP-customer SLAs. Flag PAM enablement in customer onboarding.

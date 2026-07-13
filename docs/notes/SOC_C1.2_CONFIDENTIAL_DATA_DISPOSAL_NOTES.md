@@ -1,4 +1,4 @@
-# SOC 2 C1.2 Confidential Data Disposal Notes (Breeze)
+# SOC 2 C1.2 Confidential Data Disposal Notes (BL4CK)
 
 Last updated: 2026-02-28
 
@@ -10,11 +10,11 @@ Last updated: 2026-02-28
 
 ## Objective of This Note
 
-Define how Breeze handles retention, archival, and deletion/disposal for confidential data, and what evidence is needed for SOC review.
+Define how BL4CK handles retention, archival, and deletion/disposal for confidential data, and what evidence is needed for SOC review.
 
 ## Disposal Model (Policy-Level)
 
-Breeze should apply disposal by data class:
+BL4CK should apply disposal by data class:
 
 1. Restricted data
 
@@ -127,4 +127,4 @@ For production on DigitalOcean:
 
 ## Example C1.2 Narrative (Draft)
 
-Breeze applies confidentiality-focused data lifecycle controls by defining retention and disposal requirements for confidential datasets and enforcing those requirements through automated retention jobs, storage lifecycle settings, and audited destructive operations. Where archival is required before deletion, policy-driven controls and evidence are retained to demonstrate compliance with confidentiality commitments and contractual obligations.
+BL4CK applies confidentiality-focused data lifecycle controls by defining retention and disposal requirements for confidential datasets and enforcing those requirements through automated retention jobs, storage lifecycle settings, and audited destructive operations. Where archival is required before deletion, policy-driven controls and evidence are retained to demonstrate compliance with confidentiality commitments and contractual obligations.

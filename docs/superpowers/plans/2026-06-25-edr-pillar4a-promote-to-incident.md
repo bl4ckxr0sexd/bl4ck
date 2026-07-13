@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Let a technician escalate a SentinelOne threat or Huntress incident into a tracked Breeze **Incident** (the BE-32 incident-response module) with one click — from the device EDR panel and the fleet EDR lists. This finally gives the starved Incidents page organic inflow. No API change — uses the existing `POST /incidents`.
+**Goal:** Let a technician escalate a SentinelOne threat or Huntress incident into a tracked BL4CK **Incident** (the BE-32 incident-response module) with one click — from the device EDR panel and the fleet EDR lists. This finally gives the starved Incidents page organic inflow. No API change — uses the existing `POST /incidents`.
 
 **Architecture:** A shared `incidents.ts` web lib exposes `promoteToIncident(input)` (wrapped in `runAction`) plus two pure mappers that turn an `S1Threat` / `HuntressIncident` into the `POST /incidents` body (with EDR-severity → p1–p4 mapping). A "Promote to Incident" control is added to the four EDR surfaces (device panel S1 + Huntress rows; fleet `S1ThreatList` + `HuntressIncidentList` rows). On success it navigates to `/incidents/{id}`.
 

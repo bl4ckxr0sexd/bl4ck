@@ -1,11 +1,11 @@
-# Breeze Agent Watchdog Service — Design Spec
+# BL4CK Agent Watchdog Service — Design Spec
 
 **Date:** 2026-04-05
 **Status:** Draft
 
 ## Context
 
-The Breeze agent is a single Go binary running as a system service. If it crashes, hangs, or gets corrupted, the only recovery path is the OS service manager's built-in restart (launchd `KeepAlive`, systemd `Restart=on-failure`, Windows SCM recovery). This is insufficient for:
+The BL4CK agent is a single Go binary running as a system service. If it crashes, hangs, or gets corrupted, the only recovery path is the OS service manager's built-in restart (launchd `KeepAlive`, systemd `Restart=on-failure`, Windows SCM recovery). This is insufficient for:
 
 - Deadlocked/hung agents that are still technically alive (service manager won't restart)
 - Failed updates that leave a broken binary (service manager restarts the broken binary in a loop)
@@ -18,7 +18,7 @@ A lightweight secondary service — the **watchdog** — provides independent mo
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                    Breeze API                         │
+│                    BL4CK API                         │
 │  (heartbeat, commands, agent-versions, diagnostics)  │
 └──────────┬──────────────────────────────┬────────────┘
            │ normal operation             │ failover only
@@ -188,7 +188,7 @@ The watchdog connects as a new IPC client role to the agent's existing socket.
 
 ## Failover API Connection
 
-When in FAILOVER, the watchdog opens its own HTTP connection to the Breeze API.
+When in FAILOVER, the watchdog opens its own HTTP connection to the BL4CK API.
 
 ### Connection Details
 

@@ -7,9 +7,9 @@
 
 ## 1. Problem & Goal
 
-MSPs are repeatedly handed **cyber-insurance applications and vendor-security questionnaires** ("do you deploy EDR? is disk encryption enforced? what's your patch cadence? do you have MFA / backup / DNS filtering?"). Today an MSP has to hand-assemble these answers from a half-dozen Breeze screens.
+MSPs are repeatedly handed **cyber-insurance applications and vendor-security questionnaires** ("do you deploy EDR? is disk encryption enforced? what's your patch cadence? do you have MFA / backup / DNS filtering?"). Today an MSP has to hand-assemble these answers from a half-dozen BL4CK screens.
 
-**Goal:** a single, downloadable **Security & Compliance Posture Report** — scoped to one organization (optionally filtered by site) — that joins Breeze's existing security data into the per-control answers and **percent-implemented** rollups those questionnaires ask for, and renders as CSV / Excel / PDF.
+**Goal:** a single, downloadable **Security & Compliance Posture Report** — scoped to one organization (optionally filtered by site) — that joins BL4CK's existing security data into the per-control answers and **percent-implemented** rollups those questionnaires ask for, and renders as CSV / Excel / PDF.
 
 **Non-goals (this spec):**
 - No new agent telemetry. TPM, Secure Boot, and SMBv1 are explicitly out of scope — they are not collected today (see §7) and would each need separate agent work.

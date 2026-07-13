@@ -35,7 +35,7 @@ describe('authenticator store approver helpers', () => {
   it('registerApproverDevice fetches options, runs startRegistration, and posts the attestation', async () => {
     const options = {
       challenge: 'reg-challenge-b64url',
-      rp: { id: 'breeze.example', name: 'Breeze' },
+      rp: { id: 'breeze.example', name: 'BL4CK' },
       user: { id: 'user-1', name: 'tech', displayName: 'Tech' },
       authenticatorSelection: { authenticatorAttachment: 'platform' },
     };

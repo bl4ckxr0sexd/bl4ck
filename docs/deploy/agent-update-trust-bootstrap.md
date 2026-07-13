@@ -1,6 +1,6 @@
 # Agent update trust bootstrap (self-host)
 
-This page covers two related topics for self-hosted Breeze deployments:
+This page covers two related topics for self-hosted BL4CK deployments:
 
 1. How agent-update trust works on self-host (`BINARY_SOURCE=local`).
 2. How to recover a fleet stuck on v0.65.7 / v0.65.8 after upgrading to v0.65.9.

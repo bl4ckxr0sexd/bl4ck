@@ -5,9 +5,9 @@ description: Policy-based USB, Bluetooth, and Thunderbolt device management with
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Peripheral Control lets you define organization-wide policies for USB, Bluetooth, and Thunderbolt peripherals. Policies specify which device classes are allowed, blocked, set to read-only, or flagged for alerting. Exception rules override the default action for specific vendors, products, or serial numbers. The Breeze agent evaluates policies locally, logs every connect and disconnect event, and reports activity back to the API for centralized visibility and auditing.
+Peripheral Control lets you define organization-wide policies for USB, Bluetooth, and Thunderbolt peripherals. Policies specify which device classes are allowed, blocked, set to read-only, or flagged for alerting. Exception rules override the default action for specific vendors, products, or serial numbers. The BL4CK agent evaluates policies locally, logs every connect and disconnect event, and reports activity back to the API for centralized visibility and auditing.
 
-Policies are scoped through the multi-tenant hierarchy -- you can target an entire organization, individual sites, device groups, or specific devices. When a policy is created or updated, Breeze distributes it to agents through a BullMQ job pipeline. The agent stores the latest policies locally and evaluates them against each detected peripheral in real time.
+Policies are scoped through the multi-tenant hierarchy -- you can target an entire organization, individual sites, device groups, or specific devices. When a policy is created or updated, BL4CK distributes it to agents through a BullMQ job pipeline. The agent stores the latest policies locally and evaluates them against each detected peripheral in real time.
 
 A policy can also be created **partner-wide** so it applies to every organization the partner manages -- see [Partner-wide Policies](#partner-wide-policies-all-organizations) below.
 
@@ -65,7 +65,7 @@ A policy can also be created **partner-wide** so it applies to every organizatio
 
 2. **Add exception rules** to allow specific peripherals that should bypass the policy -- for example, allowing approved encrypted USB drives by serial number.
 
-3. **Breeze distributes the policy** to agents through BullMQ. Agents receive the policy on next sync and store it locally.
+3. **BL4CK distributes the policy** to agents through BullMQ. Agents receive the policy on next sync and store it locally.
 
 4. **The agent evaluates peripherals** as they connect. Policies are evaluated in order; the first matching policy wins. Exception rules are checked before the policy action is applied.
 
@@ -258,7 +258,7 @@ GET /peripherals/activity?orgId=uuid&eventType=blocked&start=2026-02-01T00:00:00
 
 ## Agent-Side Enforcement
 
-The Breeze agent detects peripherals using platform-native APIs and evaluates them against locally cached policies.
+The BL4CK agent detects peripherals using platform-native APIs and evaluates them against locally cached policies.
 
 ### Detection Methods
 

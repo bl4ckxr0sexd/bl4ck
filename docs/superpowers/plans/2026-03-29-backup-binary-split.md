@@ -458,8 +458,8 @@ var version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:   "breeze-backup",
-	Short: "Breeze RMM Backup Helper",
-	Long:  "Backup helper binary spawned by the Breeze agent for backup operations.",
+	Short: "BL4CK RMM Backup Helper",
+	Long:  "Backup helper binary spawned by the BL4CK agent for backup operations.",
 	Run:   func(cmd *cobra.Command, args []string) { runBackupHelper() },
 }
 

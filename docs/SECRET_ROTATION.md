@@ -1,6 +1,6 @@
-# Breeze RMM - Secret Rotation Guide
+# BL4CK RMM - Secret Rotation Guide
 
-This guide covers the procedures for rotating every secret and credential used by the Breeze RMM platform. Rotating secrets regularly is a fundamental security practice -- follow these procedures to avoid downtime and data loss.
+This guide covers the procedures for rotating every secret and credential used by the BL4CK RMM platform. Rotating secrets regularly is a fundamental security practice -- follow these procedures to avoid downtime and data loss.
 
 ---
 
@@ -33,7 +33,7 @@ Before rotating any secret, review these rules:
 - **Never rotate all secrets simultaneously.** Rotate one secret at a time and verify the system is healthy before moving on.
 - **Always test in staging first.** Run the exact rotation procedure against a staging environment before touching production.
 - **Keep a rollback plan.** Before changing any secret, record the current value in a secure vault (not in plaintext files or chat logs). You need it if the rotation fails.
-- **Log all rotations.** Record who rotated what, when, and why in your audit trail. Breeze logs admin actions to the `audit_logs` table -- supplement this with manual entries for infrastructure-level changes.
+- **Log all rotations.** Record who rotated what, when, and why in your audit trail. BL4CK logs admin actions to the `audit_logs` table -- supplement this with manual entries for infrastructure-level changes.
 - **Use a secrets manager.** Store all production secrets in a vault (HashiCorp Vault, AWS Secrets Manager, 1Password, etc.), not in `.env` files on disk.
 - **Coordinate with your team.** Announce rotations ahead of time. Some rotations (encryption keys, database credentials) can cause brief service interruptions.
 
@@ -49,7 +49,7 @@ Before rotating any secret, review these rules:
 
 The dual-secret approach allows old tokens to remain valid during a transition window.
 
-> **Note:** Breeze does not yet implement dual-secret verification out of the box. Until that feature is added, use the "hard rotation" approach below, or implement dual-secret support by modifying `verifyToken()` to try `JWT_SECRET` first, then fall back to `JWT_SECRET_PREVIOUS`.
+> **Note:** BL4CK does not yet implement dual-secret verification out of the box. Until that feature is added, use the "hard rotation" approach below, or implement dual-secret support by modifying `verifyToken()` to try `JWT_SECRET` first, then fall back to `JWT_SECRET_PREVIOUS`.
 
 **Step 1 -- Generate a new secret:**
 
@@ -99,7 +99,7 @@ Schedule hard rotations during a maintenance window and notify users in advance.
 
 ### Rotation Status
 
-Breeze can read both legacy `enc:v1:` values and key-id based
+BL4CK can read both legacy `enc:v1:` values and key-id based
 `enc:v2:<keyId>:` values. New encryption remains `enc:v1:` unless an active key
 ID is configured, which preserves compatibility for deployments that have not
 started a key-id migration.
@@ -364,7 +364,7 @@ This is low-risk and can be done during off-peak hours.
 
 ## 8. API Keys (User-Facing)
 
-**What they protect:** Programmatic access to the Breeze API. Keys are stored as SHA-256 hashes.
+**What they protect:** Programmatic access to the BL4CK API. Keys are stored as SHA-256 hashes.
 
 ### Rotation Procedure
 
@@ -475,7 +475,7 @@ No environment variable changes are required. The old key is immediately invalid
 ### Rotation Procedure
 
 1. Generate a new secret: `openssl rand -hex 32`
-2. Update `TURN_SECRET` in both the TURN server configuration and the Breeze API environment.
+2. Update `TURN_SECRET` in both the TURN server configuration and the BL4CK API environment.
 3. Restart the TURN server and deploy the API.
 
 **Impact:** Active remote desktop/terminal sessions using old TURN credentials will eventually fail when credentials expire (typically after a few minutes). Users can reconnect.

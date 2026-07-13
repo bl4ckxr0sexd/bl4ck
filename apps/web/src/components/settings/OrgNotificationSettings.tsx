@@ -251,7 +251,7 @@ export default function OrgNotificationSettings({
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Using Breeze managed SMTP for faster deliverability.
+                Using BL4CK managed SMTP for faster deliverability.
               </p>
             )}
           </div>

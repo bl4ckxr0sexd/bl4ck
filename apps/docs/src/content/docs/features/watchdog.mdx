@@ -1,11 +1,11 @@
 ---
 title: Agent Watchdog
-description: A companion service that monitors the Breeze agent process, performs escalating recovery, and provides failover connectivity when the agent is down.
+description: A companion service that monitors the BL4CK agent process, performs escalating recovery, and provides failover connectivity when the agent is down.
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-The **Breeze Watchdog** is a lightweight companion service that runs alongside the Breeze agent on every managed device. It continuously monitors the agent process, automatically recovers it when it becomes unhealthy, and maintains a fallback connection to the Breeze server when the agent is completely down.
+The **BL4CK Watchdog** is a lightweight companion service that runs alongside the BL4CK agent on every managed device. It continuously monitors the agent process, automatically recovers it when it becomes unhealthy, and maintains a fallback connection to the BL4CK server when the agent is completely down.
 
 The watchdog is installed automatically alongside the agent during normal installation — no separate setup is required.
 
@@ -41,7 +41,7 @@ The watchdog operates as a state machine with five states:
 | **Monitoring** | Agent is healthy; running periodic health checks |
 | **Recovering** | Agent is unhealthy; performing escalating restart attempts |
 | **Standby** | Agent signaled a graceful shutdown (e.g., for an update); waiting for it to come back |
-| **Failover** | Recovery attempts exhausted; watchdog is communicating directly with the Breeze server on behalf of the device |
+| **Failover** | Recovery attempts exhausted; watchdog is communicating directly with the BL4CK server on behalf of the device |
 
 ### State transitions
 
@@ -88,7 +88,7 @@ Recovery attempts are tracked within a cooldown window. If the window elapses wi
 
 ## Failover
 
-When recovery is exhausted, the watchdog enters **Failover** mode and takes over communication with the Breeze server. In this state the watchdog:
+When recovery is exhausted, the watchdog enters **Failover** mode and takes over communication with the BL4CK server. In this state the watchdog:
 
 - Sends periodic heartbeats so the device remains visible in the dashboard
 - Polls for commands from the server (restart agent, collect diagnostics, update agent, update watchdog)
@@ -105,7 +105,7 @@ Failover keeps the device manageable even when the agent process is completely d
 
 ## Agent-Silent Detection
 
-The watchdog reports its own health to the server through its own connection. That means the watchdog can be perfectly healthy while the main agent has gone quiet — a "silent agent" condition that earlier versions of Breeze couldn't distinguish from a fully-offline device.
+The watchdog reports its own health to the server through its own connection. That means the watchdog can be perfectly healthy while the main agent has gone quiet — a "silent agent" condition that earlier versions of BL4CK couldn't distinguish from a fully-offline device.
 
 The server now watches for this asymmetry on every device. When the main agent stops checking in but the watchdog stays online, the device row shows an amber **Agent silent (watchdog OK)** badge in the dashboard. The badge tells you the device is still reachable through the watchdog and a remote **Restart Agent** action will work — versus a fully-offline device where neither component is responding.
 
@@ -125,7 +125,7 @@ You can export the journal locally:
 breeze-watchdog health-journal
 ```
 
-The watchdog also ships journal entries to the Breeze server as diagnostic logs (component prefix `watchdog.*`), which you can query via the API — see [Watchdog Logs](#watchdog-logs-api) below.
+The watchdog also ships journal entries to the BL4CK server as diagnostic logs (component prefix `watchdog.*`), which you can query via the API — see [Watchdog Logs](#watchdog-logs-api) below.
 
 ---
 

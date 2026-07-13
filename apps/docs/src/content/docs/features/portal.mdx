@@ -5,7 +5,7 @@ description: Self-service portal for end-users to view devices, submit tickets, 
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Customer Portal gives end-users in your managed organizations a self-service interface for common IT tasks. Portal users can view their organization's devices, submit and track support tickets, check out and return shared assets, and manage their own profile -- all without needing access to the full Breeze admin dashboard.
+The Customer Portal gives end-users in your managed organizations a self-service interface for common IT tasks. Portal users can view their organization's devices, submit and track support tickets, check out and return shared assets, and manage their own profile -- all without needing access to the full BL4CK admin dashboard.
 
 Each organization gets its own portal instance with customizable branding, a dedicated user directory, and granular feature toggles. Portal users authenticate with their own credentials, separate from admin accounts, and sessions are scoped to their organization.
 
@@ -13,7 +13,7 @@ Each organization gets its own portal instance with customizable branding, a ded
 
 ## Accessing the Portal
 
-The portal is served under the `/portal` path on your Breeze domain — for example, if your dashboard is at `https://breeze.example.com`, portal users sign in at **`https://breeze.example.com/portal/login`**. No separate hostname or DNS record is required. Share this link (or the per-quote/invoice links Breeze emails, which already point at `/portal`) with your end-users.
+The portal is served under the `/portal` path on your BL4CK domain — for example, if your dashboard is at `https://breeze.example.com`, portal users sign in at **`https://breeze.example.com/portal/login`**. No separate hostname or DNS record is required. Share this link (or the per-quote/invoice links BL4CK emails, which already point at `/portal`) with your end-users.
 
 <Aside type="note" title="Custom portal domains">
 You can configure a per-organization custom domain in branding (`customDomain`, e.g. `support.acme.com`), but **serving the portal on a custom domain is not available yet** — for now all organizations reach the portal at `https://<your-breeze-domain>/portal`. The branding for an organization still applies once a user signs in.
@@ -63,7 +63,7 @@ Each organization can enable or disable portal features independently through th
 
 ## Authentication
 
-Portal authentication is separate from the main Breeze admin auth system. Portal users have their own credentials stored in the `portal_users` table and sessions are managed through either Redis (production) or in-memory storage (development).
+Portal authentication is separate from the main BL4CK admin auth system. Portal users have their own credentials stored in the `portal_users` table and sessions are managed through either Redis (production) or in-memory storage (development).
 
 ### Session Management
 
@@ -95,7 +95,7 @@ The portal applies per-IP and per-account rate limiting to authentication endpoi
 
 ## Branding
 
-Each organization can customize the portal appearance and contact information. Branding is resolved by domain — when a portal user visits a configured custom domain, Breeze serves that organization's matching branding. Because [custom-domain serving is not enabled yet](#accessing-the-portal), the shared `/portal` portal currently shows the default branding at the login screen; configured branding still applies to the organization elsewhere.
+Each organization can customize the portal appearance and contact information. Branding is resolved by domain — when a portal user visits a configured custom domain, BL4CK serves that organization's matching branding. Because [custom-domain serving is not enabled yet](#accessing-the-portal), the shared `/portal` portal currently shows the default branding at the login screen; configured branding still applies to the organization elsewhere.
 
 ### Branding Fields
 
@@ -122,7 +122,7 @@ Each organization can customize the portal appearance and contact information. B
 
 ## Tickets
 
-Portal users can submit support tickets, track their status, and add comments to ongoing conversations. Tickets submitted through the portal land directly in the technician [Tickets queue](/features/ticketing/) in the Breeze dashboard, where technicians triage, assign, and respond to them.
+Portal users can submit support tickets, track their status, and add comments to ongoing conversations. Tickets submitted through the portal land directly in the technician [Tickets queue](/features/ticketing/) in the BL4CK dashboard, where technicians triage, assign, and respond to them.
 
 ### Creating a Ticket
 

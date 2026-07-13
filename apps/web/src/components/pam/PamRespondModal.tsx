@@ -50,7 +50,7 @@ export default function PamRespondModal({
       const mins = Number.parseInt(duration, 10);
       if (Number.isFinite(mins) && mins >= 1) body.durationMinutes = mins;
 
-      // Breeze Authenticator Phase 2 — opt-in Windows Hello / Touch ID step-up.
+      // BL4CK Authenticator Phase 2 — opt-in Windows Hello / Touch ID step-up.
       // Run the approval-scoped assertion ceremony before submitting. A returned
       // proof upgrades the recorded approval to L2 (webauthn_platform); a
       // cancelled/failed ceremony aborts the submit (we never silently downgrade

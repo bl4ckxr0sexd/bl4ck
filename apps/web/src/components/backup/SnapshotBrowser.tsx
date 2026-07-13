@@ -528,7 +528,7 @@ export default function SnapshotBrowser() {
               {selectedSnapshot.requestedImmutabilityEnforcement === 'provider' &&
                 selectedSnapshot.immutabilityEnforcement === 'application' && (
                   <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800">
-                    Provider immutability was requested by policy, but Breeze applied application protection instead.
+                    Provider immutability was requested by policy, but BL4CK applied application protection instead.
                     {selectedSnapshot.immutabilityFallbackReason && (
                       <div className="mt-1 text-xs text-amber-900/80">
                         Reason: {selectedSnapshot.immutabilityFallbackReason}
@@ -544,7 +544,7 @@ export default function SnapshotBrowser() {
                 Protection Controls
               </div>
               <p className="text-xs text-muted-foreground">
-                These actions apply to the selected snapshot only. Application protection is enforced by Breeze retention cleanup. Releasing protection can make an expired snapshot eligible for deletion immediately.
+                These actions apply to the selected snapshot only. Application protection is enforced by BL4CK retention cleanup. Releasing protection can make an expired snapshot eligible for deletion immediately.
               </p>
               {selectedSnapshot.retentionBlockedReason && (
                 <p className="text-xs text-muted-foreground">
@@ -624,7 +624,7 @@ export default function SnapshotBrowser() {
               </div>
               {selectedSnapshot.immutabilityEnforcement === 'provider' && selectedSnapshot.isImmutable && (
                 <p className="text-xs text-muted-foreground">
-                  Provider-enforced immutability cannot be released from Breeze.
+                  Provider-enforced immutability cannot be released from BL4CK.
                 </p>
               )}
             </div>

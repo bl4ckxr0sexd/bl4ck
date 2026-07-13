@@ -129,7 +129,7 @@ Turn the starved Incident Response module into the top of the EDR funnel.
   `containIncidentSchema` / `execute_containment` shape already matches the S1 action API — they just
   aren't connected.
 - **Huntress write-back (scoped add-on, decision D3):** if we resolve a promoted Huntress incident in
-  Breeze, optionally call `POST /v1/incident_reports/{id}/resolution` (+ approve remediations) via
+  BL4CK, optionally call `POST /v1/incident_reports/{id}/resolution` (+ approve remediations) via
   **new** write methods in `huntressClient.ts`. Requires syncing remediation state first.
 - **Optional auto-file:** on a `p1`/critical `s1.threat_detected` or `huntress.incident_created`,
   auto-create an incident from the existing event triggers so the page gets organic inflow.
@@ -173,6 +173,6 @@ controls in the Pillar 1/2 components + `IncidentDetailPage.tsx` to show EDR-sou
 ## Out of scope (named, not silently dropped)
 
 - New EDR providers (Defender, CrowdStrike, Bitdefender) — framework is extensible but not this phase.
-- Huntress agent install/deploy orchestration from Breeze.
+- Huntress agent install/deploy orchestration from BL4CK.
 - Rewriting the native-AV `ThreatList` / `DeviceSecurityTab` to be cross-provider (that's the D1
   "unify" path, deferred).

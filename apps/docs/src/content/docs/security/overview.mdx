@@ -1,6 +1,6 @@
 ---
 title: Security Architecture
-description: Authentication, authorization, encryption, and defense-in-depth controls that protect the Breeze platform and every device it manages.
+description: Authentication, authorization, encryption, and defense-in-depth controls that protect the BL4CK platform and every device it manages.
 sidebar:
   order: 0
   label: Architecture Overview
@@ -8,7 +8,7 @@ sidebar:
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze is an RMM platform — it has privileged access to every device it manages. Security is not a feature bolted on after the fact; it is foundational to every layer of the architecture. This document describes the security controls, practices, and design decisions in Breeze. It is intended for MSPs evaluating Breeze, security teams conducting assessments, and contributors building on the platform.
+BL4CK is an RMM platform — it has privileged access to every device it manages. Security is not a feature bolted on after the fact; it is foundational to every layer of the architecture. This document describes the security controls, practices, and design decisions in BL4CK. It is intended for MSPs evaluating BL4CK, security teams conducting assessments, and contributors building on the platform.
 
 ---
 
@@ -35,7 +35,7 @@ Every request passes through multiple security layers before reaching applicatio
 
 ### User Authentication
 
-Breeze implements multi-factor authentication with defense-in-depth:
+BL4CK implements multi-factor authentication with defense-in-depth:
 
 | Control | Implementation |
 |---------|----------------|
@@ -155,7 +155,7 @@ When a device is provisioned, the API does **not** return the long-lived agent s
 
 ### Mutual TLS (Optional)
 
-For zero-trust authentication where both server and agent verify each other's identity, Breeze integrates with Cloudflare Client Certificates API. Certificates are issued during enrollment, renewed automatically at 2/3 lifetime, and expired certificates trigger device quarantine pending admin review.
+For zero-trust authentication where both server and agent verify each other's identity, BL4CK integrates with Cloudflare Client Certificates API. Certificates are issued during enrollment, renewed automatically at 2/3 lifetime, and expired certificates trigger device quarantine pending admin review.
 
 See [Cloudflare mTLS](/security/mtls/) for the full setup guide.
 
@@ -198,7 +198,7 @@ Secrets encrypted at rest use the format: `enc:v1:{base64url(iv)}.{base64url(aut
 
 ## Rate Limiting and Abuse Prevention
 
-Breeze uses Redis-backed sliding window rate limiting. The implementation is **fail-closed** — if Redis is unavailable, requests are denied.
+BL4CK uses Redis-backed sliding window rate limiting. The implementation is **fail-closed** — if Redis is unavailable, requests are denied.
 
 | Endpoint | Limit | Window | Key |
 |----------|-------|--------|-----|
@@ -376,7 +376,7 @@ All scanners run in CI and **block merges** on failure.
 
 ### Production Enforcement
 
-Breeze validates environment configuration on startup:
+BL4CK validates environment configuration on startup:
 
 - Rejects 24 known placeholder/default values
 - Requires explicit `CORS_ALLOWED_ORIGINS` (no wildcards)
@@ -420,7 +420,7 @@ For full procedures, see [Backup and Restore](/security/backup/).
 
 ## SOC 2 Alignment
 
-Breeze's security controls align with SOC 2 Trust Service Criteria.
+BL4CK's security controls align with SOC 2 Trust Service Criteria.
 
 ### CC6 — Logical and Physical Access Controls
 

@@ -18,9 +18,9 @@
 
 The breezermm.com blog already has 33 posts. Two related posts exist:
 - `best-rmm-for-small-msp-2026.md` — recommendation piece for small MSPs, not a pricing index
-- `open-source-rmm-tools-complete-guide.md` — open-source comparison (MeshCentral, TacticalRMM, Breeze)
+- `open-source-rmm-tools-complete-guide.md` — open-source comparison (MeshCentral, TacticalRMM, BL4CK)
 
-This report is differentiated: it's a **neutral pricing index** with acquisition context and hidden cost analysis. Not a recommendation. Not a Breeze pitch. Data-first, narrative-supported.
+This report is differentiated: it's a **neutral pricing index** with acquisition context and hidden cost analysis. Not a recommendation. Not a BL4CK pitch. Data-first, narrative-supported.
 
 **Blog post conventions** (from existing posts):
 - Frontmatter: `title`, `description`, `author`, `pubDate`, `tags`, `image`, `imageAlt`
@@ -28,7 +28,7 @@ This report is differentiated: it's a **neutral pricing index** with acquisition
 - Tags use lowercase kebab-case
 - Markdown with `---` horizontal rules between major sections
 - Long-form editorial voice — direct, opinionated, evidence-backed
-- No Breeze pitch in body text; the BlogCTA sidebar component handles that automatically
+- No BL4CK pitch in body text; the BlogCTA sidebar component handles that automatically
 
 ---
 
@@ -689,7 +689,7 @@ Include:
 
 ## About This Report
 
-This report is published by the team behind [Breeze RMM](https://breezermm.com), an open-source, AI-native remote monitoring and management platform. We built this because we are in the space and this data did not exist in one place.
+This report is published by the team behind [BL4CK RMM](https://breezermm.com), an open-source, AI-native remote monitoring and management platform. We built this because we are in the space and this data did not exist in one place.
 
 The report is designed to be useful regardless of which RMM you choose. If you spot an error or your pricing experience differs from what we found, [let us know](mailto:todd@breezermm.com) — corrections make the report better.
 
@@ -777,7 +777,7 @@ Read the full blog post file. Check for:
 - Consistent voice and tone matching existing posts
 - All data points have source citations or are marked as estimates
 - Quote-only vendors are never given fabricated prices
-- No Breeze pitch in body text (only in the About section at the end)
+- No BL4CK pitch in body text (only in the About section at the end)
 - Tables render correctly in markdown
 - All section anchors work for deep linking
 - No broken markdown formatting

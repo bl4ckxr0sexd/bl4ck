@@ -117,7 +117,7 @@ export async function exportReport(
  * Load a same-origin/CORS-enabled image and re-encode it as a PNG data URL so
  * jsPDF can embed it. Returns the data URL plus intrinsic aspect ratio, or null
  * on any failure (missing, blocked by CORS, decode error) so the caller falls
- * back to the Breeze vector mark.
+ * back to the BL4CK vector mark.
  */
 function loadImageAsPng(url: string): Promise<{ dataUrl: string; aspect: number } | null> {
   return new Promise((resolve) => {
@@ -151,7 +151,7 @@ function loadImageAsPng(url: string): Promise<{ dataUrl: string; aspect: number 
 /**
  * Fetch the current partner's branding (name + uploaded logo) for report
  * headers. Never throws — any failure yields an unbranded result so export
- * still succeeds with the Breeze fallback mark.
+ * still succeeds with the BL4CK fallback mark.
  */
 export async function loadPartnerBranding(): Promise<ReportBranding> {
   const empty: ReportBranding = { name: null, logoDataUrl: null, logoAspect: null };

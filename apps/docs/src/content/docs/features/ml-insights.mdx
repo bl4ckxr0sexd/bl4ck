@@ -5,7 +5,7 @@ description: Machine-learning features that surface metric anomalies, group corr
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze includes a suite of machine-learning features that turn raw fleet telemetry into actionable insight: it spots unusual metric behavior before it becomes an outage, groups noisy related alerts into a single incident, explains the likely root cause, suggests fixes, and projects when you'll run out of capacity.
+BL4CK includes a suite of machine-learning features that turn raw fleet telemetry into actionable insight: it spots unusual metric behavior before it becomes an outage, groups noisy related alerts into a single incident, explains the likely root cause, suggests fixes, and projects when you'll run out of capacity.
 
 These features are designed to be **turned on gradually**. Each one is governed independently so you can enable a capability, watch its output, judge its quality, and roll it back instantly if it isn't useful for your environment yet. Several start **off by default** — if a panel shows a "disabled" message, the feature simply hasn't been enabled for that organization yet (see [Availability and enabling](#availability-and-enabling) below).
 
@@ -91,7 +91,7 @@ For self-hosted operators, environment variables provide an emergency off-switch
 </Aside>
 
 <Aside type="caution">
-  Self-hosters running Breeze from source: the repository ships a full operations runbook at `docs/runbooks/ml-operations.md` covering every flag, kill switch, feedback signal, evaluation endpoint, background worker, and data-retention setting. Consult it for production rollout, quality measurement, and troubleshooting.
+  Self-hosters running BL4CK from source: the repository ships a full operations runbook at `docs/runbooks/ml-operations.md` covering every flag, kill switch, feedback signal, evaluation endpoint, background worker, and data-retention setting. Consult it for production rollout, quality measurement, and troubleshooting.
 </Aside>
 
 ---
@@ -143,12 +143,12 @@ Each incident shows its root-cause alert, severity, status, the number of relate
 
 ### Root Cause Analysis
 
-With Root Cause Analysis enabled, an incident offers an on-demand **Explain incident** button. Breeze gathers evidence from around the incident's time window and produces:
+With Root Cause Analysis enabled, an incident offers an on-demand **Explain incident** button. BL4CK gathers evidence from around the incident's time window and produces:
 
 - **Root cause candidates**, each with a confidence score and supporting evidence (the earliest alert, a recent device change, an aligned error log, and so on)
 - **Suggested next steps**, each with a risk tier and links to the evidence behind it
 - An **evidence timeline** stitched together from alerts, device changes (services, software, configuration), event logs, and agent logs
-- **Evidence gaps** — what Breeze looked for but couldn't find
+- **Evidence gaps** — what BL4CK looked for but couldn't find
 
 You can turn an RCA into a ticket with **Create ticket from RCA**, and rate it to improve future analyses.
 

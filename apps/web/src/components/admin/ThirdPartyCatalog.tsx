@@ -222,7 +222,7 @@ export default function ThirdPartyCatalog() {
           <div>
             <div className="font-semibold mb-1">Platform-admin access required</div>
             <div className="text-sm">
-              The third-party catalog is managed by Breeze platform admins. Your account
+              The third-party catalog is managed by BL4CK platform admins. Your account
               ({/* role-aware text intentionally not surfaced — server-side identity is the source of truth */}
               an org/partner admin) can view the curated catalog through normal patch flows but
               cannot edit it directly.

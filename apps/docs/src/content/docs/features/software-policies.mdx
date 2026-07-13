@@ -84,7 +84,7 @@ Authorization: Bearer <token>
       },
       {
         "name": "TeamViewer",
-        "reason": "Use Breeze Remote Access instead"
+        "reason": "Use BL4CK Remote Access instead"
       },
       {
         "name": "CryptoMiner*",
@@ -125,8 +125,8 @@ Authorization: Bearer <token>
         "vendor": "Microsoft"
       },
       {
-        "name": "Breeze Agent",
-        "vendor": "Breeze"
+        "name": "BL4CK Agent",
+        "vendor": "BL4CK"
       }
     ],
     "allowUnknown": false
@@ -149,7 +149,7 @@ Authorization: Bearer <token>
   "mode": "blocklist",
   "rules": {
     "software": [
-      { "name": "TeamViewer", "reason": "Use Breeze Remote Access instead" }
+      { "name": "TeamViewer", "reason": "Use BL4CK Remote Access instead" }
     ]
   },
   "enforceMode": true
@@ -345,12 +345,12 @@ If `deviceIds` is omitted, remediation targets all devices with active violation
 
 ## Winget Integration
 
-On Windows endpoints, Breeze integrates with the Windows Package Manager (winget) for software management operations. Because winget requires user-context execution (it cannot run in Session 0 where the Breeze service lives), all winget commands are dispatched through IPC to a user helper process.
+On Windows endpoints, BL4CK integrates with the Windows Package Manager (winget) for software management operations. Because winget requires user-context execution (it cannot run in Session 0 where the BL4CK service lives), all winget commands are dispatched through IPC to a user helper process.
 
 ### How Winget IPC Works
 
 <Steps>
-1. **The Breeze agent service** (running in Session 0) receives a software management command from the API.
+1. **The BL4CK agent service** (running in Session 0) receives a software management command from the API.
 
 2. **The service checks for a connected user helper** session. If no helper is available, read-only operations (scan, list) return empty results, while mutating operations (install, uninstall) return an error.
 
@@ -419,7 +419,7 @@ Each policy has a `priority` field (default: 50) that determines evaluation orde
 
 All policy operations are recorded in two audit systems:
 
-1. **Route audit** -- Standard Breeze audit log entries with action types like `software_policy.create`, `software_policy.update`, `software_policy.delete`, `software_policy.check`, and `software_policy.remediate`.
+1. **Route audit** -- Standard BL4CK audit log entries with action types like `software_policy.create`, `software_policy.update`, `software_policy.delete`, `software_policy.check`, and `software_policy.remediate`.
 
 2. **Policy-specific audit** -- Detailed records in the `software_policy_audit` table with actions like `policy_created`, `policy_updated`, `policy_deleted`, `compliance_check_requested`, and `remediation_requested`. These records include the actor type (`user` or `system`), actor ID, and a details JSONB column.
 
@@ -472,7 +472,7 @@ Verify the policy's `mode` matches your intent. A blocklist only flags software 
 Audit mode is observation-only. Change the policy mode to `allowlist` or `blocklist` using `PATCH /software-policies/:id` with `{ "mode": "blocklist" }` before triggering remediation.
 
 **Winget install fails with "requires a connected user helper session".**
-Winget cannot run in Session 0 (the Windows service context). The Breeze agent dispatches winget commands through IPC to a user helper process running in an active user session. If no user is logged in or the helper process is not running, winget operations will fail. Verify that a user session is active on the target Windows device and that the Breeze user helper is connected.
+Winget cannot run in Session 0 (the Windows service context). The BL4CK agent dispatches winget commands through IPC to a user helper process running in an active user session. If no user is logged in or the helper process is not running, winget operations will fail. Verify that a user session is active on the target Windows device and that the BL4CK user helper is connected.
 
 **Compliance check was scheduled but never completed.**
 Compliance checks run through BullMQ and require Redis. Verify Redis is accessible. Check the API logs for `[SoftwareComplianceWorker]` messages. If you see "withSystemDbAccessContext unavailable", the worker may not have the database context it needs. Also verify that the policy has target devices -- if no devices match the policy's scope, the worker has nothing to evaluate.

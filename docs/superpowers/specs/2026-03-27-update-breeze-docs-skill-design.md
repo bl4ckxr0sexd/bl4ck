@@ -1,11 +1,11 @@
-# Update Breeze Docs Skill — Design Spec
+# Update BL4CK Docs Skill — Design Spec
 
 **Date**: 2026-03-27
 **Status**: Approved
 
 ## Overview
 
-A Claude Code skill (`update-breeze-docs`) that updates the Breeze RMM Starlight technical documentation (`apps/docs/`) after code changes. Supports two entry modes: diff-driven (specific PR, version range) and manual targeting (specific doc by topic name). Uses `scripts/docs-review/mapping.json` for code-to-doc relationships and keeps it current.
+A Claude Code skill (`update-breeze-docs`) that updates the BL4CK RMM Starlight technical documentation (`apps/docs/`) after code changes. Supports two entry modes: diff-driven (specific PR, version range) and manual targeting (specific doc by topic name). Uses `scripts/docs-review/mapping.json` for code-to-doc relationships and keeps it current.
 
 ## Skill Identity
 

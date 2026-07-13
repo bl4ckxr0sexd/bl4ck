@@ -5,7 +5,7 @@ description: Browser extension inventory, risk assessment, policy-based complian
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Browser Security gives you visibility into every browser extension installed across your managed devices. The Breeze agent inventories extensions from Chrome, Edge, Firefox, and other browsers, reporting each extension's name, version, source, permissions, and risk level. You can create policies that define which extensions are allowed, blocked, or required, and Breeze tracks violations when devices fall out of compliance. The risk summary dashboard aggregates extension data across the fleet so you can quickly identify high-risk or unauthorized extensions.
+Browser Security gives you visibility into every browser extension installed across your managed devices. The BL4CK agent inventories extensions from Chrome, Edge, Firefox, and other browsers, reporting each extension's name, version, source, permissions, and risk level. You can create policies that define which extensions are allowed, blocked, or required, and BL4CK tracks violations when devices fall out of compliance. The risk summary dashboard aggregates extension data across the fleet so you can quickly identify high-risk or unauthorized extensions.
 
 ---
 
@@ -54,7 +54,7 @@ Policies can be scoped to different levels of your organizational hierarchy:
 
 3. **Create browser policies** to define allowed, blocked, and required extension lists. Policies are scoped to your organization, sites, groups, devices, or tags.
 
-4. **Breeze evaluates compliance** automatically when inventory data arrives or policies change. Policy violations are detected and tracked in the `browser_policy_violations` table.
+4. **BL4CK evaluates compliance** automatically when inventory data arrives or policies change. Policy violations are detected and tracked in the `browser_policy_violations` table.
 
 5. **Review violations and risk** through the API. Unresolved violations surface devices that are out of compliance. The extension summary dashboard shows risk distribution across your fleet.
 </Steps>
@@ -170,7 +170,7 @@ Authorization: Bearer <token>
 | `isActive` | boolean | No | Whether the policy is active (default `true`) |
 
 <Aside>
-  When a policy is created or updated, Breeze automatically triggers a policy evaluation job through BullMQ. The evaluation checks all devices in the policy's scope against the updated rules and creates or resolves violation records as needed.
+  When a policy is created or updated, BL4CK automatically triggers a policy evaluation job through BullMQ. The evaluation checks all devices in the policy's scope against the updated rules and creates or resolves violation records as needed.
 </Aside>
 
 ### Updating a Policy

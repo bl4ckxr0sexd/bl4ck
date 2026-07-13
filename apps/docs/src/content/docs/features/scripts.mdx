@@ -7,11 +7,11 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 import { Image } from 'astro:assets';
 import scriptsScreenshot from '../../../assets/screenshots/scripts.png';
 
-<Image src={scriptsScreenshot} alt="Breeze Script Library showing scripts with language, category, OS, and status" />
+<Image src={scriptsScreenshot} alt="BL4CK Script Library showing scripts with language, category, OS, and status" />
 
 Scripts let you define reusable code that runs on managed devices across your fleet. Each script has a language, a set of compatible operating systems, optional parameters, and a configurable execution context. Scripts can be triggered manually, on a schedule via [Automations](/features/automations/), in response to alerts, or through configuration policies.
 
-The Breeze agent writes the script to a temporary file on the target device, runs it through the appropriate shell, captures stdout and stderr (up to 1 MB each), and reports the result back. Scripts are cleaned up from disk immediately after execution.
+The BL4CK agent writes the script to a temporary file on the target device, runs it through the appropriate shell, captures stdout and stderr (up to 1 MB each), and reports the result back. Scripts are cleaned up from disk immediately after execution.
 
 ---
 
@@ -25,7 +25,7 @@ The Script Library displays your scripts in a searchable list with columns for n
 
 ### Importing from the system library
 
-Breeze provides a shared system library of pre-built scripts available to all organizations. To import one:
+BL4CK provides a shared system library of pre-built scripts available to all organizations. To import one:
 
 <Steps>
 
@@ -47,7 +47,7 @@ Breeze provides a shared system library of pre-built scripts available to all or
 
 2. **Enter script details.** Fill in the script name, select a category, choose the language (PowerShell, Bash, Python, or CMD), and toggle the target operating systems (Windows, macOS, Linux).
 
-3. **Write the script.** Use the built-in Monaco code editor with syntax highlighting. The **AI Assistant** button (or keyboard shortcut) opens a side panel where the Breeze AI can help generate, explain, or refine your script.
+3. **Write the script.** Use the built-in Monaco code editor with syntax highlighting. The **AI Assistant** button (or keyboard shortcut) opens a side panel where the BL4CK AI can help generate, explain, or refine your script.
 
 4. **Add parameters (optional).** Expand the **Parameters** section and click **Add parameter** to define runtime variables. Each parameter has a name, type (string, number, boolean, or select), default value, and required flag. Reference parameters in your script as `{{paramName}}`.
 
@@ -148,7 +148,7 @@ Navigate to **Scripts** and click a script name to open the editor, then click *
 
 ### Severity by Exit Code
 
-When a script finishes, Breeze decides whether to raise an alert and at what severity based on the exit code. The mapping is configurable per script.
+When a script finishes, BL4CK decides whether to raise an alert and at what severity based on the exit code. The mapping is configurable per script.
 
 The defaults are conservative: exit code `0` raises no alert at all, and any non-zero exit raises a `medium`-severity alert unless you override it. To customize, set the `exitCodeSeverityMapping` field on the script — a JSON object mapping exit-code strings to severity levels.
 
@@ -395,7 +395,7 @@ Script output is scanned for sensitive information before being stored. The agen
 
 ## Script Approval (AI Assistant)
 
-When the Breeze AI assistant needs to run a script on a device, it goes through a tiered approval system. Script execution via the AI is classified as a **Tier 3** operation, meaning it always requires explicit user approval before it can proceed.
+When the BL4CK AI assistant needs to run a script on a device, it goes through a tiered approval system. Script execution via the AI is classified as a **Tier 3** operation, meaning it always requires explicit user approval before it can proceed.
 
 ### How approval works
 

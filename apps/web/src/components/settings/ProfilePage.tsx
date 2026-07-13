@@ -920,7 +920,7 @@ export default function ProfilePage({ initialUser }: ProfilePageProps) {
         )}
       </div>
 
-      {/* Approval security (Breeze Authenticator) */}
+      {/* Approval security (BL4CK Authenticator) */}
       <ApproverDevicesSection />
       <ThemingSettings
         preferences={user?.preferences}

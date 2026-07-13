@@ -1,4 +1,4 @@
-# SOC 2 A1.1 Processing Capacity Notes (Breeze)
+# SOC 2 A1.1 Processing Capacity Notes (BL4CK)
 
 Last updated: 2026-02-27
 
@@ -10,25 +10,25 @@ Last updated: 2026-02-27
 
 ## Scope and Boundary (Important)
 
-These notes are for **monitoring Breeze application capacity**, not managed endpoint capacity.
+These notes are for **monitoring BL4CK application capacity**, not managed endpoint capacity.
 
 In scope for A1.1:
 
-- Breeze API service
+- BL4CK API service
 - PostgreSQL
 - Redis
 - Worker/queue processing behavior
-- Host/container infrastructure running Breeze
+- Host/container infrastructure running BL4CK
 
 Out of scope for this specific control narrative:
 
-- Endpoint device telemetry from the Breeze agent (`agent/internal/collectors/metrics.go`) when used to monitor customer-managed devices.
+- Endpoint device telemetry from the BL4CK agent (`agent/internal/collectors/metrics.go`) when used to monitor customer-managed devices.
 
 ## Current Monitoring Architecture (Application Capacity)
 
 - API exposes Prometheus metrics via `/metrics/scrape` in `apps/api/src/routes/metrics.ts`.
 - Prometheus scrapes `api:3001` on `/metrics/scrape` using bearer auth token (`METRICS_SCRAPE_TOKEN`) in `monitoring/prometheus.yml`.
-- Grafana is provisioned with Prometheus datasource and Breeze dashboards in `monitoring/grafana/*`.
+- Grafana is provisioned with Prometheus datasource and BL4CK dashboards in `monitoring/grafana/*`.
 - Alert rules are defined in `monitoring/rules/breeze-rules.yml`.
 - Production deploy script writes scrape secret and validates monitoring stack in `scripts/prod/deploy.sh`.
 
@@ -44,7 +44,7 @@ Current alert coverage includes:
 
 Current data sources:
 
-- Breeze API metrics (`http_requests_total`, request duration histogram, in-flight requests, business gauges)
+- BL4CK API metrics (`http_requests_total`, request duration histogram, in-flight requests, business gauges)
 - Redis exporter metrics
 - PostgreSQL exporter metrics
 - Node exporter metrics (host-level)
@@ -89,4 +89,4 @@ Current data sources:
 
 ## Example Control Narrative (Draft)
 
-Breeze maintains and monitors processing capacity for application infrastructure using Prometheus-collected telemetry from the API service and supporting infrastructure (PostgreSQL, Redis, host metrics), with Grafana dashboards and threshold-based alerting. Capacity and performance data are reviewed on a recurring cadence, and scaling or optimization actions are tracked through change management records. This process enables proactive capacity management and timely implementation of additional capacity to meet service objectives.
+BL4CK maintains and monitors processing capacity for application infrastructure using Prometheus-collected telemetry from the API service and supporting infrastructure (PostgreSQL, Redis, host metrics), with Grafana dashboards and threshold-based alerting. Capacity and performance data are reviewed on a recurring cadence, and scaling or optimization actions are tracked through change management records. This process enables proactive capacity management and timely implementation of additional capacity to meet service objectives.

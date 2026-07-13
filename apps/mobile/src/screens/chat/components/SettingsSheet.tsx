@@ -516,7 +516,7 @@ function SheetBody({
           borderTopColor: theme.border,
         }}
       >
-        <Text style={[type.metaCaps, { color: theme.textLo }]}>BREEZE MOBILE</Text>
+        <Text style={[type.metaCaps, { color: theme.textLo }]}>BL4CK MOBILE</Text>
         <Text style={[type.meta, { color: theme.textMd, marginTop: spacing[1] }]}>
           {buildVersion}
         </Text>

@@ -1,4 +1,4 @@
-# Breeze AI for Office — Plan 4: MSP Admin Dashboard
+# BL4CK AI for Office — Plan 4: MSP Admin Dashboard
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -844,11 +844,11 @@ clientAiConsentCallbackRoute.get('/consent/callback', (c) => {
   const description = c.req.query('error_description') ?? '';
   const title = granted ? 'Consent granted' : 'Consent not granted';
   const detail = granted
-    ? 'You can close this window, return to Breeze, and click “I’ve granted consent” in the setup wizard.'
-    : escapeHtml(description || error || 'Microsoft did not report a granted consent. Close this window and retry from Breeze.');
+    ? 'You can close this window, return to BL4CK, and click “I’ve granted consent” in the setup wizard.'
+    : escapeHtml(description || error || 'Microsoft did not report a granted consent. Close this window and retry from BL4CK.');
   const html = `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>${title} — Breeze AI for Office</title>
+<head><meta charset="utf-8"><title>${title} — BL4CK AI for Office</title>
 <style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#0b0f17;color:#e5e7eb}main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.25rem}p{color:#9ca3af;font-size:.9rem;line-height:1.5}</style>
 </head>
 <body><main><h1>${title}</h1><p>${detail}</p></main></body>
@@ -3006,7 +3006,7 @@ export default function OrgsTab({ onOpenPolicy }: OrgsTabProps) {
         data-testid="ai-office-not-enabled"
       >
         <p className="font-medium text-foreground">
-          Breeze AI for Office is not enabled on this instance.
+          BL4CK AI for Office is not enabled on this instance.
         </p>
         <p className="mt-1">
           Set <code className="rounded bg-muted px-1">CLIENT_AI_ENTRA_CLIENT_ID</code> (the Entra
@@ -3349,7 +3349,7 @@ function OnboardingWizard({
       {step === 2 && (
         <div className="mt-5 space-y-3" data-testid="ai-office-wizard-step-2">
           <p className="text-sm text-muted-foreground">
-            A Microsoft 365 admin of the client tenant must grant admin consent to the Breeze AI
+            A Microsoft 365 admin of the client tenant must grant admin consent to the BL4CK AI
             for Office app. Send them this link (or open it yourself if you hold Global Admin in
             the client tenant):
           </p>
@@ -3390,7 +3390,7 @@ function OnboardingWizard({
                 </a>
               </div>
               <p className="text-xs text-muted-foreground">
-                After granting, Microsoft redirects to a Breeze confirmation page. Consent shows as
+                After granting, Microsoft redirects to a BL4CK confirmation page. Consent shows as
                 granted here once the first user signs in from Excel — there is no live poll
                 against Microsoft (Plan-4 decision 1).
               </p>
@@ -3455,7 +3455,7 @@ function OnboardingWizard({
             </li>
             <li>
               Choose <span className="font-medium text-foreground">Upload custom apps</span> →
-              Office add-in → provide the Breeze AI for Office manifest URL from your Breeze
+              Office add-in → provide the BL4CK AI for Office manifest URL from your BL4CK
               instance.
             </li>
             <li>
@@ -3634,7 +3634,7 @@ describe('OrgsTab', () => {
   });
 
   it('shows the not-enabled notice when the admin group is dark-gated (404)', async () => {
-    fetchMock.mockResolvedValue(makeJsonResponse({ error: 'Breeze AI for Office is not enabled' }, false, 404));
+    fetchMock.mockResolvedValue(makeJsonResponse({ error: 'BL4CK AI for Office is not enabled' }, false, 404));
     render(<OrgsTab onOpenPolicy={onOpenPolicy} />);
     await waitFor(() => expect(screen.getByTestId('ai-office-not-enabled')).toBeInTheDocument());
   });
@@ -4198,7 +4198,7 @@ export default function PolicyEditor({ orgId, onBack }: { orgId: string; onBack:
           Data loss prevention
         </h3>
         <p className="mb-4 text-sm text-muted-foreground">
-          Every payload leaving Breeze for the model is scanned (spec §6). Redacted values are
+          Every payload leaving BL4CK for the model is scanned (spec §6). Redacted values are
           stored redacted — the audit trail never keeps the sensitive form.
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ensure the Linux Breeze agent automatically restarts after a reboot without requiring the user to manually start it.
+**Goal:** Ensure the Linux BL4CK agent automatically restarts after a reboot without requiring the user to manually start it.
 
 **Architecture:** Two locations fail to call `systemctl enable`: the install script and the `service start` CLI command. Both need to call `systemctl enable breeze-agent` before/after starting the service so the systemd unit is marked for auto-start on boot.
 
@@ -112,7 +112,7 @@
       return fmt.Errorf("failed to start service: %s", strings.TrimSpace(string(out)))
   }
   
-  fmt.Println("Breeze Agent service started.")
+  fmt.Println("BL4CK Agent service started.")
   fmt.Println("Logs: journalctl -u breeze-agent -f")
   ```
 
@@ -130,7 +130,7 @@
       return fmt.Errorf("failed to start service: %s", strings.TrimSpace(string(out)))
   }
   
-  fmt.Println("Breeze Agent service started and enabled for auto-start.")
+  fmt.Println("BL4CK Agent service started and enabled for auto-start.")
   fmt.Println("Logs: journalctl -u breeze-agent -f")
   ```
 

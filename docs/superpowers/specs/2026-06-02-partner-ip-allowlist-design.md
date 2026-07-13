@@ -6,7 +6,7 @@
 
 ## Problem
 
-There is no built-in way to restrict the Breeze administration panel to specific IP addresses. Operators currently push this down to the reverse proxy (Caddy / Cloudflare Access). A partner-settings field `ipAllowlist` already exists in the schema and UI, but **nothing reads it to block access** — it is dead config today.
+There is no built-in way to restrict the BL4CK administration panel to specific IP addresses. Operators currently push this down to the reverse proxy (Caddy / Cloudflare Access). A partner-settings field `ipAllowlist` already exists in the schema and UI, but **nothing reads it to block access** — it is dead config today.
 
 This design wires up enforcement for that field at the partner level, with the safety mechanisms needed to make app-layer IP filtering usable without locking operators out of their own panel.
 

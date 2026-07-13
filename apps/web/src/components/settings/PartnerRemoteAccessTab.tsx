@@ -29,7 +29,7 @@ type Props = {
 };
 
 function makeProviderId(): string {
-  // crypto.randomUUID is widely supported in the browsers Breeze targets and
+  // crypto.randomUUID is widely supported in the browsers BL4CK targets and
   // gives a 122-bit-entropy id; Math.random().toString(36).slice(2,10) gave
   // ~48 bits and is collidable on large provider lists (issue #714).
   return `provider-${crypto.randomUUID()}`;
@@ -110,7 +110,7 @@ export default function PartnerRemoteAccessTab({ data, onChange }: Props) {
       </div>
 
       {/* Built-in option — selecting this falls the Connect Desktop button
-          back to Breeze's bundled WebRTC desktop session. Always present so
+          back to BL4CK's bundled WebRTC desktop session. Always present so
           users can return to the default once they've added providers. */}
       <div
         className={`rounded-lg border p-4 ${!defaultProviderId ? 'border-primary bg-primary/5' : ''}`}
@@ -123,7 +123,7 @@ export default function PartnerRemoteAccessTab({ data, onChange }: Props) {
             onChange={() => onChange({ ...data, defaultProviderId: '' })}
             className="h-4 w-4"
           />
-          Built-in (Breeze WebRTC desktop session)
+          Built-in (BL4CK WebRTC desktop session)
         </label>
         <p className="mt-1 ml-6 text-xs text-muted-foreground">
           The default. Connect Desktop opens an in-browser WebRTC session to

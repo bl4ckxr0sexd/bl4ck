@@ -1,14 +1,14 @@
 # TLS / HTTPS Setup Guide
 
-This guide covers how to terminate TLS in front of the Breeze API and configure the related environment variables.
+This guide covers how to terminate TLS in front of the BL4CK API and configure the related environment variables.
 
 ## Architecture
 
 ```
-Client (HTTPS) --> Reverse Proxy (TLS termination) --> Breeze API (HTTP, localhost:3001)
+Client (HTTPS) --> Reverse Proxy (TLS termination) --> BL4CK API (HTTP, localhost:3001)
 ```
 
-The Breeze API runs as a plain HTTP server. TLS is terminated by a reverse proxy (Caddy or nginx) which forwards requests over localhost. The proxy must set the `X-Forwarded-Proto` header so the API knows the original protocol.
+The BL4CK API runs as a plain HTTP server. TLS is terminated by a reverse proxy (Caddy or nginx) which forwards requests over localhost. The proxy must set the `X-Forwarded-Proto` header so the API knows the original protocol.
 
 ## Environment Variables
 
@@ -68,7 +68,7 @@ caddy run --config /etc/caddy/Caddyfile
 sudo systemctl enable --now caddy
 ```
 
-### Breeze API Environment
+### BL4CK API Environment
 
 ```env
 FORCE_HTTPS=true
@@ -126,7 +126,7 @@ server {
     ssl_stapling on;
     ssl_stapling_verify on;
 
-    # Proxy to Breeze API
+    # Proxy to BL4CK API
     location / {
         proxy_pass http://127.0.0.1:3001;
         proxy_set_header Host $host;
@@ -164,7 +164,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-### Breeze API Environment
+### BL4CK API Environment
 
 ```env
 FORCE_HTTPS=true
@@ -177,7 +177,7 @@ NODE_ENV=production
 
 The `FORCE_HTTPS` redirect relies on the `X-Forwarded-Proto` header set by the reverse proxy. This is safe when:
 
-1. The Breeze API is **not** directly exposed to the internet (it listens on `localhost:3001`).
+1. The BL4CK API is **not** directly exposed to the internet (it listens on `localhost:3001`).
 2. Only the reverse proxy (Caddy/nginx) can reach the API.
 3. The reverse proxy sets `X-Forwarded-Proto` to the actual client protocol.
 
@@ -185,7 +185,7 @@ If the API were exposed directly, a malicious client could forge the `X-Forwarde
 
 ## Security Headers Reference
 
-The following security headers are set by the Breeze API (via `secureHeaders` from Hono and the custom `securityMiddleware`):
+The following security headers are set by the BL4CK API (via `secureHeaders` from Hono and the custom `securityMiddleware`):
 
 | Header | Value | Source |
 |--------|-------|--------|

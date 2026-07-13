@@ -9,7 +9,7 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
   The EDR UI — the `/security/edr` fleet page, the Security-tab EDR panel on device pages, and the Security dashboard summary cards — is hidden by default. It is surfaced only when the web image is built with the environment variable `PUBLIC_ENABLE_EDR_INTEGRATIONS=true`. This is a **build-time web flag**: the value is baked into the web bundle at image-build time and cannot be toggled at runtime via `.env`. The API sync jobs and all EDR endpoints operate regardless of this flag.
 </Aside>
 
-Breeze integrates with leading Endpoint Detection and Response (EDR) platforms to give you a unified view of endpoint security across your managed fleet. Instead of switching between your RMM and EDR consoles, you can view threat data, agent coverage, and incident details directly in Breeze.
+BL4CK integrates with leading Endpoint Detection and Response (EDR) platforms to give you a unified view of endpoint security across your managed fleet. Instead of switching between your RMM and EDR consoles, you can view threat data, agent coverage, and incident details directly in BL4CK.
 
 Currently supported EDR vendors:
 
@@ -18,17 +18,17 @@ Currently supported EDR vendors:
 | **Huntress** | Agents, incidents | Webhook ingestion, manual sync |
 | **SentinelOne** | Agents, threats, site mappings | Device isolation, threat actions (kill, quarantine, rollback), manual sync |
 
-Both integrations are configured once at the **partner** level: with your scope selector set to **All orgs** you provide the vendor's API credentials, map each vendor's organizations/sites to your Breeze organizations, and Breeze syncs agent and threat data on a schedule. The synced data is attributed to the correct customer and matched to your existing Breeze devices.
+Both integrations are configured once at the **partner** level: with your scope selector set to **All orgs** you provide the vendor's API credentials, map each vendor's organizations/sites to your BL4CK organizations, and BL4CK syncs agent and threat data on a schedule. The synced data is attributed to the correct customer and matched to your existing BL4CK devices.
 
-### Auto-Linking: How EDR Agents Map to Breeze Devices
+### Auto-Linking: How EDR Agents Map to BL4CK Devices
 
-During each sync, Breeze automatically attempts to match imported EDR agents to enrolled Breeze devices. The matching logic differs slightly by vendor:
+During each sync, BL4CK automatically attempts to match imported EDR agents to enrolled BL4CK devices. The matching logic differs slightly by vendor:
 
-**Huntress**: Agents are matched by **hostname** (case-insensitive, trimmed). Breeze compares the Huntress agent's hostname against both the `hostname` and `displayName` of every enrolled device in the organization. If a match is found, the Huntress agent and any associated incidents are linked to that Breeze device.
+**Huntress**: Agents are matched by **hostname** (case-insensitive, trimmed). BL4CK compares the Huntress agent's hostname against both the `hostname` and `displayName` of every enrolled device in the organization. If a match is found, the Huntress agent and any associated incidents are linked to that BL4CK device.
 
-**SentinelOne**: Agents are matched first by **hostname** (the `computerName` field), then by **IP address** as a fallback. If the SentinelOne agent's computer name matches a Breeze device hostname (case-insensitive), the match is made. If no hostname match exists, Breeze checks the agent's network interfaces against known device IP addresses.
+**SentinelOne**: Agents are matched first by **hostname** (the `computerName` field), then by **IP address** as a fallback. If the SentinelOne agent's computer name matches a BL4CK device hostname (case-insensitive), the match is made. If no hostname match exists, BL4CK checks the agent's network interfaces against known device IP addresses.
 
-Agents that cannot be matched appear as "unmapped" in the integration status dashboard. To resolve unmapped agents, either enroll the missing device in Breeze or verify that the hostname in the EDR system matches the hostname reported by the Breeze agent.
+Agents that cannot be matched appear as "unmapped" in the integration status dashboard. To resolve unmapped agents, either enroll the missing device in BL4CK or verify that the hostname in the EDR system matches the hostname reported by the BL4CK agent.
 
 ---
 
@@ -36,22 +36,22 @@ Agents that cannot be matched appear as "unmapped" in the integration status das
 
 ### Overview
 
-The Huntress integration syncs agent inventory and incident reports from your Huntress account into Breeze. It supports both pull-based syncing (via the Huntress API) and push-based updates (via webhooks). Huntress agents are automatically matched to Breeze devices, and incidents are linked to the affected device when a mapping exists.
+The Huntress integration syncs agent inventory and incident reports from your Huntress account into BL4CK. It supports both pull-based syncing (via the Huntress API) and push-based updates (via webhooks). Huntress agents are automatically matched to BL4CK devices, and incidents are linked to the affected device when a mapping exists.
 
 ### Setting Up Huntress
 
 <Steps>
 1. Set your scope selector to **All orgs**, then navigate to **Integrations**, open the **Security** tab, and select **Huntress**. Huntress is configured once for the whole partner.
 2. Provide a **name** for the integration (e.g., "Production Huntress").
-3. Enter your **Huntress API Key** and **API Secret** as shown in the Huntress portal. Paste each value into its own field — do not paste a Base64-encoded combination of the two; Breeze formats the API request automatically. Both values are encrypted at rest using AES before being stored.
-4. Enter your **Deployment Account Key**. This key is found on the Huntress agent-download page in your Huntress portal and is required to enable one-click Huntress deployment from Breeze's **Software → Deployment** catalog.
-5. Optionally provide your **Huntress account ID**. (A custom API base URL can be set via the Breeze API; the default is `https://api.huntress.io/v1`.)
+3. Enter your **Huntress API Key** and **API Secret** as shown in the Huntress portal. Paste each value into its own field — do not paste a Base64-encoded combination of the two; BL4CK formats the API request automatically. Both values are encrypted at rest using AES before being stored.
+4. Enter your **Deployment Account Key**. This key is found on the Huntress agent-download page in your Huntress portal and is required to enable one-click Huntress deployment from BL4CK's **Software → Deployment** catalog.
+5. Optionally provide your **Huntress account ID**. (A custom API base URL can be set via the BL4CK API; the default is `https://api.huntress.io/v1`.)
 6. Optionally provide a **webhook secret** for signature verification on incoming webhook payloads.
 7. Click **Save & Connect**. An initial sync is automatically scheduled.
 </Steps>
 
 <Aside>
-  The Huntress integration is configured at the **partner** level — one Huntress account serves all of your customer organizations. Configure it with your scope selector set to **All orgs**; the connection and credential fields are only available in that view. You then map each Huntress organization to a Breeze organization (see [Organization Mappings](#organization-mappings) below). Organization users can view the agents and incidents for their mapped org but cannot change the connection or mappings.
+  The Huntress integration is configured at the **partner** level — one Huntress account serves all of your customer organizations. Configure it with your scope selector set to **All orgs**; the connection and credential fields are only available in that view. You then map each Huntress organization to a BL4CK organization (see [Organization Mappings](#organization-mappings) below). Organization users can view the agents and incidents for their mapped org but cannot change the connection or mappings.
 </Aside>
 
 <Aside>
@@ -60,15 +60,15 @@ The Huntress integration syncs agent inventory and incident reports from your Hu
 
 ### Webhook Configuration
 
-Huntress can push event notifications to Breeze in real time via webhooks.
+Huntress can push event notifications to BL4CK in real time via webhooks.
 
-#### Getting the webhook URL and secret from Breeze
+#### Getting the webhook URL and secret from BL4CK
 
 You no longer need to hand-build the webhook URL. With your scope set to **All orgs**, open **Integrations > Security > Huntress**. Once the integration is connected, the **Inbound webhook** section shows:
 
 <Steps>
-1. The exact, region-correct **Webhook URL** to paste into Huntress, with a **Copy** button. The URL includes an `integrationId` query parameter that tells Breeze which partner the events belong to — keep it in the URL.
-2. A **Webhook Secret** field with a **Generate** button. Click **Generate** to create a strong secret, copy it (it is shown only once), paste the same value into Huntress's webhook configuration, then **Save** to store it. Breeze keeps it encrypted and never displays it again.
+1. The exact, region-correct **Webhook URL** to paste into Huntress, with a **Copy** button. The URL includes an `integrationId` query parameter that tells BL4CK which partner the events belong to — keep it in the URL.
+2. A **Webhook Secret** field with a **Generate** button. Click **Generate** to create a strong secret, copy it (it is shown only once), paste the same value into Huntress's webhook configuration, then **Save** to store it. BL4CK keeps it encrypted and never displays it again.
 </Steps>
 
 The webhook URL has the form:
@@ -79,9 +79,9 @@ POST https://your-breeze-instance.com/api/v1/huntress/webhook?integrationId=<id>
 
 Webhook payloads are verified using HMAC-SHA256 signature validation:
 
-1. Breeze reads the **signature** from the `x-huntress-signature` header (fallback: `x-signature`).
-2. Breeze reads the **timestamp** from the `x-huntress-timestamp` header (fallback: `x-timestamp`).
-3. Breeze computes `HMAC-SHA256(secret, "{timestamp}.{body}")` and compares the result to the provided signature using a timing-safe comparison.
+1. BL4CK reads the **signature** from the `x-huntress-signature` header (fallback: `x-signature`).
+2. BL4CK reads the **timestamp** from the `x-huntress-timestamp` header (fallback: `x-timestamp`).
+3. BL4CK computes `HMAC-SHA256(secret, "{timestamp}.{body}")` and compares the result to the provided signature using a timing-safe comparison.
 4. The timestamp must be within **10 minutes** of the current server time, or the webhook is rejected as a potential replay.
 
 The expected signature format is `sha256={hex_digest}`.
@@ -92,7 +92,7 @@ The expected signature format is `sha256={hex_digest}`.
 
 #### Webhook Routing
 
-When Breeze receives a Huntress webhook, it needs to determine which integration the event belongs to. The integration is resolved using (in order of priority):
+When BL4CK receives a Huntress webhook, it needs to determine which integration the event belongs to. The integration is resolved using (in order of priority):
 
 1. `integrationId` query parameter or `x-huntress-integration-id` header
 2. `integrationId` field in the JSON payload body
@@ -102,16 +102,16 @@ If multiple active integrations match the same account and no explicit integrati
 
 ### Organization Mappings
 
-Because the Huntress integration is partner-scoped, Breeze discovers the organizations in your Huntress account during each sync and lets you map each one to a Breeze organization. Mapping an organization attributes its agents and incidents to the correct customer, so organization users only see their own data.
+Because the Huntress integration is partner-scoped, BL4CK discovers the organizations in your Huntress account during each sync and lets you map each one to a BL4CK organization. Mapping an organization attributes its agents and incidents to the correct customer, so organization users only see their own data.
 
 <Steps>
 1. With your scope selector set to **All orgs**, open **Integrations > Security > Huntress** and find the **Organization mapping** section.
 2. Review the list of Huntress organizations discovered during sync, each shown with its agent and incident counts.
-3. For each Huntress organization, select the Breeze organization it should map to.
-4. The mapping saves immediately. Agents and incidents from that Huntress organization are attributed to the selected Breeze organization.
+3. For each Huntress organization, select the BL4CK organization it should map to.
+4. The mapping saves immediately. Agents and incidents from that Huntress organization are attributed to the selected BL4CK organization.
 </Steps>
 
-To remove a mapping, clear the selected Breeze organization. Unmapped Huntress organizations remain visible in the partner view, but their agents and incidents are no longer attributed to a specific customer.
+To remove a mapping, clear the selected BL4CK organization. Unmapped Huntress organizations remain visible in the partner view, but their agents and incidents are no longer attributed to a specific customer.
 
 ### Data Model (For Integrators)
 
@@ -120,7 +120,7 @@ To remove a mapping, clear the selected Breeze organization. Unmapped Huntress o
 | Field | Type | Description |
 |-------|------|-------------|
 | `huntressAgentId` | String | Unique agent identifier from Huntress |
-| `deviceId` | UUID | Mapped Breeze device (nullable if unmapped) |
+| `deviceId` | UUID | Mapped BL4CK device (nullable if unmapped) |
 | `hostname` | String | Agent hostname |
 | `platform` | String | Operating system platform |
 | `status` | String | Agent status (e.g., online, offline) |
@@ -132,7 +132,7 @@ To remove a mapping, clear the selected Breeze organization. Unmapped Huntress o
 | Field | Type | Description |
 |-------|------|-------------|
 | `huntressIncidentId` | String | Unique incident identifier from Huntress |
-| `deviceId` | UUID | Affected Breeze device (nullable if unmapped) |
+| `deviceId` | UUID | Affected BL4CK device (nullable if unmapped) |
 | `severity` | String | Incident severity level |
 | `category` | String | Incident category (max 60 chars) |
 | `title` | String | Incident title |
@@ -150,8 +150,8 @@ The Huntress status endpoint provides a summary of your integration health:
 | Metric | Description |
 |--------|-------------|
 | `totalAgents` | Total Huntress agents synced |
-| `mappedAgents` | Agents matched to Breeze devices |
-| `unmappedAgents` | Agents without a Breeze device match |
+| `mappedAgents` | Agents matched to BL4CK devices |
+| `unmappedAgents` | Agents without a BL4CK device match |
 | `offlineAgents` | Agents with an offline status |
 | `open` | Count of unresolved incidents |
 | `bySeverity` | Incident counts grouped by severity |
@@ -167,7 +167,7 @@ Incidents can be filtered by multiple criteria:
 | `integrationId` | UUID | Filter by specific integration |
 | `status` | String | Filter by incident status |
 | `severity` | String | Filter by severity level |
-| `deviceId` | UUID | Filter by affected Breeze device |
+| `deviceId` | UUID | Filter by affected BL4CK device |
 | `search` | String | Search incident titles (case-insensitive) |
 | `limit` | Number | Results per page (1-500, default 100) |
 | `offset` | Number | Pagination offset |
@@ -178,7 +178,7 @@ Incidents can be filtered by multiple criteria:
 
 ### Overview
 
-The SentinelOne integration provides deeper operational capabilities beyond data sync. In addition to importing agent and threat data, you can isolate devices and take threat actions (kill, quarantine, rollback) directly from the Breeze dashboard -- commands are dispatched to the SentinelOne management console via API.
+The SentinelOne integration provides deeper operational capabilities beyond data sync. In addition to importing agent and threat data, you can isolate devices and take threat actions (kill, quarantine, rollback) directly from the BL4CK dashboard -- commands are dispatched to the SentinelOne management console via API.
 
 ### Setting Up SentinelOne
 
@@ -191,7 +191,7 @@ The SentinelOne integration provides deeper operational capabilities beyond data
 </Steps>
 
 <Aside>
-  The SentinelOne integration is configured at the **partner** level — one SentinelOne tenant serves all of your customer organizations. The connection and credential fields are only available with your scope selector set to **All orgs**. You then map each SentinelOne site to a Breeze organization (see [Site Mappings](#site-mappings) below). Organization users can view the threats and agents for their mapped org but cannot change the connection or mappings.
+  The SentinelOne integration is configured at the **partner** level — one SentinelOne tenant serves all of your customer organizations. The connection and credential fields are only available with your scope selector set to **All orgs**. You then map each SentinelOne site to a BL4CK organization (see [Site Mappings](#site-mappings) below). Organization users can view the threats and agents for their mapped org but cannot change the connection or mappings.
 </Aside>
 
 <Aside>
@@ -217,7 +217,7 @@ The following SentinelOne operations require MFA verification before they can be
 | Field | Type | Description |
 |-------|------|-------------|
 | `s1AgentId` | String | Unique agent identifier from SentinelOne |
-| `deviceId` | UUID | Mapped Breeze device (nullable if unmapped) |
+| `deviceId` | UUID | Mapped BL4CK device (nullable if unmapped) |
 | `status` | String | Agent connection status |
 | `infected` | Boolean | Whether the agent has active threats |
 | `threatCount` | Integer | Number of threats detected on this agent |
@@ -230,7 +230,7 @@ The following SentinelOne operations require MFA verification before they can be
 | Field | Type | Description |
 |-------|------|-------------|
 | `s1ThreatId` | String | Unique threat identifier from SentinelOne |
-| `deviceId` | UUID | Affected Breeze device (nullable if unmapped) |
+| `deviceId` | UUID | Affected BL4CK device (nullable if unmapped) |
 | `classification` | String | Threat classification (e.g., Malware, PUP) |
 | `severity` | String | Severity level (low, medium, high, critical) |
 | `threatName` | String | Name of the detected threat |
@@ -256,25 +256,25 @@ The following SentinelOne operations require MFA verification before they can be
 
 ### Site Mappings
 
-SentinelOne organizes agents into "Sites." Breeze lets you map SentinelOne sites to Breeze organizations, enabling multi-tenant EDR management from a single SentinelOne console.
+SentinelOne organizes agents into "Sites." BL4CK lets you map SentinelOne sites to BL4CK organizations, enabling multi-tenant EDR management from a single SentinelOne console.
 
 <Steps>
 1. With your scope selector set to **All orgs**, open **Integrations > Security > SentinelOne** and find the **Site mapping** section.
 2. Review the list of discovered SentinelOne sites, each shown with its agent count.
-3. For each SentinelOne site, select the Breeze organization it should map to. Unmapped sites stay quarantined — their agents and threats are not attributed to any customer — until assigned.
+3. For each SentinelOne site, select the BL4CK organization it should map to. Unmapped sites stay quarantined — their agents and threats are not attributed to any customer — until assigned.
 4. The mapping saves immediately.
 </Steps>
 
-To remove a mapping, clear the selected Breeze organization.
+To remove a mapping, clear the selected BL4CK organization.
 
 ### Device Isolation
 
-You can isolate compromised devices directly from Breeze. The isolation command is sent to SentinelOne, which enforces network isolation at the endpoint level.
+You can isolate compromised devices directly from BL4CK. The isolation command is sent to SentinelOne, which enforces network isolation at the endpoint level.
 
 <Steps>
-1. Select one or more devices in the Breeze dashboard.
+1. Select one or more devices in the BL4CK dashboard.
 2. Click **Isolate** (or **Unisolate** to restore connectivity).
-3. Breeze identifies the corresponding SentinelOne agents and dispatches the isolation command.
+3. BL4CK identifies the corresponding SentinelOne agents and dispatches the isolation command.
 4. The action status is tracked and reported back.
 </Steps>
 
@@ -310,7 +310,7 @@ The SentinelOne status endpoint provides a comprehensive summary:
 | Metric | Description |
 |--------|-------------|
 | `totalAgents` | Total SentinelOne agents synced |
-| `mappedDevices` | Agents matched to Breeze devices |
+| `mappedDevices` | Agents matched to BL4CK devices |
 | `infectedAgents` | Agents with active infections |
 | `activeThreats` | Threats with `active` or `in_progress` status |
 | `highOrCriticalThreats` | Threats with `high` or `critical` severity |
@@ -325,7 +325,7 @@ Threats can be filtered by multiple criteria:
 |--------|------|-------------|
 | `orgId` | UUID | Filter by organization |
 | `integrationId` | UUID | Filter by specific integration |
-| `deviceId` | UUID | Filter by affected Breeze device |
+| `deviceId` | UUID | Filter by affected BL4CK device |
 | `status` | String | Filter by threat status |
 | `severity` | String | Filter by severity level |
 | `search` | String | Search by threat name, process name, or file path |
@@ -338,7 +338,7 @@ Threats can be filtered by multiple criteria:
 
 ## Promote to Incident
 
-From the `/security/edr` fleet page or from a device's **Security** tab, you can escalate a Huntress incident or a SentinelOne threat directly into a tracked Breeze incident. Click **Promote to incident** on the item, confirm the pre-filled title and severity (mapped from the EDR severity level), and Breeze creates the incident and navigates you to it. The promotion records the source (Huntress or SentinelOne), the original title, any affected device, and the detection time as the incident's detected-at timestamp.
+From the `/security/edr` fleet page or from a device's **Security** tab, you can escalate a Huntress incident or a SentinelOne threat directly into a tracked BL4CK incident. Click **Promote to incident** on the item, confirm the pre-filled title and severity (mapped from the EDR severity level), and BL4CK creates the incident and navigates you to it. The promotion records the source (Huntress or SentinelOne), the original title, any affected device, and the detection time as the incident's detected-at timestamp.
 
 Promotion uses the standard `POST /incidents` endpoint and follows normal incident-creation permissions.
 
@@ -346,11 +346,11 @@ Promotion uses the standard `POST /incidents` endpoint and follows normal incide
 
 ## Deploying EDR Agents
 
-Once a Huntress or SentinelOne integration is connected, both vendors appear as built-in deployment packages under **Software → Deployment**. You can push the EDR agent to any managed device — or group of devices — with a single click, without leaving Breeze.
+Once a Huntress or SentinelOne integration is connected, both vendors appear as built-in deployment packages under **Software → Deployment**. You can push the EDR agent to any managed device — or group of devices — with a single click, without leaving BL4CK.
 
 ### Huntress
 
-Huntress deployment is fully built in: no binary upload is required. Breeze uses the **Deployment Account Key** you entered during integration setup to generate and deliver the Huntress installer to the target device. Simply navigate to **Software → Deployment**, select **Huntress** from the catalog, choose your target devices, and click **Deploy**.
+Huntress deployment is fully built in: no binary upload is required. BL4CK uses the **Deployment Account Key** you entered during integration setup to generate and deliver the Huntress installer to the target device. Simply navigate to **Software → Deployment**, select **Huntress** from the catalog, choose your target devices, and click **Deploy**.
 
 ### SentinelOne
 
@@ -358,7 +358,7 @@ SentinelOne deployment requires a one-time setup step: upload the SentinelOne MS
 
 <Steps>
 1. Download the SentinelOne Windows MSI from your SentinelOne management console.
-2. Navigate to **Software → Deployment** in Breeze and open the **SentinelOne** catalog entry.
+2. Navigate to **Software → Deployment** in BL4CK and open the **SentinelOne** catalog entry.
 3. Upload the MSI using the **Upload package** option.
 4. Select your target devices and click **Deploy**.
 </Steps>
@@ -377,7 +377,7 @@ Both integrations support manual and automatic syncing.
 
 ### Manual Sync
 
-Trigger a sync from the Breeze dashboard or API. The sync job is queued via the background queue and processes in the background.
+Trigger a sync from the BL4CK dashboard or API. The sync job is queued via the background queue and processes in the background.
 
 | Vendor | Requirements |
 |--------|-------------|
@@ -394,7 +394,7 @@ Each integration tracks its last sync result:
 | `lastSyncStatus` | Result: success or failure indicator |
 | `lastSyncError` | Error message from the last failed sync (nullable) |
 
-After you click **Sync Now** for Huntress, Breeze polls the integration and shows the live status (Syncing → Connected/Error). On success it reports the result counts (for example, agents, incidents, and organizations synced); on failure it shows the actual error from the last run rather than a generic "triggered" message.
+After you click **Sync Now** for Huntress, BL4CK polls the integration and shows the live status (Syncing → Connected/Error). On success it reports the result counts (for example, agents, incidents, and organizations synced); on failure it shows the actual error from the last run rather than a generic "triggered" message.
 
 ### Sync Error Handling and Retries
 
@@ -436,7 +436,7 @@ All endpoints require authentication. Credentials and mappings are managed at **
 | `POST` | `/threat-action` | Yes + MFA | Execute a threat action (kill, quarantine, rollback) |
 | `POST` | `/sync` | Yes | Trigger a manual SentinelOne sync |
 | `GET` | `/sites` | Yes | List SentinelOne sites with agent counts and org mappings |
-| `POST` | `/organizations/map` | Yes (partner) | Map or unmap a SentinelOne site to a Breeze organization (`{ integrationId, s1SiteId, orgId }`) |
+| `POST` | `/organizations/map` | Yes (partner) | Map or unmap a SentinelOne site to a BL4CK organization (`{ integrationId, s1SiteId, orgId }`) |
 
 ---
 
@@ -450,8 +450,8 @@ Both integrations emit platform events that can trigger [automations](/features/
 | `huntress.incident_updated` | An existing incident changes severity, status, or resolution |
 | `huntress.agent_offline` | A Huntress agent transitions from online to offline |
 | `s1.threat_detected` | A new SentinelOne threat is detected |
-| `s1.device_isolated` | A device isolation initiated from Breeze completes in SentinelOne |
-| `s1.threat_action_completed` | A threat action initiated from Breeze (kill, quarantine, rollback) completes |
+| `s1.device_isolated` | A device isolation initiated from BL4CK completes in SentinelOne |
+| `s1.threat_action_completed` | A threat action initiated from BL4CK (kill, quarantine, rollback) completes |
 
 ---
 
@@ -485,11 +485,11 @@ Activate the integration by updating it with `isActive: true` before triggering 
 
 ### Huntress webhook returns 403 "Webhook secret not configured"
 
-You must configure a webhook secret on the integration before Breeze will accept webhook payloads. Update the integration with a `webhookSecret` value that matches what you configured in your Huntress dashboard.
+You must configure a webhook secret on the integration before BL4CK will accept webhook payloads. Update the integration with a `webhookSecret` value that matches what you configured in your Huntress dashboard.
 
 ### Huntress webhook returns 409 "Multiple active integrations match"
 
-When multiple Huntress integrations share the same account ID, Breeze cannot determine which one to route the webhook to. Include the `integrationId` as a query parameter on your webhook URL or in the `x-huntress-integration-id` header.
+When multiple Huntress integrations share the same account ID, BL4CK cannot determine which one to route the webhook to. Include the `integrationId` as a query parameter on your webhook URL or in the `x-huntress-integration-id` header.
 
 ### SentinelOne isolation returns 502
 
@@ -497,7 +497,7 @@ A 502 response means the isolation command was sent to SentinelOne but the provi
 
 ### Unmapped agents
 
-After syncing, some EDR agents may not be matched to Breeze devices. This happens when the hostname or identifier in the EDR system does not correspond to any enrolled Breeze device. Enroll the missing devices in Breeze or verify the hostname matches.
+After syncing, some EDR agents may not be matched to BL4CK devices. This happens when the hostname or identifier in the EDR system does not correspond to any enrolled BL4CK device. Enroll the missing devices in BL4CK or verify the hostname matches.
 
 ### "API token is required for new integrations"
 

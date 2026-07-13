@@ -1,11 +1,11 @@
-# Breeze Viewer Auto-Update Design
+# BL4CK Viewer Auto-Update Design
 
 **Date:** 2026-04-06
 **Status:** Approved
 
 ## Overview
 
-Replace the Breeze Viewer's manual update gate (check GitHub Releases → block UI → user downloads installer) with Tauri 2's built-in `tauri-plugin-updater` for fully automatic, silent updates. The app checks for updates on launch, downloads and installs in the background, and the new version takes effect on next restart. No user interaction required.
+Replace the BL4CK Viewer's manual update gate (check GitHub Releases → block UI → user downloads installer) with Tauri 2's built-in `tauri-plugin-updater` for fully automatic, silent updates. The app checks for updates on launch, downloads and installs in the background, and the new version takes effect on next restart. No user interaction required.
 
 ## Goals
 

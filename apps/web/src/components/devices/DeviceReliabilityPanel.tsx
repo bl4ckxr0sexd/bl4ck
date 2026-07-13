@@ -206,7 +206,7 @@ function factorEvidenceText(
       parts.push(`${formatCount(count30)} ${windowPhrase}`);
       if (count7 !== null) parts.push(`${formatCount(count7)} in last 7d`);
       if (recovered !== null) parts.push(`${formatCount(recovered)} recovered`);
-      if (self) parts.push(`${formatCount(self)} from Breeze services, not scored`);
+      if (self) parts.push(`${formatCount(self)} from BL4CK services, not scored`);
       break;
     }
     case 'hardwareErrors': {

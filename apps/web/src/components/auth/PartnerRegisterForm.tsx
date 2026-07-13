@@ -72,7 +72,7 @@ export default function PartnerRegisterForm({
       <div>
         <h2 className="text-base font-semibold">Your company</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          This creates your MSP account in Breeze
+          This creates your MSP account in BL4CK
         </p>
       </div>
 

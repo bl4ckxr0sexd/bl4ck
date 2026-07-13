@@ -1,4 +1,4 @@
-# Breeze Authenticator — Phase 3 (Mobile Authenticator + PIN/L3) Implementation Plan
+# BL4CK Authenticator — Phase 3 (Mobile Authenticator + PIN/L3) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 

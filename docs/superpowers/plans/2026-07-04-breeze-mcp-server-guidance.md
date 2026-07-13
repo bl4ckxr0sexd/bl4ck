@@ -1,8 +1,8 @@
-# Breeze MCP Server Guidance Implementation Plan
+# BL4CK MCP Server Guidance Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give every client connecting to the Breeze RMM MCP server automatic server-side guidance — an `instructions` blob (orientation + guardrails) plus five guided workflow prompts — so external clients (Claude.ai, Cursor, ChatGPT) stop operating the ~171 tools with zero safety framing.
+**Goal:** Give every client connecting to the BL4CK RMM MCP server automatic server-side guidance — an `instructions` blob (orientation + guardrails) plus five guided workflow prompts — so external clients (Claude.ai, Cursor, ChatGPT) stop operating the ~171 tools with zero safety framing.
 
 **Architecture:** All additions target the hand-rolled JSON-RPC server `apps/api/src/routes/mcpServer.ts` (a plain `switch (req.method)` dispatcher — NOT the MCP SDK). Guidance text and prompt definitions live in a new focused module `apps/api/src/services/mcpGuidance.ts`; `mcpServer.ts` only wires them into `initialize`, `prompts/list`, and `prompts/get`. The safety rules are extracted into a shared `BREEZE_AI_GUARDRAILS_CORE` constant that both the existing in-product agent prompt and the new MCP instructions import, so they cannot drift.
 
@@ -72,7 +72,7 @@ export const BREEZE_AI_GUARDRAILS_CORE = `## Important Rules
 Then in `AI_SYSTEM_PROMPT_BASE`, replace the existing `## Important Rules` block (current lines 36–47) with `${BREEZE_AI_GUARDRAILS_CORE}` interpolation, keeping the device-memory items (rules 10–11) as a trailing addition so no existing rule is lost:
 
 ```ts
-export const AI_SYSTEM_PROMPT_BASE = `You are Breeze AI, ... (unchanged preamble through Self-Healing Playbooks) ...
+export const AI_SYSTEM_PROMPT_BASE = `You are BL4CK AI, ... (unchanged preamble through Self-Healing Playbooks) ...
 
 ${BREEZE_AI_GUARDRAILS_CORE}
 7. Provide concise, actionable responses. You're talking to IT professionals.
@@ -144,7 +144,7 @@ Expected: FAIL — module `./mcpGuidance` does not exist.
 // apps/api/src/services/mcpGuidance.ts
 import { BREEZE_AI_GUARDRAILS_CORE } from './aiAgentSystemPrompt';
 
-export const MCP_SERVER_INSTRUCTIONS = `You are connected to Breeze RMM — a multi-tenant Remote Monitoring and Management platform for MSPs. This server exposes ~170 tools for managing devices, alerts, patches, backups, security, tickets, and configuration policies.
+export const MCP_SERVER_INSTRUCTIONS = `You are connected to BL4CK RMM — a multi-tenant Remote Monitoring and Management platform for MSPs. This server exposes ~170 tools for managing devices, alerts, patches, backups, security, tickets, and configuration policies.
 
 ## Tenant hierarchy
 Partner (MSP) → Organization (customer) → Site (location) → Device Group → Device. You can only see and act within the organizations your API key/token grants access to.
@@ -341,7 +341,7 @@ export const MCP_PROMPTS: McpPromptDefinition[] = [
     description: 'Read-only health sweep of the fleet — what needs attention right now.',
     arguments: [{ name: 'scope', description: 'Optional org or site to scope the sweep', required: false }],
     referencedTools: ['get_fleet_status', 'get_fleet_health', 'manage_alerts', 'query_devices', 'manage_patches', 'get_sla_breaches'],
-    render: (a) => `Triage the Breeze RMM fleet${scopeSuffix(a.scope)}. Perform a READ-ONLY sweep and produce ONE prioritized "what needs attention now" summary. Steps:
+    render: (a) => `Triage the BL4CK RMM fleet${scopeSuffix(a.scope)}. Perform a READ-ONLY sweep and produce ONE prioritized "what needs attention now" summary. Steps:
 1. Overall posture: get_fleet_status and get_fleet_health.
 2. Active alerts: manage_alerts (action=list).
 3. Offline devices: query_devices (status=offline).
@@ -354,7 +354,7 @@ Do NOT perform any mutation. Rank findings by severity and lead with the most ur
     description: 'Deep-dive one device and summarize likely root cause (read-only).',
     arguments: [{ name: 'device', description: 'Device name, hostname, or id', required: true }],
     referencedTools: ['resolve_device_context', 'query_devices', 'get_device_details', 'analyze_metrics', 'search_agent_logs', 'get_device_vulnerabilities'],
-    render: (a) => `Investigate the device "${a.device ?? '(unspecified)'}" in Breeze RMM. Steps:
+    render: (a) => `Investigate the device "${a.device ?? '(unspecified)'}" in BL4CK RMM. Steps:
 1. Resolve it with resolve_device_context (or query_devices to search by name); ECHO the resolved device + organization back to the user.
 2. Pull get_device_details, analyze_metrics, and recent logs via search_agent_logs.
 3. Check get_device_vulnerabilities.
@@ -381,7 +381,7 @@ If the server rejects a call, surface the rejection rather than retrying.`,
       { name: 'scope', description: 'Affected org/site/device', required: false },
     ],
     referencedTools: ['create_incident', 'get_incident_timeline', 'collect_evidence', 'generate_incident_report', 'manage_tickets'],
-    render: (a) => `Open and structure a Breeze RMM incident. Summary: "${a.summary ?? '(unspecified)'}"${a.scope ? `; scope: ${a.scope}` : ''}. Steps:
+    render: (a) => `Open and structure a BL4CK RMM incident. Summary: "${a.summary ?? '(unspecified)'}"${a.scope ? `; scope: ${a.scope}` : ''}. Steps:
 1. ECHO the resolved organization/scope, then create the incident with create_incident.
 2. Build a timeline with get_incident_timeline.
 3. Collect supporting evidence with collect_evidence.
@@ -393,7 +393,7 @@ If the user wants customer-facing tracking, open or link a ticket with manage_ti
     description: 'Opinionated baseline configuration wizard — partner-wide by default.',
     arguments: [{ name: 'scope', description: 'partner (all orgs) or a specific org; defaults to partner-wide', required: false }],
     referencedTools: ['manage_configuration_policy', 'manage_update_rings', 'manage_backup_configs', 'manage_peripheral_policies', 'manage_dns_policy', 'manage_policy_feature_link', 'apply_configuration_policy'],
-    render: (a) => `Set up a recommended baseline configuration in Breeze RMM${a.scope ? ` for ${a.scope}` : ''}. DEFAULT to partner-wide ownership (ownerScope=partner) so one policy applies to all of the MSP's organizations — CONFIRM the ownerScope with the user before creating anything, and PREVIEW each policy before applying it.
+    render: (a) => `Set up a recommended baseline configuration in BL4CK RMM${a.scope ? ` for ${a.scope}` : ''}. DEFAULT to partner-wide ownership (ownerScope=partner) so one policy applies to all of the MSP's organizations — CONFIRM the ownerScope with the user before creating anything, and PREVIEW each policy before applying it.
 
 Walk through these categories, creating each via a Configuration Policy (manage_configuration_policy) with the appropriate prerequisite policy + feature link (manage_policy_feature_link), then assign with apply_configuration_policy:
 1. Patch rings/cadence (manage_update_rings): pilot ring patches on release; production ring 7-day deferral; security/critical auto-approve at 3-day deferral; feature updates deferred 30 days; reboots in an off-hours maintenance window.

@@ -1,11 +1,11 @@
 ---
 title: Plugins
-description: Extend Breeze with installable plugins for integrations, automations, reporting, collectors, notifications, and UI customisation.
+description: Extend BL4CK with installable plugins for integrations, automations, reporting, collectors, notifications, and UI customisation.
 ---
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Plugins extend Breeze with additional capabilities without modifying the core platform. Each plugin is published to a central catalog, installed per-organization, and managed through a dedicated set of API endpoints mounted at `/plugins`.
+Plugins extend BL4CK with additional capabilities without modifying the core platform. Each plugin is published to a central catalog, installed per-organization, and managed through a dedicated set of API endpoints mounted at `/plugins`.
 
 All plugin routes require authentication. Catalog browsing is available to any authenticated user; installation and management endpoints require the `organization`, `partner`, or `system` scope.
 
@@ -17,12 +17,12 @@ Every plugin in the catalog has a `type` that describes its purpose:
 
 | Type | Description |
 |------|-------------|
-| `integration` | Connects Breeze to external services (PSA tools, CRMs, cloud providers) |
+| `integration` | Connects BL4CK to external services (PSA tools, CRMs, cloud providers) |
 | `automation` | Adds new automation actions or workflow logic |
 | `reporting` | Provides custom reports, dashboards, or data export formats |
 | `collector` | Gathers additional telemetry from devices beyond built-in collectors |
 | `notification` | Adds notification delivery channels (chat platforms, pagers, SMS) |
-| `ui` | Extends the Breeze web interface with custom views or widgets |
+| `ui` | Extends the BL4CK web interface with custom views or widgets |
 
 ---
 
@@ -61,7 +61,7 @@ Results are sorted by featured status first, then by install count descending.
       "version": "2.1.0",
       "description": "Sync tickets and billing with ConnectWise PSA",
       "type": "integration",
-      "author": "Breeze",
+      "author": "BL4CK",
       "category": "psa",
       "tags": ["psa", "ticketing", "billing"],
       "iconUrl": "https://...",
@@ -97,8 +97,8 @@ Returns the full catalog record for a single plugin, including fields not presen
 | `manifestUrl` | URL to the plugin's manifest file |
 | `downloadUrl` | URL to the plugin package |
 | `checksum` | SHA checksum of the plugin package |
-| `minAgentVersion` | Minimum Breeze agent version required |
-| `minApiVersion` | Minimum Breeze API version required |
+| `minAgentVersion` | Minimum BL4CK agent version required |
+| `minApiVersion` | Minimum BL4CK API version required |
 | `dependencies` | JSON object describing required dependencies |
 | `permissions` | JSON object listing permissions the plugin requires |
 | `hooks` | JSON object defining lifecycle hooks the plugin registers |

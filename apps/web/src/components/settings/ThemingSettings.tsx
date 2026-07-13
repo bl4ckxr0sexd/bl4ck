@@ -35,7 +35,7 @@ const densityOptions = [
 ];
 
 const fontOptions = [
-  { value: 'breeze' as const, label: 'Breeze default', description: 'Plus Jakarta Sans', Icon: Type },
+  { value: 'breeze' as const, label: 'BL4CK default', description: 'Plus Jakarta Sans', Icon: Type },
   { value: 'system' as const, label: 'System', description: 'OS interface font', Icon: Monitor },
 ];
 

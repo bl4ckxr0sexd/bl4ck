@@ -5,21 +5,21 @@ import BrandHeader from './BrandHeader';
 const PNG_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 describe('BrandHeader', () => {
-  it('renders the Breeze SVG fallback when logoUrl is null', () => {
+  it('renders the BL4CK SVG fallback when logoUrl is null', () => {
     const { container } = render(<BrandHeader logoUrl={null} name={null} showLabel />);
     expect(container.querySelector('svg')).not.toBeNull();
     expect(container.querySelector('img')).toBeNull();
   });
 
-  it('renders "Breeze" when name is null and showLabel is true', () => {
+  it('renders "BL4CK" when name is null and showLabel is true', () => {
     render(<BrandHeader logoUrl={null} name={null} showLabel />);
-    expect(screen.getByText('Breeze')).toBeInTheDocument();
+    expect(screen.getByText('BL4CK')).toBeInTheDocument();
   });
 
   it('renders the partner name when provided and showLabel is true', () => {
     render(<BrandHeader logoUrl={null} name="Acme MSP" showLabel />);
     expect(screen.getByText('Acme MSP')).toBeInTheDocument();
-    expect(screen.queryByText('Breeze')).not.toBeInTheDocument();
+    expect(screen.queryByText('BL4CK')).not.toBeInTheDocument();
   });
 
   it('hides the label when showLabel is false', () => {

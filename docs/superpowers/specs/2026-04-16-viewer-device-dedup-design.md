@@ -5,7 +5,7 @@
 
 ## Problem
 
-When the user clicks "Connect" on a device that already has an open Breeze Viewer window for that device, a second window opens instead of focusing the existing one.
+When the user clicks "Connect" on a device that already has an open BL4CK Viewer window for that device, a second window opens instead of focusing the existing one.
 
 The viewer already dedupes by `session=<uuid>` in the `breeze://connect` deep link, but the web app generates a *new* session id on every click, so the existing dedup never fires. To dedupe properly, the viewer needs a stable identifier — the device id.
 

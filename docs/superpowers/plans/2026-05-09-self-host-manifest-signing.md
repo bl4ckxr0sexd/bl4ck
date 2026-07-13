@@ -1247,7 +1247,7 @@ import (
 
 func recoverUpdateCmd(args []string) error {
 	fs := flag.NewFlagSet("recover-update", flag.ExitOnError)
-	server := fs.String("server", "", "Breeze server URL")
+	server := fs.String("server", "", "BL4CK server URL")
 	token := fs.String("token", "", "admin API token")
 	target := fs.String("target", "", "target agent version, e.g. 0.65.9")
 	before := fs.String("before", "", "stuck-before version, e.g. 0.65.9")

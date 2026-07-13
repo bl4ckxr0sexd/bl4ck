@@ -7,12 +7,12 @@
 
 ## Problem
 
-The Breeze MSI currently fails with exit code 1603 (full rollback) whenever the `BreezeAgent` Windows service cannot start during the `InstallServices` standard action. The cascade is:
+The BL4CK MSI currently fails with exit code 1603 (full rollback) whenever the `BreezeAgent` Windows service cannot start during the `InstallServices` standard action. The cascade is:
 
 1. `EnrollAgent` custom action runs (or is skipped if no creds were supplied).
 2. `InstallServices` starts `BreezeAgent` because `<ServiceControl Start="install" Wait="yes" />`.
 3. `breeze-agent run` → `startAgent()` → `cfg.AgentID == ""` → returns `"agent not enrolled — run 'breeze-agent enroll <key>' first"` → process exits non-zero.
-4. Windows SCM reports `Error 1920: Service 'Breeze Agent' failed to start`.
+4. Windows SCM reports `Error 1920: Service 'BL4CK Agent' failed to start`.
 5. `<ServiceInstall Vital="yes" />` promotes that to a fatal install failure → MSI rolls back everything → `msiexec` exits 1603.
 
 Two real failure modes both hit this cascade:
@@ -24,7 +24,7 @@ In both cases the *cause* of the failure is invisible to the admin. `install.log
 ## Goals
 
 1. **`msiexec /qn` with no credentials succeeds.** Service is installed and starts into a "waiting for enrollment" idle loop. A later `breeze-agent enroll KEY --server URL` is picked up live without a service restart. Required for imaged/sysprep'd deployments and golden images.
-2. **`msiexec /qn` with bad credentials fails loudly.** Install cleanly rolls back, msiexec exits non-zero, and a human-readable cause lands in *at least four* places the admin can find without knowing Breeze's internals.
+2. **`msiexec /qn` with bad credentials fails loudly.** Install cleanly rolls back, msiexec exits non-zero, and a human-readable cause lands in *at least four* places the admin can find without knowing BL4CK's internals.
 3. **`msiexec /qn` with good credentials continues to work** exactly as it does today on the happy path.
 
 ## Non-goals
@@ -378,7 +378,7 @@ func classifyEnrollError(err error, serverURL string) (enrollErrCategory, string
                 "and retry the install"
         case httpErr.StatusCode >= 500:
             return catServer, fmt.Sprintf(
-                "server error %d — contact Breeze support if this persists",
+                "server error %d — contact BL4CK support if this persists",
                 httpErr.StatusCode)
         }
     }

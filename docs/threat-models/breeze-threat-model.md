@@ -1,8 +1,8 @@
-# Breeze RMM Threat Model
+# BL4CK RMM Threat Model
 
 ## Executive summary
 
-Breeze is a high-trust, internet-exposed RMM platform: the most important risks are cross-tenant access, unauthorized remote control of managed devices, theft or misuse of bearer credentials, supply-chain compromise of agent/recovery artifacts, and abuse of the new OAuth/MCP automation surface. The strongest existing controls are JWT/API-key/agent-token auth, MFA on sensitive operator actions, RLS-backed tenant isolation, Zod validation, command and audit logging, webhook SSRF filtering, and production startup checks. The highest-priority review areas are the agent command/result control plane, enrollment, remote desktop/file/script execution, backup/recovery, OAuth/MCP, and any route that intentionally bypasses normal JWT middleware.
+BL4CK is a high-trust, internet-exposed RMM platform: the most important risks are cross-tenant access, unauthorized remote control of managed devices, theft or misuse of bearer credentials, supply-chain compromise of agent/recovery artifacts, and abuse of the new OAuth/MCP automation surface. The strongest existing controls are JWT/API-key/agent-token auth, MFA on sensitive operator actions, RLS-backed tenant isolation, Zod validation, command and audit logging, webhook SSRF filtering, and production startup checks. The highest-priority review areas are the agent command/result control plane, enrollment, remote desktop/file/script execution, backup/recovery, OAuth/MCP, and any route that intentionally bypasses normal JWT middleware.
 
 ## Scope and assumptions
 
@@ -11,7 +11,7 @@ Breeze is a high-trust, internet-exposed RMM platform: the most important risks 
 - Deployment context, user-confirmed: DigitalOcean droplet running Docker, Caddy, and Cloudflare proxy in front of the app.
 - Production exposure: Caddy routes public HTTPS traffic to Astro web and Hono API; Postgres and Redis are private Docker services; TURN/WebRTC is optional.
 - OAuth/MCP context, user-confirmed: OAuth/MCP is brand new and should be treated as production once these reviews are complete.
-- Security sensitivity: high. Breeze stores and acts on MSP/customer tenant data, device inventory, scripts, file access, remote desktop/terminal, backup/restore state, OAuth tokens, AI tool actions, and audit logs.
+- Security sensitivity: high. BL4CK stores and acts on MSP/customer tenant data, device inventory, scripts, file access, remote desktop/terminal, backup/restore state, OAuth tokens, AI tool actions, and audit logs.
 - Open questions that could change risk ranking:
   - Whether Cloudflare Access/WAF rules restrict admin, MCP, agent, or recovery endpoints beyond the app controls.
   - Whether the droplet host, Docker socket, Redis, and Postgres are monitored and hardened as production assets.

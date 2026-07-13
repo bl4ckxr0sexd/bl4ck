@@ -1,13 +1,13 @@
 ---
 title: Alerts & Rules
-description: Create alert rules, manage notifications, and respond to device alerts in Breeze RMM.
+description: Create alert rules, manage notifications, and respond to device alerts in BL4CK RMM.
 sidebar:
   label: "Alerts & Rules"
 ---
 
 import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze has a built-in alert system that monitors your devices and notifies the right people when something goes wrong. Alerts are triggered by **rules** you define, routed through **notification channels** you configure, and managed from the **Alerts** page in the dashboard.
+BL4CK has a built-in alert system that monitors your devices and notifies the right people when something goes wrong. Alerts are triggered by **rules** you define, routed through **notification channels** you configure, and managed from the **Alerts** page in the dashboard.
 
 ## Viewing Alerts
 
@@ -99,7 +99,7 @@ Select multiple alerts using the checkboxes, then choose **Acknowledge Selected*
 
 ## Alert Correlation
 
-When multiple related alerts fire at once (for example, a network outage causing many devices to go offline), Breeze automatically groups them using **alert correlation**. The correlation view shows:
+When multiple related alerts fire at once (for example, a network outage causing many devices to go offline), BL4CK automatically groups them using **alert correlation**. The correlation view shows:
 
 - **Root cause** -- the alert most likely to be the underlying problem, with a confidence score
 - **Related alerts** -- child alerts classified as causal, symptom, or duplicate
@@ -144,7 +144,7 @@ Alert rules define what conditions to watch for and which devices to monitor.
 
 ### Testing a Rule
 
-Before deploying a rule to production, you can test it against a specific device. From the rule list, click the **Test** button, select a target device, and Breeze will simulate condition evaluation and show you whether the rule would trigger.
+Before deploying a rule to production, you can test it against a specific device. From the rule list, click the **Test** button, select a target device, and BL4CK will simulate condition evaluation and show you whether the rule would trigger.
 
 ### Partner-wide Rules
 
@@ -242,4 +242,4 @@ Setting a longer offline duration reduces noise from brief network hiccups or sc
 
 ---
 
-For infrastructure-level alerting (monitoring the Breeze platform itself with Prometheus and Alertmanager), see [Infrastructure Alerts](/monitoring/alerts/).
+For infrastructure-level alerting (monitoring the BL4CK platform itself with Prometheus and Alertmanager), see [Infrastructure Alerts](/monitoring/alerts/).

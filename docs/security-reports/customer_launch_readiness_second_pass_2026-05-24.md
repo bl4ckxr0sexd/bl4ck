@@ -1,4 +1,4 @@
-# Breeze Customer Launch Security Readiness - Second Pass
+# BL4CK Customer Launch Security Readiness - Second Pass
 
 Date: 2026-05-24
 Scope: Review of fixes after the initial customer-launch no-go report.

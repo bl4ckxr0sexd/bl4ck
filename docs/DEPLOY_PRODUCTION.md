@@ -1,18 +1,18 @@
 # Production Deployment (One Command)
 
-This guide deploys Breeze with TLS, hardened container settings, monitoring, and logging using:
+This guide deploys BL4CK with TLS, hardened container settings, monitoring, and logging using:
 
 - `deploy/docker-compose.prod.yml`
 - `scripts/prod/deploy.sh`
 
 ## Which deploy path?
 
-Breeze ships two Compose configurations:
+BL4CK ships two Compose configurations:
 
 | Path | Files | When to use |
 |------|-------|-------------|
 | **Simple self-host** | `docker-compose.yml` + `.env.example` (repo root) | Single-host self-hosted deploys behind your own TLS reverse proxy. Tag-pinned images by default (override with digests for higher assurance). Uses the `*_IMAGE_REF` variable schema. |
-| **Strict production** *(this doc)* | `deploy/docker-compose.prod.yml` + `deploy/.env.example` | Production rollouts with Cloudflare Tunnel, hardened ACLs, monitoring/logging, and **mandatory** digest-pinned images. Uses the `*_IMAGE_DIGEST` variable schema (Breeze images) and `*_IMAGE_REF` (third-party). The hardening check (`scripts/security/check-supply-chain-hardening.sh`) refuses to ship a release with mutable tags in this path. |
+| **Strict production** *(this doc)* | `deploy/docker-compose.prod.yml` + `deploy/.env.example` | Production rollouts with Cloudflare Tunnel, hardened ACLs, monitoring/logging, and **mandatory** digest-pinned images. Uses the `*_IMAGE_DIGEST` variable schema (BL4CK images) and `*_IMAGE_REF` (third-party). The hardening check (`scripts/security/check-supply-chain-hardening.sh`) refuses to ship a release with mutable tags in this path. |
 
 The two paths use **different variable names** intentionally — they are not interchangeable. If you copied `.env` from one path, do not point it at the other Compose file.
 

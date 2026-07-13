@@ -338,7 +338,7 @@ export default function TdSynnexCatalogPanel({ onImported }: { onImported?: () =
             TD SYNNEX
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Connect Digital Bridge to search real-time distributor catalog data and import hardware into Breeze.
+            Connect Digital Bridge to search real-time distributor catalog data and import hardware into BL4CK.
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="td-synnex-status-label">

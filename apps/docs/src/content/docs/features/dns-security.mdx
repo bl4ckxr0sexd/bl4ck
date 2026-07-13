@@ -9,7 +9,7 @@ DNS Security provides DNS-level threat prevention for your managed fleet by inte
 
 You manage DNS Security from the **DNS Security** page in the dashboard sidebar. The page has tabs for an overview, blocked-event feed, policy management, and provider integrations. The API endpoints below back the same workflows for scripts and automations.
 
-Integrations connect Breeze to your existing DNS filtering infrastructure. Each integration is scoped to an organization and stores encrypted API credentials for the target provider. Once connected, Breeze periodically syncs DNS security events from the provider and stores them in the `dns_security_events` table, where they can be queried, filtered, and analyzed. Policies define domain-level allowlists and blocklists that are pushed back to the provider through a sync pipeline.
+Integrations connect BL4CK to your existing DNS filtering infrastructure. Each integration is scoped to an organization and stores encrypted API credentials for the target provider. Once connected, BL4CK periodically syncs DNS security events from the provider and stores them in the `dns_security_events` table, where they can be queried, filtered, and analyzed. Policies define domain-level allowlists and blocklists that are pushed back to the provider through a sync pipeline.
 
 ---
 
@@ -18,15 +18,15 @@ Integrations connect Breeze to your existing DNS filtering infrastructure. Each 
 ### How DNS Security Works
 
 <Steps>
-1. **Connect a DNS filter provider** by creating an integration with the provider's API credentials. Breeze encrypts all secrets at rest.
+1. **Connect a DNS filter provider** by creating an integration with the provider's API credentials. BL4CK encrypts all secrets at rest.
 
-2. **Breeze syncs events** from the provider on a configurable interval. Each DNS query event is stored with its action (allowed, blocked, redirected), threat category, source device, and domain.
+2. **BL4CK syncs events** from the provider on a configurable interval. Each DNS query event is stored with its action (allowed, blocked, redirected), threat category, source device, and domain.
 
 3. **Create policies** to define allowlists and blocklists. Policies are linked to a specific integration and contain domain entries with optional reasons.
 
 4. **Policies sync to the provider** through BullMQ. When you add or remove domains, a sync job is enqueued to push changes upstream to the DNS provider.
 
-5. **Analyze threat data** using the stats, top-blocked, and events endpoints. Breeze automatically aggregates data for efficient querying over long time ranges.
+5. **Analyze threat data** using the stats, top-blocked, and events endpoints. BL4CK automatically aggregates data for efficient querying over long time ranges.
 </Steps>
 
 ### DNS Actions
@@ -58,7 +58,7 @@ Integrations connect Breeze to your existing DNS filtering infrastructure. Each 
 
 ## Integration Providers
 
-Breeze supports the following DNS filter providers:
+BL4CK supports the following DNS filter providers:
 
 | Provider | Enum Value | Required Config |
 |----------|------------|-----------------|
@@ -75,13 +75,13 @@ For AdGuard Home, `apiKey` is the admin username and `apiSecret` is the admin pa
 Pi-hole supports both the legacy v5 admin API and the newer v6 session-based API. Set `config.piholeVersion` to `v5` or `v6` to match your Pi-hole installation's major version.
 
 <Aside type="caution">
-  **`config.piholeVersion` defaults to `v5` when not set.** If your Pi-hole instance is on v6, you must explicitly set `config.piholeVersion` to `v6` in the integration config — otherwise Breeze will talk to it using the legacy v5 API, which will fail or behave unpredictably against a v6 instance.
+  **`config.piholeVersion` defaults to `v5` when not set.** If your Pi-hole instance is on v6, you must explicitly set `config.piholeVersion` to `v6` in the integration config — otherwise BL4CK will talk to it using the legacy v5 API, which will fail or behave unpredictably against a v6 instance.
 </Aside>
 
 The meaning of `apiKey` also changes between versions: for Pi-hole **v5**, `apiKey` is the legacy admin API token (found under the Pi-hole web interface's API/Web settings). For Pi-hole **v6**, `apiKey` instead holds the **app password** — a separate v6-specific credential generated in Pi-hole's admin settings for API access. These two credential types are not interchangeable — pasting a v5 admin token into a v6 integration (or an app password into a v5 integration) will cause authentication to fail.
 
 <Aside>
-  Breeze also detects DNS filtering tools during management posture assessment. If Cisco Umbrella, DNSFilter, or Netskope agents are installed on a device, they appear in the device's posture report regardless of whether an API integration is configured.
+  BL4CK also detects DNS filtering tools during management posture assessment. If Cisco Umbrella, DNSFilter, or Netskope agents are installed on a device, they appear in the device's posture report regardless of whether an API integration is configured.
 </Aside>
 
 ### Creating an Integration
@@ -280,7 +280,7 @@ Each event in the response includes:
 
 ### Automatic Threat Alerts
 
-When a blocked event arrives with a known threat category (malware, phishing, botnet, ransomware, cryptomining), Breeze automatically raises a high-severity alert for the affected device. You don't need a rule for this — the alert fires from the DNS Security pipeline itself.
+When a blocked event arrives with a known threat category (malware, phishing, botnet, ransomware, cryptomining), BL4CK automatically raises a high-severity alert for the affected device. You don't need a rule for this — the alert fires from the DNS Security pipeline itself.
 
 To avoid alert storms when the same device hits the same threat category repeatedly, alerts are deduplicated per `(device, category)` for a 60-minute cooldown window. A second malware block on the same device within the window updates the existing alert's "last seen" timestamp rather than raising a new one.
 
@@ -327,7 +327,7 @@ The response includes:
 ```
 
 <Aside>
-  For time ranges longer than 7 days, Breeze automatically queries pre-computed aggregation tables (`dns_event_aggregations`) instead of scanning raw events. The `source` field in the response indicates whether results came from `raw` event data or `aggregated` summaries.
+  For time ranges longer than 7 days, BL4CK automatically queries pre-computed aggregation tables (`dns_event_aggregations`) instead of scanning raw events. The `source` field in the response indicates whether results came from `raw` event data or `aggregated` summaries.
 </Aside>
 
 ### Top Blocked Domains

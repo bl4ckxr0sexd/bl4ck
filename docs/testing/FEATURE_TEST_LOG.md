@@ -76,7 +76,7 @@ Tests: `useMlFeatureFlags.test.ts` (6) + `CorrelatedAlertGroups.test.tsx` (12) =
 
 ### Seeded producer output + enabled-WITH-data verification (Playwright, 1440×900)
 Seeded into local `breeze-postgres` (org `aa0e43c8-…`, device `6328760a-…`): 3 `organization_users` memberships + 3 `user_risk_scores` (88/62/40) + 4 `user_risk_events`; 3 `metric_anomalies` (cpu/disk/memory, open); 2 `alerts` + 1 `alert_correlation_groups` (score 0.92, 50% noise cut) + 2 `alert_correlation_members`. Enabled `ml.anomalies` / `ml.rca` / `ml.remediation_suggestions` via `organizations.settings.mlFeatureFlags` (source=`org_settings`).
-- [x] **User Risk WITH DATA** — at-risk list (Breeze Admin 88 critical, Tech User 62), selected-user detail with True/False-positive buttons, Top drivers (failed logins 30 / privileged actions 24 / anomalous access 18 / security threats 16), Recent evidence cards. 0 console errors. `ml-qa-user-risk-DATA.png`.
+- [x] **User Risk WITH DATA** — at-risk list (BL4CK Admin 88 critical, Tech User 62), selected-user detail with True/False-positive buttons, Top drivers (failed logins 30 / privileged actions 24 / anomalous access 18 / security threats 16), Recent evidence cards. 0 console errors. `ml-qa-user-risk-DATA.png`.
 - [x] **Alert Correlations WITH DATA** — Incidents 1 / Grouped alerts 2 / Inbox reduction 1 / Avg noise cut 50%; incident "High CPU sustained" (score 0.92), expanded members, Incident RCA panel offering on-demand "Explain incident". 0 console errors. `ml-qa-correlations-DATA.png`.
 - [x] **Device Anomalies WITH DATA** — disabled→enabled transition confirmed; 3 anomaly cards (cpu/disk/memory) each with Dismiss/Resolve/Promote + a "Suggested Fixes" remediation panel ("No suggested fixes yet" + Generate). 0 console errors. `ml-qa-anomalies-DATA.png`.
 
@@ -151,12 +151,12 @@ Re-confirmed NOT exercisable locally even with a supplied test key. Two distinct
 ### What was tested
 - [x] API/SSE (the layer changed): drove `POST /ai/script-builder/sessions/:id/messages` via curl, captured the SSE stream, inspected the `tool_result` event for `apply_script_code`.
 - [x] DB invariant: confirmed the persisted `ai_messages.tool_output` row stays compacted (no script body) so the #568 LLM-context goal is preserved.
-- [x] UI: logged into web app, opened `/scripts/new` → Script AI Assistant, prompted "Write a one-line PowerShell script that prints Hello Breeze and put it in the editor"; verified the Monaco editor populated.
+- [x] UI: logged into web app, opened `/scripts/new` → Script AI Assistant, prompted "Write a one-line PowerShell script that prints Hello BL4CK and put it in the editor"; verified the Monaco editor populated.
 
 ### Evidence
-- SSE `tool_result.output` now contains `code: 'Write-Host "Hello Breeze"'` + `language: 'powershell'` (alongside the compacted `codeOmitted/codeChars`). Before the fix the published event had no `code`.
-- DB row: `{"applied":true,"language":"powershell","toolName":"apply_script_code","codeChars":25,"codeOmitted":true}` → `LIKE '%Hello Breeze%'` = **compacted-ok** (no leak).
-- Browser: editor showed `Write-Host "Hello Breeze"`; both `apply_script_code` and `apply_script_metadata` tool calls completed; a "Revert" control appeared; assistant replied "I've added the script to the editor." Screenshot: `script-ai-insert-verified.png`.
+- SSE `tool_result.output` now contains `code: 'Write-Host "Hello BL4CK"'` + `language: 'powershell'` (alongside the compacted `codeOmitted/codeChars`). Before the fix the published event had no `code`.
+- DB row: `{"applied":true,"language":"powershell","toolName":"apply_script_code","codeChars":25,"codeOmitted":true}` → `LIKE '%Hello BL4CK%'` = **compacted-ok** (no leak).
+- Browser: editor showed `Write-Host "Hello BL4CK"`; both `apply_script_code` and `apply_script_metadata` tool calls completed; a "Revert" control appeared; assistant replied "I've added the script to the editor." Screenshot: `script-ai-insert-verified.png`.
 - Unit: 2 new `createSessionPostToolUse` tests (fail before / pass after); `aiAgentSdk.test.ts` 43/43; typecheck clean.
 
 ### Issues Found
@@ -165,7 +165,7 @@ Re-confirmed NOT exercisable locally even with a supplied test key. Two distinct
 ### Notes
 - Tested against local Docker dev (`http://localhost`, code-mounted hot-reload); `2breeze.app` tunnel down per project notes. Local admin password is the dev seed `BreezeAdmin123!` (the `.env` `E2E_ADMIN_PASSWORD` is for the hosted tunnel, not the local DB).
 
-## Breeze AI for Office (PR #1314) — Tier B in-Excel SSO + session loop — 2026-06-13
+## BL4CK AI for Office (PR #1314) — Tier B in-Excel SSO + session loop — 2026-06-13
 
 **Branch:** `feat/ai-for-office` @ `4d1a3ab6` (worktree `breeze-ai4office`)
 **Host:** Excel for Mac (desktop), real Entra app reg in tenant Example Tenant LLC (`<tenant-id>`), account `todd@example.com`
@@ -197,7 +197,7 @@ Re-confirmed NOT exercisable locally even with a supplied test key. Two distinct
 - **TEMP debug line** in `apps/api/src/routes/clientAi/auth.ts` (`[client-ai][TIER-B-DEBUG]`) — remove before any commit.
 - Pane server: `cd apps/excel-addin && PATH=…/v22.20.0/bin:$PATH pnpm dev`.
 
-## Breeze AI for Office (PR #1314) — Tier A control-plane sweep — 2026-06-13
+## BL4CK AI for Office (PR #1314) — Tier A control-plane sweep — 2026-06-13
 
 **Branch tested:** `feat/ai-for-office` @ `4d1a3ab6` (worktree `breeze-ai4office`)
 **Tested by:** Claude (feature-testing skill, live API + SQL + Playwright)
@@ -747,7 +747,7 @@ Option 1 is simplest and correct. Shipper init should be one of the first things
 - None (feature is AI-tool-only by design, no REST endpoint expected)
 
 ### Notes
-- Context is populated when Breeze AI interacts with devices — creates "memory" about issues, quirks, followups, preferences
+- Context is populated when BL4CK AI interacts with devices — creates "memory" about issues, quirks, followups, preferences
 - Expiry support: context can auto-expire (e.g., "this device had a temp network issue" expires after 24h)
 - Resolution support: AI can mark context as resolved when issue is fixed
 - No data exists yet because AI assistant hasn't been used for device-specific troubleshooting in this environment
@@ -1292,7 +1292,7 @@ The following features were investigated and found to be NOT IMPLEMENTED:
 - [x] API: `GET /devices/:id/startup-items` returns 65 items (60 services, 4 run_keys, 1 startup_folder) with impact scores
 - [x] API: `POST /devices/:id/collect-boot-metrics` dispatches on-demand collection command (times out at 30s due to PowerShell duration — expected)
 - [x] UI: Boot Performance tab renders on device detail page with summary cards, boot time trend chart, startup items table (65 items sorted by impact), boot history table
-- [x] UI: Top startup items by CPU — Defender (59297ms), Breeze Agent (20844ms), Huntress Rio (15172ms), MongoDB (4734ms), Backblaze (2828ms)
+- [x] UI: Top startup items by CPU — Defender (59297ms), BL4CK Agent (20844ms), Huntress Rio (15172ms), MongoDB (4734ms), Backblaze (2828ms)
 - [x] UI: 0 console errors, all network requests 200
 - [x] Agent: 8 diagnostic log entries — 3 automatic boot detections with successful uploads (Feb 24, Feb 25 x2)
 
@@ -1984,7 +1984,7 @@ Target: http://localhost (Caddy :80). Login admin@breeze.local. Stack healthy, 3
 - Incidents /incidents — PASS (filters render, empty list).
 - Remote Access /remote — PASS (Terminal/File Transfer/Session History cards).
 - Scripts /scripts — PASS (proper empty state + CTA "Create your first script").
-- Patches /patches — PASS render. ⚠️ Embeds `<iframe src="https://docs.breezermm.com/">` → ~5 console CSP Report-Only errors from the EXTERNAL docs site (its own CSP, not Breeze app code). Noise but pollutes console on every Patches/Fleet visit.
+- Patches /patches — PASS render. ⚠️ Embeds `<iframe src="https://docs.breezermm.com/">` → ~5 console CSP Report-Only errors from the EXTERNAL docs site (its own CSP, not BL4CK app code). Noise but pollutes console on every Patches/Fleet visit.
 - Fleet /fleet — PASS render (same docs iframe CSP noise).
 - AI Workspace /workspace — PASS (multi-conversation UI).
 - Monitoring /monitoring — PARTIAL. ❌ BUG: `GET /api/v1/snmp/templates?orgId=...` → HTTP 500 `{"error":"Internal Server Error","message":"column \"org_id\" does not exist"}`. UI degrades gracefully (warns in console, page still renders Assets/Network Checks/SNMP Templates tabs) but SNMP Templates is broken. Suspected: snmp templates query references org_id column that doesn't exist in that table (RLS shape mismatch / missing migration).
@@ -2025,7 +2025,7 @@ Many pages (Patches, Fleet, AI Risk, others) embed `<iframe src="https://docs.br
 - ✅ Status filter (Offline → "2 of 3 devices", 2 rows). OS/role/org/site filter dropdowns present.
 - ✅ Open device → detail renders (WIN-DHQNR1F8LO2, agent v0.65.10, real hardware/IP data).
 - ✅ Tabs all render via hash routing (#performance charts, #hardware real disk/RAM, #software inventory, #eventlog filters). "More" dropdown reveals Patches/Peripherals/Scripts/Connections; #patches sub-tab renders patch controls.
-- ⚠️ UI/UX: device-detail "More" dropdown is a portal popover that toggles on each click — fine for users, but the chevron stays "^" (open-looking) even after the menu visually closes in some states; minor. Also the global Documentation iframe + Breeze AI panel are always mounted in the DOM (fixed right-0 panels) → the docs iframe loads `docs.breezermm.com` on EVERY page even when collapsed, which is the source of the site-wide CSP console spam and an extra cross-origin request per navigation.
+- ⚠️ UI/UX: device-detail "More" dropdown is a portal popover that toggles on each click — fine for users, but the chevron stays "^" (open-looking) even after the menu visually closes in some states; minor. Also the global Documentation iframe + BL4CK AI panel are always mounted in the DOM (fixed right-0 panels) → the docs iframe loads `docs.breezermm.com` on EVERY page even when collapsed, which is the source of the site-wide CSP console spam and an extra cross-origin request per navigation.
 #### Device actions — PASS
 - ✅ Run Script → opens "Select Script" modal ("No scripts available" — correct empty state since 0 scripts seeded).
 - ✅ Reboot → opens proper "Reboot Device" confirmation modal with hostname-named copy + Cancel/Reboot. Cancel dismisses cleanly. (NOTE: my first pass falsely flagged this as silent — the modal is a plain `fixed inset-0` div with no role=dialog, so a generic [role=dialog]/[class*=modal] probe missed it. Methodology corrected: assert on modal TITLE TEXT, not role/class selectors.)
@@ -2067,7 +2067,7 @@ Many pages (Patches, Fleet, AI Risk, others) embed `<iframe src="https://docs.br
 - ❌ BUG (HIGH — list-sites ignores selected org; new site invisible; looks like silent data loss): After the 201, "QA Sweep Site 2" NEVER appears under QA Sweep Org (UI stays "1 of 1 sites" = only auto "Default Site"), even after hard reload + re-selecting the org. No error shown — appears to the user as if the site silently failed to save. ROOT CAUSE (code-confirmed `apps/api/src/routes/orgs.ts:891-894`): `const effectiveOrgId = orgId || organizationId`. The web client appends the ambient active-context `?orgId=463a227d (Default Org)` to EVERY API call, and the page also sends `?organizationId=bdc354f7 (QA Sweep Org)`. Because `orgId` wins the `||`, the GET /orgs/sites handler always filters by the context org (463a227d), ignoring the explicitly-selected `organizationId`. Confirmed: `GET /orgs/sites?organizationId=bdc354f7&orgId=463a227d` returned a site row with `"orgId":"463a227d","name":"Default Site"` — i.e. the WRONG org's site while viewing QA Sweep Org. So (a) you see another org's sites when browsing any non-context org, and (b) sites created for non-context orgs are invisible. Fix: prefer explicit `organizationId || orgId` for this endpoint (or stop auto-appending ambient orgId here, or rename the param). Multi-org/partner correctness + data-visibility bug. (Tenant note: it only ever showed the viewer's OWN default-org site, not a foreign tenant's — so not a cross-tenant leak, but a wrong-org-display + lost-write bug.)
 - ⚠️ UI/UX: guided onboarding card "Add the first site for QA Sweep Org — Organizations need at least one site" shows even though the org already has an auto-created "Default Site" (1 of 1). The onboarding nag ignores the auto-provisioned site.
 - NOTE: org/site delete-confirm flow not cleanly verified — icon/Delete buttons in this panel are easy to mis-target and the global Documentation help-panel toggle sits in the same region, repeatedly intercepting clicks (see UI/UX note below). Test org "QA Sweep Org" + its sites left as harmless residual test data. Re-test delete with stable testids.
-- ⚠️ UI/UX (recurring friction): the always-mounted right-side Documentation iframe panel + Breeze AI panel sit at fixed right-0 and their toggle/expand affordances repeatedly intercept clicks intended for page content on the right side of wide pages (Organizations panel, device-detail More menu). This degrades both real usage and automation. Combined with the site-wide docs-iframe CSP console spam, the always-mounted docs panel is a recurring problem.
+- ⚠️ UI/UX (recurring friction): the always-mounted right-side Documentation iframe panel + BL4CK AI panel sit at fixed right-0 and their toggle/expand affordances repeatedly intercept clicks intended for page content on the right side of wide pages (Organizations panel, device-detail More menu). This degrades both real usage and automation. Combined with the site-wide docs-iframe CSP console spam, the always-mounted docs panel is a recurring problem.
 
 ### Phase 4 — Setup tasks (continued)
 #### Enrollment keys — PASS
@@ -2383,7 +2383,7 @@ Driver: Playwright MCP. Sweep follows docs/testing/v0.81.0-to-HEAD-test-plan.md.
 - ✅ Issue: POST /invoices/:id/issue 200 → header updated Draft invoice → INV-2026-0002 immediately (NO stale header — the #1418/#1460 bug is fixed), status badge Issued, Issue/Issue&Send buttons removed. Outcome unambiguous and visible.
 
 ### Stripe API key entry (#1610) — PASS
-- ✅ Located at /settings/billing (NOT in sidebar nav — direct route only). "Online payments" section: secret-key field (placeholder `sk_live_… or rk_live_…`, type=password), copy "Charges run directly on your own Stripe account — funds never touch Breeze", link to Stripe dashboard, "Save key" button (disabled until input). This is the per-partner key model replacing Connect onboarding.
+- ✅ Located at /settings/billing (NOT in sidebar nav — direct route only). "Online payments" section: secret-key field (placeholder `sk_live_… or rk_live_…`, type=password), copy "Charges run directly on your own Stripe account — funds never touch BL4CK", link to Stripe dashboard, "Save key" button (disabled until input). This is the per-partner key model replacing Connect onboarding.
 - ✅ Entered a fake `sk_test_…` key → POST /partner/stripe-connect/key 400 → clear error toast: "That Stripe key was rejected — double-check it (and that it can read your account) and try again." Key validated against Stripe + failure surfaced (no silent failure).
 - ⚠️ Discoverability: the Stripe-key form is only at /settings/billing, which is not linked in the sidebar (Settings group has Partner/Orgs/AI/Custom Fields/Filters/Users/Roles/Enrollment Keys but no "Billing"). Partners may not find where to enter their Stripe key. Worth a nav entry.
 - Note: backend route still named `/partner/stripe-connect/key` (legacy "connect" path naming for the key model — cosmetic).
@@ -2423,7 +2423,7 @@ Driver: Playwright MCP. Sweep follows docs/testing/v0.81.0-to-HEAD-test-plan.md.
 - ✅ Target scope section correctly enumerates all 3 partner orgs (Default/Northwind/Acme).
 
 ### Collapsed AI + Documentation side panels inert (#1463) — PASS
-- ✅ Both side panels (Breeze AI, Documentation) when collapsed: `inert` attribute present + transform `matrix(1,0,0,1,400,0)` (translated 400px off-screen).
+- ✅ Both side panels (BL4CK AI, Documentation) when collapsed: `inert` attribute present + transform `matrix(1,0,0,1,400,0)` (translated 400px off-screen).
 - ✅ Programmatically focusing a control inside the collapsed panel (the close button) does NOT move focus into the panel — activeElement stays on BODY. `inert` correctly removes hidden controls from the tab order and blocks pointer interaction. Verified on dashboard; panels are layout-global so this holds app-wide.
 
 ### Portal /c prefix (#1474) — PARTIAL (local serves under /portal, not /c)
@@ -2432,7 +2432,7 @@ Driver: Playwright MCP. Sweep follows docs/testing/v0.81.0-to-HEAD-test-plan.md.
 - BLOCKED: cannot confirm the literal `/c` prefix resolves (env uses /portal). Re-verify the prod prefix is `/c` AND that the emailed quote acceptUrl base matches it (see Quotes finding: acceptUrl was `https:///portal/quote/...` — empty host + /portal, would not match a /c prod mount).
 
 ### Authenticator registration redesign (#1433) — PARTIAL (UI verified; biometric enrollment + L4 re-auth BLOCKED)
-- ✅ Redesigned "Approval security" section renders on /settings/profile with the #1433 "just works" messaging: "Your phone registers itself automatically when you sign in to the Breeze mobile app; you can also register this browser with Windows Hello or Touch ID. All of this is optional — approvals still work without it." Empty state: "No approver devices registered yet. Sign in to the Breeze mobile app … or register this browser below." + a register-this-browser control. This is the no-setup enrollment redesign.
+- ✅ Redesigned "Approval security" section renders on /settings/profile with the #1433 "just works" messaging: "Your phone registers itself automatically when you sign in to the BL4CK mobile app; you can also register this browser with Windows Hello or Touch ID. All of this is optional — approvals still work without it." Empty state: "No approver devices registered yet. Sign in to the BL4CK mobile app … or register this browser below." + a register-this-browser control. This is the no-setup enrollment redesign.
 - BLOCKED: cannot complete browser registration — needs a WebAuthn virtual authenticator (headless Chromium has no real platform biometric; the ceremony would hang/fail). Prereq: CDP virtual authenticator or a real device.
 - BLOCKED: PIN→L4 re-auth on an approval — requires a pending high-risk (L4) approval_request; none in seed (PAM has no pending requests, no devices). Prereq: seed/raise an L4 approval and an enrolled approver device.
 
@@ -2553,7 +2553,7 @@ Fixture: one live Windows device WIN-DHQNR1F8LO2 (online) in Default Organizatio
 
 ### Config Policy (patch-related) — PASS (minor UX nits)
 - ✅ Create policy: /configuration-policies/new offers "Configure New" vs "Link to Existing". Configure New => Name/Description/Status form => "Create Policy" => POST /api/v1/configuration-policies?orgId=... => 201 Created, navigates to the new policy detail page. (Org-scoped page, so orgId IS sent — no orgId bug here.)
-- ✅ Policy detail has feature tabs (Overview, Patches, Alerts, Backup, Monitoring, Maintenance, Compliance, Automations, Event Logs, + "More" → Software Policy, Data Discovery, Peripheral Control, Warranty, Breeze Assist, Remote Access, Privileged Access, Assignments).
+- ✅ Policy detail has feature tabs (Overview, Patches, Alerts, Backup, Monitoring, Maintenance, Compliance, Automations, Event Logs, + "More" → Software Policy, Data Discovery, Peripheral Control, Warranty, BL4CK Assist, Remote Access, Privileged Access, Assignments).
 - ✅ Link the PATCH feature: Patches tab exposes Update Ring selector (No ring / [0] Default), Application Rules (block apps / pin version), Installation Schedule (Daily/Weekly/Monthly + Time + Day of week), Reboot Policy (Never/If required/Always/During maintenance window). Selecting the Default ring + Save => POST .../features => 201 Created. Persisted across reload (ring still "[0] Default").
 - ✅ Assign to org: Assignments tab has Level (Partner/Organization/Site/Device Group/Device), Target picker, Priority, Role Filter, OS Filter, with a clean "No assignments yet" empty state. Assigning to Default Organization => POST .../assignments => 201 Created; the "Current Assignments" table immediately shows the new row (Organization / Default Organization / Priority 0 / All devices). Visible state change.
 - ✅ Effective config preview: device > More > Config (#effective-config) correctly RESOLVES the assignment — "Resolved configuration from 1 assigned policy across 1 feature", Patch Management "From: QA Patch Policy (Organization), Apps 0, Sources 1, Auto Approve: No, Reboot Policy: If_required, Linked policy: 93210383...", plus an Inheritance Chain (closest-wins priority). Full create→link→assign→preview chain works end to end and reflects my edits.
@@ -2720,7 +2720,7 @@ Stack: dev compose on merged `main`, target `http://localhost`, creds `admin@bre
 - **/security** — Security dashboard: Security Score 77/100 (Elevated), trend chart **renders** (recharts populated, no ResizeObserver error), Vulnerabilities (0), Antivirus Coverage. Charts populate cleanly.
 - **/dns-security** — Overview/Integrations/Policies/Events tabs; query stats (queries/blocked/allowed/redirected); lists supported providers (Umbrella, Cloudflare Gateway, DNSFilter, Pi-hole, OpenDNS, Quad9, AdGuard).
 - **/pam** (Privileged Access) — Live badge; Overview/Requests/Rules/Audit tabs; getting-started guidance referencing Config Policy feature link.
-- **/security/user-risk** — risk scores populated from seed (Breeze Admin 88 critical, Tech User 62); True/False-positive labeling controls; precision/training metrics.
+- **/security/user-risk** — risk scores populated from seed (BL4CK Admin 88 critical, Tech User 62); True/False-positive labeling controls; precision/training metrics.
 - **/sensitive-data** — Dashboard/Findings/Scans/Policies tabs; finding counters; "No data yet" empty charts.
 - **/peripherals** (Peripheral Control) — Policies/Activity Log; class (Storage/USB/Bluetooth/Thunderbolt) + action (Allow/Block/Read Only/Alert) + status filters; Create Policy.
 - **/ai-risk** (AI Risk Engine) — Guardrails/Analytics/Approvals/Rate Limits/Denials tabs; Guardrail Tier Matrix (Tier 1 Auto-Execute = 59 read-only tools).
@@ -3000,7 +3000,7 @@ http://localhost, login admin@breeze.local. Run mode: background agent owns brow
 
 ### Baseline (login + sidebar render) — PASS
 - ✅ Login via admin@breeze.local works (credentials pre-filled, redirects to Dashboard).
-- ✅ Dashboard renders: Fleet Status 0/4 online (4 seeded devices SEED-CRIT-NODE/SEED-NORMAL-NODE/SEED-WARM-NODE/WIN-DHQNR1F8LO2), Recent Activity feed, Breeze AI panel, alerts list.
+- ✅ Dashboard renders: Fleet Status 0/4 online (4 seeded devices SEED-CRIT-NODE/SEED-NORMAL-NODE/SEED-WARM-NODE/WIN-DHQNR1F8LO2), Recent Activity feed, BL4CK AI panel, alerts list.
 - ⚠️ Pre-login console shows ~14x 401 on /api/v1/* (devices/alerts/audit-logs/auth/refresh) — expected pre-auth race; clears after login. Note once, not chased.
 - Sidebar groups present: AI & FLEET, MONITORING, SECURITY, OPERATIONS, plus Integrations/Backup/Reports/admin Settings. All 50 nav destinations enumerated.
 
@@ -3040,7 +3040,7 @@ http://localhost, login admin@breeze.local. Run mode: background agent owns brow
 - BLOCKED: actual price/availability lookup by SKU needs real EC Express credentials (no fixture).
 
 ### [15 / #1849] QuickBooks Online connect flow — PASS
-- ✅ Integrations → Accounting → QuickBooks Online: honest "Not connected" state + clear copy ("Breeze stays your system of record") + "Connect to QuickBooks".
+- ✅ Integrations → Accounting → QuickBooks Online: honest "Not connected" state + clear copy ("BL4CK stays your system of record") + "Connect to QuickBooks".
 - ✅ Clicking Connect → honest toast "QuickBooks OAuth is not configured on this instance", stays on page, no crash. Correct fail-soft for an unconfigured instance.
 
 ### [3 / #1922] TD SYNNEX inline lookup in quote editor — DEFERRED/BLOCKED (needs EC Express creds)
@@ -3067,7 +3067,7 @@ http://localhost, login admin@breeze.local. Run mode: background agent owns brow
 - ✅ Mark outcome menu: "WAS THIS ACCURATE?" → Device failed / Device replaced / False alarm + copy "These train the reliability model — they don't change the device." Clicking "False alarm" → toast "False alarm label saved". Full feedback loop works.
 
 ### [30 / #1744] Activity pane last-N feed — PASS
-- ✅ Device Overview "Activity" pane shows a last-N feed (Command queued — reboot / Patch installation queued) with actor (Breeze Admin) + relative time, plus a "View all activity →" link. Renders index-backed recent events.
+- ✅ Device Overview "Activity" pane shows a last-N feed (Command queued — reboot / Patch installation queued) with actor (BL4CK Admin) + relative time, plus a "View all activity →" link. Renders index-backed recent events.
 
 ### [50 / #1803] Warranty refresh feedback + auto-update card — PARTIAL
 - ✅ Warranty card renders on Overview: "Warranty Unknown" + manufacturer "MICROSOFTCORPORATION".
@@ -3164,7 +3164,7 @@ http://localhost, login admin@breeze.local. Run mode: background agent owns brow
 - ✅ Script editor Monaco background = rgb(30,30,30) (dark). Navigated to /devices and back to the script editor → Monaco background still rgb(30,30,30) (NOT white). No white-editor regression (global monaco-theme-persist.js working).
 
 ### [40 / #1883] Ticket requester selectable/editable + device link — PASS
-- ✅ Ticket detail (T-2026-0002): Requester field "Breeze Admin" + Edit. Edit reveals contact select ("Unknown" / "Someone else…") + Name + Email inputs + Save/Cancel.
+- ✅ Ticket detail (T-2026-0002): Requester field "BL4CK Admin" + Edit. Edit reveals contact select ("Unknown" / "Someone else…") + Name + Email inputs + Save/Cancel.
 - ✅ Set requester to custom "QA Requester" → field updates to "QA Requester" + activity-log entry recorded (no toast, but clear state change).
 - ✅ Device link "WIN-DHQNR1F8LO2" → clicking navigates to /devices/<id> (device detail). Device also has Unlink control.
 
@@ -3223,11 +3223,11 @@ http://localhost, login admin@breeze.local. Run mode: background agent owns brow
 ### [51 / #1844] Forced-MFA enrollment login — BLOCKED
 - BLOCKED: requires an MFA-required fixture/user. Single seeded admin without forced MFA.
 
-### [39 / #1863 #1864] Breeze Assist tab — PASS
-- Note: the Breeze Assist tab is a Config Policy feature tab (HelperTab.tsx), reached via Config Policy detail → More → Breeze Assist (NOT a device-detail tab).
+### [39 / #1863 #1864] BL4CK Assist tab — PASS
+- Note: the BL4CK Assist tab is a Config Policy feature tab (HelperTab.tsx), reached via Config Policy detail → More → BL4CK Assist (NOT a device-detail tab).
 - ✅ Honest badge: "Not configured" when deploy is off.
-- ✅ "Deploy Breeze Assist to devices" toggle present.
-- ✅ Tray Menu Options ARE shown even when deploy is off, with hint "Enable 'Deploy Breeze Assist to devices' above to apply these options" — the #1863 fix. Toggles: Open Breeze Portal / Device Info / Request Support + Custom Portal URL field. Exactly the intended behavior.
+- ✅ "Deploy BL4CK Assist to devices" toggle present.
+- ✅ Tray Menu Options ARE shown even when deploy is off, with hint "Enable 'Deploy BL4CK Assist to devices' above to apply these options" — the #1863 fix. Toggles: Open BL4CK Portal / Device Info / Request Support + Custom Portal URL field. Exactly the intended behavior.
 
 ---
 
@@ -3283,7 +3283,7 @@ http://localhost, login admin@breeze.local. Run mode: background agent owns brow
 | 36 | #1761 | PAM rule matching cluster | PASS |
 | 37 | #1752 | UAC → mobile approval | BLOCKED |
 | 38 | #1694 | Remote session consent | BLOCKED (offline) |
-| 39 | #1863/1864 | Breeze Assist tab | PASS |
+| 39 | #1863/1864 | BL4CK Assist tab | PASS |
 | 40 | #1883 | Ticket requester + device link | PASS |
 | 41 | #1749 | Script scope changer | PASS |
 | 42 | #1794 | Monaco theme across nav | PASS |
@@ -3479,7 +3479,7 @@ _(appended continuously)_
   CODE-VERIFIED / UI-N/A.
 
 ### Other observations
-- ⚠️ Side panels (Breeze AI + Documentation) render docked open by default and sit off the right edge at 1680px width
+- ⚠️ Side panels (BL4CK AI + Documentation) render docked open by default and sit off the right edge at 1680px width
   — the AI panel close button was off-viewport (couldn't click). Minor layout/space issue.
 - ⚠️ Onboarding product tour ("Navigate your tools", 1 of 4) auto-shows on first load — expected for a fresh session.
 - ✅ Nav crawl: all 41 sidebar destinations + settings return SSR 200 (after the caddy /billing fix). No whole-page 500s.

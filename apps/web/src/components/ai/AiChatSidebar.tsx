@@ -137,7 +137,7 @@ export default function AiChatSidebar() {
               <MessageSquare className="h-4 w-4 text-primary" />
             )}
             <span className="text-sm font-semibold text-foreground">
-              {showHistory ? 'History' : 'Breeze AI'}
+              {showHistory ? 'History' : 'BL4CK AI'}
             </span>
           </div>
 

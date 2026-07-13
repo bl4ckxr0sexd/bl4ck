@@ -5,7 +5,7 @@ description: Collect and analyze device boot times, startup application impact, 
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Boot & Startup Performance gives fleet administrators visibility into how long devices take to boot and which startup applications are delaying readiness. The Breeze agent collects boot phase timings and per-process startup impact data, stores it in a time-series history per device, and surfaces it through both the REST API and the AI assistant. By tracking boot performance over time you can identify regressions, disable high-impact startup items, and verify that optimization changes actually improve user experience.
+Boot & Startup Performance gives fleet administrators visibility into how long devices take to boot and which startup applications are delaying readiness. The BL4CK agent collects boot phase timings and per-process startup impact data, stores it in a time-series history per device, and surfaces it through both the REST API and the AI assistant. By tracking boot performance over time you can identify regressions, disable high-impact startup items, and verify that optimization changes actually improve user experience.
 
 <Aside>
   Boot metrics endpoints require authentication with a role that includes the `devices.read` permission for read operations. Triggering on-demand collection and managing startup items require an online device and the `devices.execute` permission. All mutating operations are audit-logged.
@@ -74,7 +74,7 @@ When querying boot history, the API returns summary statistics computed across a
 
 ## Platform Support
 
-The Breeze agent uses platform-specific data sources to collect boot timing and startup item information.
+The BL4CK agent uses platform-specific data sources to collect boot timing and startup item information.
 
 <Tabs>
   <TabItem label="Windows">

@@ -6,11 +6,11 @@ import DeviceEffectiveConfigTab from './DeviceEffectiveConfigTab';
 const baselineOnlyResponse = {
   deviceId: 'dev-1',
   features: {
-    patch: { featureType: 'patch', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'Breeze Defaults', sourcePriority: 0 },
-    alert_rule: { featureType: 'alert_rule', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'Breeze Defaults', sourcePriority: 0 },
+    patch: { featureType: 'patch', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'BL4CK Defaults', sourcePriority: 0 },
+    alert_rule: { featureType: 'alert_rule', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'BL4CK Defaults', sourcePriority: 0 },
   },
   inheritanceChain: [
-    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'Breeze Defaults', priority: 0, featureTypes: ['patch', 'alert_rule'] },
+    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'BL4CK Defaults', priority: 0, featureTypes: ['patch', 'alert_rule'] },
   ],
 };
 
@@ -20,11 +20,11 @@ const mixedResponse = {
   deviceId: 'dev-2',
   features: {
     patch: { featureType: 'patch', featurePolicyId: null, inlineSettings: null, sourceLevel: 'organization', sourceTargetId: 'org-1', sourcePolicyId: 'pol-org', sourcePolicyName: 'Org Patch Policy', sourcePriority: 10 },
-    alert_rule: { featureType: 'alert_rule', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'Breeze Defaults', sourcePriority: 0 },
+    alert_rule: { featureType: 'alert_rule', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'BL4CK Defaults', sourcePriority: 0 },
   },
   inheritanceChain: [
     { level: 'organization', targetId: 'org-1', policyId: 'pol-org', policyName: 'Org Patch Policy', priority: 10, featureTypes: ['patch'] },
-    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'Breeze Defaults', priority: 0, featureTypes: ['alert_rule'] },
+    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'BL4CK Defaults', priority: 0, featureTypes: ['alert_rule'] },
   ],
 };
 
@@ -35,11 +35,11 @@ const warrantyResponse = {
   deviceId: 'dev-3',
   features: {
     warranty: { featureType: 'warranty', featurePolicyId: null, inlineSettings: { enabled: true, warnDays: 90, criticalDays: 30 }, sourceLevel: 'organization', sourceTargetId: 'org-1', sourcePolicyId: 'pol-warr', sourcePolicyName: 'Windows Workstations', sourcePriority: 0 },
-    backup: { featureType: 'backup', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'Breeze Defaults', sourcePriority: 0 },
+    backup: { featureType: 'backup', featurePolicyId: null, inlineSettings: null, sourceLevel: 'default', sourceTargetId: 'breeze-defaults', sourcePolicyId: 'breeze-defaults', sourcePolicyName: 'BL4CK Defaults', sourcePriority: 0 },
   },
   inheritanceChain: [
     { level: 'organization', targetId: 'org-1', policyId: 'pol-warr', policyName: 'Windows Workstations', priority: 0, featureTypes: ['warranty'] },
-    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'Breeze Defaults', priority: 0, featureTypes: ['backup'] },
+    { level: 'default', targetId: 'breeze-defaults', policyId: 'breeze-defaults', policyName: 'BL4CK Defaults', priority: 0, featureTypes: ['backup'] },
   ],
 };
 
@@ -73,21 +73,21 @@ vi.mock('../../stores/auth', () => ({
 describe('DeviceEffectiveConfigTab baseline labeling', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows the empty state with a Breeze Defaults link when only the baseline is present', async () => {
+  it('shows the empty state with a BL4CK Defaults link when only the baseline is present', async () => {
     render(<DeviceEffectiveConfigTab deviceId="dev-1" />);
     await waitFor(() =>
       expect(screen.getByText('No Configuration Policies')).toBeInTheDocument(),
     );
-    const link = screen.getByText('View Breeze Defaults');
+    const link = screen.getByText('View BL4CK Defaults');
     expect(link).toBeInTheDocument();
     expect(link.getAttribute('href')).toBe('/configuration-policies/defaults');
   });
 
-  it('labels baseline fall-through features as sourced from Breeze Defaults', async () => {
+  it('labels baseline fall-through features as sourced from BL4CK Defaults', async () => {
     render(<DeviceEffectiveConfigTab deviceId="dev-2" />);
     // Real assigned policy still renders normally...
     await waitFor(() => expect(screen.getAllByText('Org Patch Policy').length).toBeGreaterThan(0));
-    // ...and the baseline fall-through feature shows "Breeze Defaults" as its source.
+    // ...and the baseline fall-through feature shows "BL4CK Defaults" as its source.
     expect(screen.getAllByText(/Breeze Defaults/).length).toBeGreaterThan(0);
     // ...and is explicitly marked "Not enforced" so it never reads as configured.
     expect(screen.getByText('Not enforced')).toBeInTheDocument();

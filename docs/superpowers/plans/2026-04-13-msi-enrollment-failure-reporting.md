@@ -825,7 +825,7 @@ func classifyEnrollError(err error, serverURL string) (enrollErrCategory, string
 			return catRateLimit, "rate limited by server — wait one minute and retry the install"
 		case httpErr.StatusCode >= 500:
 			return catServer, fmt.Sprintf(
-				"server error %d — contact Breeze support if this persists",
+				"server error %d — contact BL4CK support if this persists",
 				httpErr.StatusCode)
 		}
 	}
@@ -2683,7 +2683,7 @@ Expected:
 - `agent.yaml` and `secrets.yaml` both written
 - Within 10 seconds (one wait-loop tick), `C:\ProgramData\Breeze\logs\agent.log` shows `enrollment detected, continuing startup`
 - `sc query BreezeAgent` still shows `STATE: 4 RUNNING` (no restart occurred)
-- Heartbeats appear in the Breeze UI for the new device within ~30s
+- Heartbeats appear in the BL4CK UI for the new device within ~30s
 
 - [ ] **Step 7: Document scenario results**
 

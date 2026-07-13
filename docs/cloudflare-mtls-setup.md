@@ -1,6 +1,6 @@
 # Cloudflare mTLS Client Certificate Setup
 
-This guide covers enabling Cloudflare API Shield mTLS for Breeze RMM agents. mTLS adds proof-of-possession security at the TLS layer — agents must present a valid client certificate before any request reaches the API. The existing bearer token remains as the application-layer identity check.
+This guide covers enabling Cloudflare API Shield mTLS for BL4CK RMM agents. mTLS adds proof-of-possession security at the TLS layer — agents must present a valid client certificate before any request reaches the API. The existing bearer token remains as the application-layer identity check.
 
 **This feature is fully optional.** No existing behavior changes unless you explicitly enable it.
 
@@ -24,7 +24,7 @@ This guide covers enabling Cloudflare API Shield mTLS for Breeze RMM agents. mTL
 
 ## Prerequisites
 
-- Breeze RMM API and agents updated to the version containing the mTLS feature
+- BL4CK RMM API and agents updated to the version containing the mTLS feature
 - A Cloudflare account with the domain proxied through Cloudflare
 - Cloudflare API Shield entitlement (available on Business and Enterprise plans)
 - PostgreSQL database accessible for migrations

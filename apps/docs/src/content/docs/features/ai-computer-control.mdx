@@ -5,7 +5,7 @@ description: Use the AI assistant to execute commands, run scripts, manage servi
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Breeze AI assistant is not limited to answering questions about your fleet. It can take real actions on managed devices: execute system commands, run scripts, start and stop services, browse and modify files, analyze disk usage, perform cleanup, run security scans, and discover new devices on the network. Every action is governed by the [AI Risk Engine](/features/ai/) tier system and RBAC permissions, so destructive operations always require explicit human approval before they reach a device.
+The BL4CK AI assistant is not limited to answering questions about your fleet. It can take real actions on managed devices: execute system commands, run scripts, start and stop services, browse and modify files, analyze disk usage, perform cleanup, run security scans, and discover new devices on the network. Every action is governed by the [AI Risk Engine](/features/ai/) tier system and RBAC permissions, so destructive operations always require explicit human approval before they reach a device.
 
 This page documents every tool the AI can use to control devices, the safety mechanisms that protect against unintended actions, and the permissions required at each level.
 
@@ -133,7 +133,7 @@ The device must be online (WebSocket connected) to receive commands. Commands ha
 
 ### run_script
 
-Executes a script from the Breeze script library on one or more devices (up to 10 per invocation). Scripts are referenced by their library UUID, not inline code. Each device receives the script independently with a 60-second timeout.
+Executes a script from the BL4CK script library on one or more devices (up to 10 per invocation). Scripts are referenced by their library UUID, not inline code. Each device receives the script independently with a 60-second timeout.
 
 ```
 "Run the disk health check script on all Denver servers"

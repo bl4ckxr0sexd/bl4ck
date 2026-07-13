@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-05-06T00:00:00Z",
-  "title": "Design System: Breeze Mobile",
+  "title": "Design System: BL4CK Mobile",
   "extensions": {
     "colorMeta": {
       "brand": {
@@ -227,7 +227,7 @@
   ],
   "narrative": {
     "northStar": "The Calm Sentinel",
-    "overview": "Breeze Mobile is the security identity that makes high-tier AI agent actions safe. Its load-bearing moment is the 11:47pm buzz — owner of a 30-tech MSP glances at their phone, reads a request, trusts it's real, taps once. Every other surface (AI chat, fleet status, alerts) is ambient. The system rejects the visual register of generic mobile SaaS: no gradient text, no glassmorphism, no neon-on-dark, no candy palettes. It also rejects the cold, default look of stock React Native: Geist replaces system sans, brand-tinted neutrals replace pure greys, and color is committed to a single cool teal anchor with strict status semantics.",
+    "overview": "BL4CK Mobile is the security identity that makes high-tier AI agent actions safe. Its load-bearing moment is the 11:47pm buzz — owner of a 30-tech MSP glances at their phone, reads a request, trusts it's real, taps once. Every other surface (AI chat, fleet status, alerts) is ambient. The system rejects the visual register of generic mobile SaaS: no gradient text, no glassmorphism, no neon-on-dark, no candy palettes. It also rejects the cold, default look of stock React Native: Geist replaces system sans, brand-tinted neutrals replace pure greys, and color is committed to a single cool teal anchor with strict status semantics.",
     "keyCharacteristics": [
       "Dark-canonical, light supported. The 11:47pm scene drives the default.",
       "One color carries the surface (Committed strategy). Brand teal anchors. Status colors are reserved for status.",

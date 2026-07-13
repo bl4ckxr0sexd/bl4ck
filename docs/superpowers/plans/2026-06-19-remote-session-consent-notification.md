@@ -4,9 +4,9 @@
 
 **Goal:** Notify (and optionally gate on consent from) the end user at a managed device when a technician starts a remote desktop session, with a persistent active-session indicator — all policy-configurable.
 
-**Architecture:** The API is authoritative: it resolves the effective `remote_access` prompt policy for the target device and the (redacted) technician identity at offer time, and stamps a `prompt` block into the existing `start_desktop` agent command. The agent's `handleStartDesktop` reads that block and, in `consent` mode, requests an Allow/Deny verdict from the notify-scoped Breeze Helper (reusing the `SendCommandAndWait` IPC round-trip that `handleNotifyUser` already uses) **before** dispatching capture; in `notify` mode it fires a start notice and shows a top-center "active session" pill; on disconnect it hides the pill and fires an ended notice. The Helper renders the consent dialog and the banner as new always-on-top Tauri windows.
+**Architecture:** The API is authoritative: it resolves the effective `remote_access` prompt policy for the target device and the (redacted) technician identity at offer time, and stamps a `prompt` block into the existing `start_desktop` agent command. The agent's `handleStartDesktop` reads that block and, in `consent` mode, requests an Allow/Deny verdict from the notify-scoped BL4CK Helper (reusing the `SendCommandAndWait` IPC round-trip that `handleNotifyUser` already uses) **before** dispatching capture; in `notify` mode it fires a start notice and shows a top-center "active session" pill; on disconnect it hides the pill and fires an ended notice. The Helper renders the consent dialog and the banner as new always-on-top Tauri windows.
 
-**Tech Stack:** PostgreSQL + Drizzle (hand-written SQL migrations, RLS), Hono + TypeScript (API), Go (agent), Rust + React + Tauri v2 (Breeze Helper), Vitest (TS), `go test` (agent).
+**Tech Stack:** PostgreSQL + Drizzle (hand-written SQL migrations, RLS), Hono + TypeScript (API), Go (agent), Rust + React + Tauri v2 (BL4CK Helper), Vitest (TS), `go test` (agent).
 
 **Design spec:** `docs/superpowers/specs/2026-06-19-remote-session-consent-notification-design.md` (read it first — it contains the full UI design, decision matrix, and rationale).
 
@@ -628,7 +628,7 @@ git commit -m "test(agent): consent gate behavior across allow/deny/timeout/no-h
 
 ---
 
-# Phase 3 — Breeze Helper UI (apps/helper)
+# Phase 3 — BL4CK Helper UI (apps/helper)
 
 > Read the existing IPC dispatch under `apps/helper/src-tauri/src/ipc/` and the `crate::ipc::client::run` path before starting — new message types are handled there. Both new surfaces are **separate always-on-top Tauri windows**. Full component code + CSS is in spec §9 — copy it verbatim.
 
@@ -830,7 +830,7 @@ git commit -m "docs: rollout note for remote-session consent default-notify beha
 
 ## Notes for the implementer
 
-- **Helper topology:** the notify-scoped session (`PreferredSessionWithScope("notify")`) is the Breeze Helper (Tauri). Capture goes to a different helper role via `TypeDesktopStart`. The consent gate sits in the **service** (`handleStartDesktop`) so it's independent of which process hosts capture — do **not** put it in `session_stream.go`.
+- **Helper topology:** the notify-scoped session (`PreferredSessionWithScope("notify")`) is the BL4CK Helper (Tauri). Capture goes to a different helper role via `TypeDesktopStart`. The consent gate sits in the **service** (`handleStartDesktop`) so it's independent of which process hosts capture — do **not** put it in `session_stream.go`.
 - **Verdict-report transport (Task 9 Step 5):** confirm how the agent currently relays the WebRTC answer to the API (`command_result` over the agent WS vs. an authenticated HTTP `POST /answer`). Use the **same** transport for the deny verdict so auth/ownership is consistent; adjust Task 6's ingestion endpoint to match (a WS `command_result` mapped in `agentWs.ts`, or the HTTP `POST /sessions/:id/deny`).
 - **Unattended / login screen:** no notify helper → `requestConsent` returns helper-absent → `consent_unavailable_behavior` decides; `notify` mode silently no-ops. This is the intended behavior, not a bug.
 - **Effort/cost:** Phases are independently reviewable. Recommended review gates: after Phase 1 (RLS + audit are security-sensitive), after Phase 2 (consent correctness), and a final pass over Phases 3–4.

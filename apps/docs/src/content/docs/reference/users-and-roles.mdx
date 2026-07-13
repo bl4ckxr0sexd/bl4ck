@@ -1,6 +1,6 @@
 ---
 title: Users & Roles
-description: Manage user accounts, role-based access control, permissions, MFA, and SSO for your Breeze organisation.
+description: Manage user accounts, role-based access control, permissions, MFA, and SSO for your BL4CK organisation.
 sidebar:
   order: 4
   label: Users & Roles
@@ -8,13 +8,13 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze provides a multi-tenant user management system with role-based access control (RBAC), multi-factor authentication (MFA), single sign-on (SSO), and granular permission assignment. Users are scoped to either a **Partner** (MSP) or an **Organisation**, and every action is governed by an assigned role.
+BL4CK provides a multi-tenant user management system with role-based access control (RBAC), multi-factor authentication (MFA), single sign-on (SSO), and granular permission assignment. Users are scoped to either a **Partner** (MSP) or an **Organisation**, and every action is governed by an assigned role.
 
 ---
 
 ## Overview
 
-The user and role system is built around Breeze's multi-tenant hierarchy:
+The user and role system is built around BL4CK's multi-tenant hierarchy:
 
 ```
 Partner (MSP) --> Organisation (Customer) --> Site --> Device Group --> Device
@@ -246,7 +246,7 @@ Authenticated users can change their password via `POST /auth/change-password` b
 
 ## Single Sign-On (SSO)
 
-Breeze supports SSO at the organisation or partner level via **OpenID Connect (OIDC)**. SAML schema support is defined but not yet implemented. Organisation providers sign in a customer's users; a partner-owned provider signs in the MSP's own technicians — see [Partner-Wide SSO](/reference/sso/#partner-wide-sso-technician-login).
+BL4CK supports SSO at the organisation or partner level via **OpenID Connect (OIDC)**. SAML schema support is defined but not yet implemented. Organisation providers sign in a customer's users; a partner-owned provider signs in the MSP's own technicians — see [Partner-Wide SSO](/reference/sso/#partner-wide-sso-technician-login).
 
 ### Provider Configuration
 
@@ -258,7 +258,7 @@ Key provider settings:
 |---|---|
 | `issuer` | OIDC issuer URL. Endpoint discovery is attempted automatically. |
 | `clientId` / `clientSecret` | OAuth 2.0 credentials. The secret is stored encrypted. |
-| `autoProvision` | When `true`, users who authenticate via SSO but do not yet have a Breeze account are created automatically. |
+| `autoProvision` | When `true`, users who authenticate via SSO but do not yet have a BL4CK account are created automatically. |
 | `defaultRoleId` | The role assigned to auto-provisioned users. Required when `autoProvision` is enabled. |
 | `allowedDomains` | Comma-separated list of email domains permitted to log in via this provider. |
 | `enforceSSO` | When `true`, password-based login is disabled for the organisation. |
@@ -268,10 +268,10 @@ Provider status can be `active`, `inactive`, or `testing`. Only `active` provide
 ### SSO Login Flow
 
 <Steps>
-1. The browser navigates to `GET /sso/login/:orgId`. Breeze generates a PKCE challenge, state, and nonce, stores them in an `sso_sessions` record, and redirects to the identity provider's authorization URL.
+1. The browser navigates to `GET /sso/login/:orgId`. BL4CK generates a PKCE challenge, state, and nonce, stores them in an `sso_sessions` record, and redirects to the identity provider's authorization URL.
 2. The user authenticates with the identity provider.
 3. The identity provider redirects back to `GET /sso/callback` with an authorization code.
-4. Breeze exchanges the code for tokens, verifies the ID token claims, retrieves user info, and maps attributes.
+4. BL4CK exchanges the code for tokens, verifies the ID token claims, retrieves user info, and maps attributes.
 5. If the user does not exist and `autoProvision` is enabled, a new user and organisation membership are created.
 6. A short-lived token exchange code is generated and the user is redirected to the application with `#ssoCode=...`.
 7. The frontend calls `POST /sso/exchange` with the code to receive the access and refresh tokens.

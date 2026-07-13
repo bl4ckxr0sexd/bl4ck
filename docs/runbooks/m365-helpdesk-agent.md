@@ -1,17 +1,17 @@
-# Breeze M365 Helpdesk Agent Operator Runbook
+# BL4CK M365 Helpdesk Agent Operator Runbook
 
-This runbook documents how to configure and seed the Breeze AI agent's Microsoft 365 helpdesk integration, which delegates identity and access operations to the Delegant service.
+This runbook documents how to configure and seed the BL4CK AI agent's Microsoft 365 helpdesk integration, which delegates identity and access operations to the Delegant service.
 
 ## Overview
 
-The Breeze AI agent integrates five M365 helpdesk tools with the Delegant identity-governance service:
+The BL4CK AI agent integrates five M365 helpdesk tools with the Delegant identity-governance service:
 - `m365_lookup_user` — read user details
 - `m365_recent_signins` — list recent sign-ins
 - `m365_list_group_memberships` — enumerate group membership
 - `m365_disable_user` — disable a user account (mutation)
 - `m365_reset_password` — reset a user password (mutation)
 
-These tools call Delegant via `POST /v1/tools/invoke`. Tier-1 reads (lookup, signins, groups) run automatically; tier-3 mutations (disable, reset) require approval via Breeze's approval UI.
+These tools call Delegant via `POST /v1/tools/invoke`. Tier-1 reads (lookup, signins, groups) run automatically; tier-3 mutations (disable, reset) require approval via BL4CK's approval UI.
 
 ---
 
@@ -53,7 +53,7 @@ export DELEGANT_ACTING_USER_ID="breeze-user-principals-id-uuid"
 
 ## Section 2: Delegant-Side Prerequisites
 
-Before Breeze can invoke helpdesk tools, an operator **must** set up the following in Delegant:
+Before BL4CK can invoke helpdesk tools, an operator **must** set up the following in Delegant:
 
 ### 1. Create the Agent Principal
 
@@ -79,11 +79,11 @@ breeze_ai_agent {
 }
 ```
 
-If a tool resolves to `require_approval` or `pending` on the Delegant side, Breeze returns a fail-loud `unexpected_pending` error — because Breeze owns the human approval step, not Delegant. (See Troubleshooting for details.)
+If a tool resolves to `require_approval` or `pending` on the Delegant side, BL4CK returns a fail-loud `unexpected_pending` error — because BL4CK owns the human approval step, not Delegant. (See Troubleshooting for details.)
 
 ### 4. Register the JWT Public Key
 
-Register the JWT public key (matching `DELEGANT_PRINCIPAL_KID`) in Delegant's `jwtKeySet`. Delegant uses this key to verify the per-call principal JWT signed by Breeze.
+Register the JWT public key (matching `DELEGANT_PRINCIPAL_KID`) in Delegant's `jwtKeySet`. Delegant uses this key to verify the per-call principal JWT signed by BL4CK.
 
 ---
 
@@ -103,7 +103,7 @@ VALUES
 
 ### Placeholder Definitions
 
-- **`breeze-org-uuid`** — the Breeze organization (MSP partner) UUID.
+- **`breeze-org-uuid`** — the BL4CK organization (MSP partner) UUID.
 - **`sandbox`** — the slug a technician picks in the session switcher.
 - **`Sandbox Tenant`** — shown in the customer switcher and on approval cards.
 - **`delegant-org-id`** — the Delegant org id that owns this M365 connection.
@@ -113,13 +113,13 @@ VALUES
 
 ### Security Note
 
-**No secrets are stored Breeze-side.** The per-customer Entra client secret lives in Delegant. Breeze only stores the pointer (`delegant_connection_id`) and references it during tool invocation.
+**No secrets are stored Breeze-side.** The per-customer Entra client secret lives in Delegant. BL4CK only stores the pointer (`delegant_connection_id`) and references it during tool invocation.
 
 ---
 
 ## Section 4: Technician Workflow
 
-1. **Open the Breeze AI chat** — the technician navigates to the agent in the Breeze app.
+1. **Open the BL4CK AI chat** — the technician navigates to the agent in the BL4CK app.
 
 2. **Pick the customer** — a new session-switcher dropdown appears. The technician selects the customer (e.g., "Sandbox Tenant").
 
@@ -127,13 +127,13 @@ VALUES
 
 4. **Automatic tier-1 reads** — lookup, signins, and group-membership calls execute automatically and return results inline.
 
-5. **Approve tier-3 mutations** — if the agent needs to disable a user or reset a password, Breeze's approval UI (web or mobile) shows an approval card with:
+5. **Approve tier-3 mutations** — if the agent needs to disable a user or reset a password, BL4CK's approval UI (web or mobile) shows an approval card with:
    - Customer tenant name
    - Target user
    - Requested action (disable / reset password)
    - Reason (from the agent's context)
    
-   The technician approves or rejects. On approval, Breeze calls Delegant's tool-invoke endpoint.
+   The technician approves or rejects. On approval, BL4CK calls Delegant's tool-invoke endpoint.
 
 ---
 
@@ -164,9 +164,9 @@ The two M365-specific migrations are:
 
 ## Section 6: Forensic / Audit Correlation
 
-A complete audit trail spans both Breeze and Delegant:
+A complete audit trail spans both BL4CK and Delegant:
 
-1. **Breeze side:** Locate the `ai_tool_executions` row for the execution (filtered by technician, time, tool name, etc.).
+1. **BL4CK side:** Locate the `ai_tool_executions` row for the execution (filtered by technician, time, tool name, etc.).
 
 2. **Extract `delegant_tool_call_id`** — this column contains the call id returned by Delegant's invoke response.
 
@@ -201,7 +201,7 @@ Mutations like password reset and user disable **hit a real M365 tenant**. Never
 1. Provision a test M365 sandbox tenant (Microsoft provides free developer tenants).
 2. Onboard the sandbox M365 credentials in Delegant (creating a `delegant_connection_id`).
 3. Create the `breeze_user` principal in Delegant for the test technician.
-4. Seed the Breeze `delegant_m365_connections` table (Section 3) with the sandbox connection.
+4. Seed the BL4CK `delegant_m365_connections` table (Section 3) with the sandbox connection.
 5. Set all required environment variables (Section 1).
 6. Run the live test suite:
    ```bash
@@ -216,7 +216,7 @@ Mutations like password reset and user disable **hit a real M365 tenant**. Never
 
 **Symptom:** Tool invocation returns "Tool returned unexpected_pending."
 
-**Cause:** Delegant evaluated the policy as `require_approval` or `pending` for this tool. Breeze does not support deferred approval on the Delegant side.
+**Cause:** Delegant evaluated the policy as `require_approval` or `pending` for this tool. BL4CK does not support deferred approval on the Delegant side.
 
 **Resolution:**
 1. Check the org policy in Delegant for the `breeze_ai_agent` principal.
@@ -227,7 +227,7 @@ Mutations like password reset and user disable **hit a real M365 tenant**. Never
 
 **Symptom:** Delegant returns 401 Unauthorized on tool invocation.
 
-**Cause:** The signing key or `kid` mismatch between Breeze and Delegant.
+**Cause:** The signing key or `kid` mismatch between BL4CK and Delegant.
 
 **Resolution:**
 1. Verify `DELEGANT_PRINCIPAL_SIGNING_KEY` is the correct Ed25519 private key in PKCS8 PEM format.
@@ -243,11 +243,11 @@ Mutations like password reset and user disable **hit a real M365 tenant**. Never
 **Resolution:**
 1. Confirm the token value in both systems.
 2. Verify there are no leading/trailing whitespaces in the env var.
-3. Redeploy Breeze after updating the token.
+3. Redeploy BL4CK after updating the token.
 
 ### Migration Table Not Found
 
-**Symptom:** Breeze API fails at startup with "table delegant_m365_connections does not exist."
+**Symptom:** BL4CK API fails at startup with "table delegant_m365_connections does not exist."
 
 **Cause:** Migrations did not run during deployment.
 
@@ -273,4 +273,4 @@ Before going live:
 - [ ] Sandbox M365 tenant available for testing (Section 7)
 - [ ] Technician `breeze_user` principal linked in `DELEGANT_ACTING_USER_ID`
 
-For live troubleshooting, use the audit trail in Section 6 to correlate actions across Breeze and Delegant.
+For live troubleshooting, use the audit trail in Section 6 to correlate actions across BL4CK and Delegant.

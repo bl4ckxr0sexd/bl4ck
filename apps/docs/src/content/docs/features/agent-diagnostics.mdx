@@ -1,20 +1,20 @@
 ---
 title: Agent Diagnostics & Service Commands
-description: Query structured internal logs shipped by the agent, and manage the Breeze agent as a Windows system service.
+description: Query structured internal logs shipped by the agent, and manage the BL4CK agent as a Windows system service.
 ---
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Two features help you manage and diagnose the Breeze agent itself:
+Two features help you manage and diagnose the BL4CK agent itself:
 
 - **Agent Diagnostic Logs** — structured internal logs emitted by the agent process and shipped to the server on a schedule
-- **Agent Service Commands** — CLI commands for registering and managing the Breeze agent as a Windows system service
+- **Agent Service Commands** — CLI commands for registering and managing the BL4CK agent as a Windows system service
 
 ---
 
 ## Agent Diagnostic Logs
 
-Agent Diagnostic Logs are structured internal logs emitted by the Breeze agent process and shipped to the Breeze server on a regular schedule. They give you visibility into what the agent is doing, warn you about issues before they become failures, and let you diagnose connectivity or update problems without needing shell access to the device.
+Agent Diagnostic Logs are structured internal logs emitted by the BL4CK agent process and shipped to the BL4CK server on a regular schedule. They give you visibility into what the agent is doing, warn you about issues before they become failures, and let you diagnose connectivity or update problems without needing shell access to the device.
 
 <Aside>
   These are agent-internal operational logs. They are **not** OS event logs, Windows Event Viewer entries, or syslog output — those are available separately under the **Event Log** tab on the device detail page.
@@ -145,7 +145,7 @@ GET /api/v1/devices/DEVICE_ID/diagnostic-logs?level=error&component=websocket&li
 
 ## Agent Service Commands
 
-The Breeze agent binary includes a `service` subcommand for managing itself as a Windows system service. These commands are run directly on the endpoint, not via the Breeze API.
+The BL4CK agent binary includes a `service` subcommand for managing itself as a Windows system service. These commands are run directly on the endpoint, not via the BL4CK API.
 
 <Aside>
   **Windows only.** The `service` subcommand is not available on macOS or Linux. On those platforms, manage the agent process using your system's normal service manager (launchd on macOS, systemd on Linux).
@@ -161,7 +161,7 @@ All `service` commands require the terminal to be running as **Administrator** b
     breeze-agent.exe service install
     ```
 
-    Registers the agent as a Windows service named `BreezeAgent` with the display name "Breeze RMM Agent". The service is configured to:
+    Registers the agent as a Windows service named `BreezeAgent` with the display name "BL4CK RMM Agent". The service is configured to:
 
     - Start automatically when Windows boots
     - Restart automatically on failure (after 5 s on the first failure, 10 s on the second, 30 s on the third)

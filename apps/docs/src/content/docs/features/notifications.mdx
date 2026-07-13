@@ -5,7 +5,7 @@ description: Configure notification channels and deliver alerts via email, Slack
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze RMM delivers notifications through multiple channels whenever alerts trigger, automations execute, or other platform events occur. Notification channels are configured per organization and dispatched asynchronously through a background job queue. Every alert automatically generates in-app notifications for all active users in the affected organization; additional channels (email, webhook, Slack, Teams, PagerDuty, SMS, Pushover) are routed based on alert rule configuration or organization defaults.
+BL4CK RMM delivers notifications through multiple channels whenever alerts trigger, automations execute, or other platform events occur. Notification channels are configured per organization and dispatched asynchronously through a background job queue. Every alert automatically generates in-app notifications for all active users in the affected organization; additional channels (email, webhook, Slack, Teams, PagerDuty, SMS, Pushover) are routed based on alert rule configuration or organization defaults.
 
 ---
 
@@ -202,7 +202,7 @@ The Pushover sender delivers alert notifications to a user's phone via the [Push
 
 ### In-App
 
-In-app notifications are created directly in the `user_notifications` database table and appear in each user's notification center within the Breeze dashboard.
+In-app notifications are created directly in the `user_notifications` database table and appear in each user's notification center within the BL4CK dashboard.
 
 **Delivery scope:** When an alert triggers, in-app notifications are sent to:
 - All **active users** directly assigned to the alert's organization
@@ -329,7 +329,7 @@ Removes all notifications for the current user.
 
 ## Mobile Push Notifications
 
-Breeze also supports push notifications to registered mobile devices via Firebase Cloud Messaging (FCM) for Android and Apple Push Notification Service (APNS) for iOS.
+BL4CK also supports push notifications to registered mobile devices via Firebase Cloud Messaging (FCM) for Android and Apple Push Notification Service (APNS) for iOS.
 
 **Key features:**
 - **Severity filtering** -- Mobile devices can specify which alert severities they want to receive via the `alertSeverities` array
@@ -579,7 +579,7 @@ The test endpoint sends a real notification with a test payload through the sele
   "channelName": "Ops Team Email",
   "channelType": "email",
   "testMessage": {
-    "title": "Test Alert from Breeze RMM",
+    "title": "Test Alert from BL4CK RMM",
     "message": "This is a test notification sent to channel \"Ops Team Email\" at 2026-02-18T...",
     "severity": "info",
     "source": "manual_test"

@@ -137,7 +137,7 @@ export default function PSAMappingEditor() {
         <div>
           <h2 className="text-lg font-semibold">PSA field mapping</h2>
           <p className="text-sm text-muted-foreground">
-            Align Breeze fields with PSA fields for consistent sync.
+            Align BL4CK fields with PSA fields for consistent sync.
           </p>
         </div>
         <button
@@ -165,7 +165,7 @@ export default function PSAMappingEditor() {
 
       <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_1fr]">
         <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm font-semibold text-muted-foreground">
-          Breeze fields
+          BL4CK fields
         </div>
         <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm font-semibold text-muted-foreground">
           PSA fields

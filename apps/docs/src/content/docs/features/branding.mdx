@@ -1,11 +1,11 @@
 ---
 title: Branding & White-Label
-description: Customize the Breeze dashboard with your organization's logo, colors, and branding for a white-label experience.
+description: Customize the BL4CK dashboard with your organization's logo, colors, and branding for a white-label experience.
 ---
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze supports full white-label branding at both the **partner (MSP)** and **organization (customer)** levels. Partners can customize the dashboard, portal, and email templates with their own logos, colors, and styling so that their customers see a branded experience. Organizations can further override branding for their own portal subdomain. All branding assets are stored per-organization in the `portal_branding` table and served through the branding API, which resolves the correct branding configuration based on the request domain.
+BL4CK supports full white-label branding at both the **partner (MSP)** and **organization (customer)** levels. Partners can customize the dashboard, portal, and email templates with their own logos, colors, and styling so that their customers see a branded experience. Organizations can further override branding for their own portal subdomain. All branding assets are stored per-organization in the `portal_branding` table and served through the branding API, which resolves the correct branding configuration based on the request domain.
 
 The branding system covers three surfaces:
 
@@ -104,7 +104,7 @@ The `BrandingEditor` component automatically generates these initials:
 
 ```
 Organization: "Acme Corp" → Initials: "AC"
-Organization: "Breeze"    → Initials: "BR"
+Organization: "BL4CK"    → Initials: "BR"
 ```
 
 ---
@@ -211,10 +211,10 @@ Partners (MSPs) manage branding at a higher level. Partner branding sets the def
 
 | Field | Resolution Order |
 |-------|-----------------|
-| Logo | Org logo > Partner logo > Breeze default |
+| Logo | Org logo > Partner logo > BL4CK default |
 | Primary color | Org color > Partner color > `#2563eb` |
 | Secondary color | Org color > Partner color > `#f97316` |
-| Favicon | Org favicon > Partner favicon > Breeze default |
+| Favicon | Org favicon > Partner favicon > BL4CK default |
 | Custom CSS | Org CSS appended after partner CSS |
 | Support email | Org email > Partner email > none |
 

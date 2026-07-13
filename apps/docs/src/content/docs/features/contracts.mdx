@@ -7,7 +7,7 @@ sidebar:
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-Recurring Contracts automate your managed-services billing. Define what a customer is charged and how often, and Breeze generates the invoices on schedule -- resolving per-device and per-seat counts at billing time so the amount always reflects the customer's actual environment. Open **Contracts** from the sidebar.
+Recurring Contracts automate your managed-services billing. Define what a customer is charged and how often, and BL4CK generates the invoices on schedule -- resolving per-device and per-seat counts at billing time so the amount always reflects the customer's actual environment. Open **Contracts** from the sidebar.
 
 Contracts are **partner-scoped** and bound to a customer organization.
 
@@ -18,7 +18,7 @@ Two settings determine the rhythm:
 - **Billing timing** -- *in advance* (bill at the start of each period) or *in arrears* (bill at the end).
 - **Interval** -- monthly, quarterly, annually, or a custom number of months.
 
-From these, Breeze computes the **next billing date**. When that date arrives, a billing period is created, line quantities are resolved, and -- if **auto-issue** is on -- an invoice is generated automatically.
+From these, BL4CK computes the **next billing date**. When that date arrives, a billing period is created, line quantities are resolved, and -- if **auto-issue** is on -- an invoice is generated automatically.
 
 ### Contract Statuses
 
@@ -58,7 +58,7 @@ The contract list shows an **estimated monthly recurring** strip across active c
 
 ## From an Accepted Quote
 
-When a customer accepts a quote or proposal that includes recurring (monthly or annual) line items, Breeze automatically creates a **draft contract** from those recurring lines — so an accepted proposal turns straight into the agreement that bills it, with no re-keying.
+When a customer accepts a quote or proposal that includes recurring (monthly or annual) line items, BL4CK automatically creates a **draft contract** from those recurring lines — so an accepted proposal turns straight into the agreement that bills it, with no re-keying.
 
 - Monthly and annual lines are split into **separate draft contracts** (one billing cadence each).
 - The draft inherits the quote's terms, currency, and the prices the customer agreed to.
@@ -83,17 +83,17 @@ You can also **generate now** to create the current period's invoice immediately
 
 ## Auto-Renewal
 
-A contract with an **end date** can be set to renew itself automatically instead of expiring. When auto-renew is on, Breeze extends the contract's term in place before it lapses, so billing continues without a gap and you never have to recreate the agreement.
+A contract with an **end date** can be set to renew itself automatically instead of expiring. When auto-renew is on, BL4CK extends the contract's term in place before it lapses, so billing continues without a gap and you never have to recreate the agreement.
 
 To enable it, give the contract an end date, then turn on **Auto-renew at end of term** and set:
 
 - **Renewal term (months)** — how far each renewal extends the end date (for example, 12 to renew for another year).
-- **Advance notice (days)** — how many days before the end date Breeze warns you that a renewal is coming. Defaults to 30.
+- **Advance notice (days)** — how many days before the end date BL4CK warns you that a renewal is coming. Defaults to 30.
 
 On the contract's detail page, the **Renewal** summary shows the current setting (the renewal term, the current end date, and the notice lead time) or that the contract does not auto-renew.
 
 <Aside>
-  Renewal notices go to your team (the MSP), not to the customer. As a renewal approaches, the contract's organization and partner users get an **advance notice**; once Breeze extends the term, they get a **confirmation**. To stop a renewal, turn off auto-renew before the end date. (Clearing the end date also turns auto-renew off.)
+  Renewal notices go to your team (the MSP), not to the customer. As a renewal approaches, the contract's organization and partner users get an **advance notice**; once BL4CK extends the term, they get a **confirmation**. To stop a renewal, turn off auto-renew before the end date. (Clearing the end date also turns auto-renew off.)
 </Aside>
 
 ## Bulk Actions

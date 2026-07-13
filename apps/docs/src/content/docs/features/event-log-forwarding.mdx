@@ -5,10 +5,10 @@ description: Forward managed-device event logs to any Elasticsearch- or OpenSear
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Event Log Forwarding ships the event logs collected from your managed devices -- Windows Event Log entries, syslog, and application logs -- to an external log store that the customer owns and controls. Breeze's agents already gather these device logs; this feature additionally streams them outbound to the customer's own SIEM or search cluster for long-term storage, search, and analysis. The destination can be any Elasticsearch- or OpenSearch-compatible store that accepts the standard bulk-ingest protocol, and forwarding can be configured per organization or applied partner-wide across every customer at once.
+Event Log Forwarding ships the event logs collected from your managed devices -- Windows Event Log entries, syslog, and application logs -- to an external log store that the customer owns and controls. BL4CK's agents already gather these device logs; this feature additionally streams them outbound to the customer's own SIEM or search cluster for long-term storage, search, and analysis. The destination can be any Elasticsearch- or OpenSearch-compatible store that accepts the standard bulk-ingest protocol, and forwarding can be configured per organization or applied partner-wide across every customer at once.
 
 <Aside type="caution" title="Not the same as Log Shipping">
-  Event Log Forwarding is **distinct from the agent diagnostic "Log Shipping" feature**. Log Shipping sends the agent's *own internal diagnostic logs* back **to Breeze** so you can troubleshoot the agent itself. Event Log Forwarding sends the *customer's managed-device event logs* **out to the customer's own SIEM** -- never to Breeze. One answers "is the agent working?"; the other answers "what is happening on the customer's machines?".
+  Event Log Forwarding is **distinct from the agent diagnostic "Log Shipping" feature**. Log Shipping sends the agent's *own internal diagnostic logs* back **to BL4CK** so you can troubleshoot the agent itself. Event Log Forwarding sends the *customer's managed-device event logs* **out to the customer's own SIEM** -- never to BL4CK. One answers "is the agent working?"; the other answers "what is happening on the customer's machines?".
 </Aside>
 
 ---
@@ -37,7 +37,7 @@ For a destination you set:
 | Setting | Description |
 |---|---|
 | **Enable / disable** | Forwarding only runs when turned on. When enabled, logs are forwarded on a recurring schedule (not real-time per event) |
-| **Log endpoint URL** | The base URL of the compatible log store, e.g. `https://logs.example.com:9200`. Must use HTTPS -- Breeze appends the bulk path itself |
+| **Log endpoint URL** | The base URL of the compatible log store, e.g. `https://logs.example.com:9200`. Must use HTTPS -- BL4CK appends the bulk path itself |
 | **Index prefix** | Defaults to `breeze-logs`. Logs land in date-stamped indices named `<prefix>-YYYY.MM.DD` (one per day) |
 | **Authentication** | Either an **API key** or a **username / password** (basic auth) |
 
@@ -118,4 +118,4 @@ The partner has enabled centralized event log shipping and locked those fields. 
 Forwarding runs on a recurring schedule, not in real time per event. A short delay between an event occurring on a device and it appearing in the destination is expected.
 
 **Am I sending agent diagnostics to my SIEM?**
-No. Event Log Forwarding sends managed-device event logs only. The agent's own diagnostic logs are handled separately by the Log Shipping feature and are sent to Breeze, not to your SIEM.
+No. Event Log Forwarding sends managed-device event logs only. The agent's own diagnostic logs are handled separately by the Log Shipping feature and are sent to BL4CK, not to your SIEM.

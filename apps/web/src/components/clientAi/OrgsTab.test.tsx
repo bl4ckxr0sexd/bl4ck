@@ -131,7 +131,7 @@ describe('OrgsTab', () => {
   });
 
   it('shows the not-enabled notice when the admin group is dark-gated (404)', async () => {
-    fetchMock.mockResolvedValue(makeJsonResponse({ error: 'Breeze AI for Office is not enabled' }, false, 404));
+    fetchMock.mockResolvedValue(makeJsonResponse({ error: 'BL4CK AI for Office is not enabled' }, false, 404));
     render(<OrgsTab onOpenPolicy={onOpenPolicy} />);
     await waitFor(() => expect(screen.getByTestId('ai-office-not-enabled')).toBeInTheDocument());
   });

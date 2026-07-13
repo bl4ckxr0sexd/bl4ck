@@ -187,7 +187,7 @@ export default function HuntressIntegration() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [showApiSecret, setShowApiSecret] = useState(false);
   const [showWebhookSecret, setShowWebhookSecret] = useState(false);
-  // Set when Breeze generates a webhook secret for the user: copy-once banner
+  // Set when BL4CK generates a webhook secret for the user: copy-once banner
   // stays until the user saves (which clears webhookSecret) or dismisses it.
   const [generatedSecretNotice, setGeneratedSecretNotice] = useState(false);
 
@@ -309,7 +309,7 @@ export default function HuntressIntegration() {
     const mappingJson = await mappingRes.json().catch(() => ({}));
     if (!mappingRes.ok) throw new Error(readError(mappingJson, `Failed to load Huntress organizations (${mappingRes.status})`));
     const orgJson = await orgRes.json().catch(() => ({}));
-    if (!orgRes.ok) throw new Error(readError(orgJson, `Failed to load Breeze organizations (${orgRes.status})`));
+    if (!orgRes.ok) throw new Error(readError(orgJson, `Failed to load BL4CK organizations (${orgRes.status})`));
     setHuntressOrgs((mappingJson as { data?: HuntressOrgMapping[] }).data ?? []);
     setOrgOptions(
       Array.isArray((orgJson as { data?: unknown }).data)
@@ -508,7 +508,7 @@ export default function HuntressIntegration() {
         <div>
           <h1 className="text-2xl font-semibold">Huntress Integration</h1>
           <p className="text-sm text-muted-foreground">
-            Connect one partner-level Huntress account and map Huntress organizations to Breeze organizations.
+            Connect one partner-level Huntress account and map Huntress organizations to BL4CK organizations.
           </p>
         </div>
       </div>
@@ -536,7 +536,7 @@ export default function HuntressIntegration() {
       )}
       {!isPartnerView && integration && !mappedForOrg && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          This Breeze organization is not mapped to a Huntress organization yet. Switch to All orgs as a partner admin to map it.
+          This BL4CK organization is not mapped to a Huntress organization yet. Switch to All orgs as a partner admin to map it.
         </div>
       )}
 
@@ -607,7 +607,7 @@ export default function HuntressIntegration() {
             />
             <div className="md:col-span-2">
               <p className="text-xs text-muted-foreground">
-                Copy the API Key and API Secret from Huntress. Breeze formats the Basic auth credential automatically.
+                Copy the API Key and API Secret from Huntress. BL4CK formats the Basic auth credential automatically.
               </p>
               {credentialPairError && <p className="mt-1 text-xs text-red-600">{credentialPairError}</p>}
             </div>
@@ -639,7 +639,7 @@ export default function HuntressIntegration() {
                 <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                   <p className="font-medium">Copy this webhook secret now, then click Update to save it.</p>
                   <p className="mt-1">
-                    Paste the same value into Huntress&apos;s webhook configuration. After saving, Breeze stores it
+                    Paste the same value into Huntress&apos;s webhook configuration. After saving, BL4CK stores it
                     encrypted and never displays it again.
                   </p>
                   <CopyButton value={webhookSecret} label="Copy secret" className="mt-2" />
@@ -688,7 +688,7 @@ export default function HuntressIntegration() {
             <div>
               <h2 className="text-lg font-semibold">Inbound webhook (push from Huntress)</h2>
               <p className="text-sm text-muted-foreground">
-                Paste this endpoint into Huntress so it can push events to Breeze in near-real-time, instead of
+                Paste this endpoint into Huntress so it can push events to BL4CK in near-real-time, instead of
                 waiting for the next poll. Inbound webhooks require a webhook secret (above) for signature verification.
               </p>
             </div>
@@ -705,7 +705,7 @@ export default function HuntressIntegration() {
               <p className="text-sm text-muted-foreground">Resolving webhook URL…</p>
             )}
             <p className="mt-1 text-xs text-muted-foreground">
-              The <code className="font-mono">integrationId</code> query parameter tells Breeze which partner the
+              The <code className="font-mono">integrationId</code> query parameter tells BL4CK which partner the
               events belong to. Keep it in the URL.
             </p>
           </div>
@@ -802,7 +802,7 @@ export default function HuntressIntegration() {
             <div>
               <h2 className="text-lg font-semibold">Organization mapping</h2>
               <p className="text-sm text-muted-foreground">
-                Unmapped Huntress organizations stay quarantined until assigned to a Breeze organization.
+                Unmapped Huntress organizations stay quarantined until assigned to a BL4CK organization.
               </p>
             </div>
             {unmappedCount > 0 && (
@@ -821,7 +821,7 @@ export default function HuntressIntegration() {
                   type="text"
                   value={mappingSearch}
                   onChange={(event) => setMappingSearch(event.target.value)}
-                  placeholder="Search Huntress or Breeze organizations"
+                  placeholder="Search Huntress or BL4CK organizations"
                   className="h-9 w-full rounded-md border bg-background pl-9 pr-8 text-sm outline-hidden focus:ring-2 focus:ring-primary/30"
                 />
                 {mappingSearch && (
@@ -854,7 +854,7 @@ export default function HuntressIntegration() {
                   <th className="pb-2 pr-4">Huntress org</th>
                   <th className="pb-2 pr-4">Agents</th>
                   <th className="pb-2 pr-4">Incidents</th>
-                  <th className="pb-2 pr-4">Breeze organization</th>
+                  <th className="pb-2 pr-4">BL4CK organization</th>
                   <th className="pb-2">Status</th>
                 </tr>
               </thead>

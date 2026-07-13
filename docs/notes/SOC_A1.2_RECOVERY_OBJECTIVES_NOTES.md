@@ -1,4 +1,4 @@
-# SOC 2 A1.2 Recovery Objectives Notes (Breeze, DigitalOcean Plan)
+# SOC 2 A1.2 Recovery Objectives Notes (BL4CK, DigitalOcean Plan)
 
 Last updated: 2026-02-27
 
@@ -10,7 +10,7 @@ Last updated: 2026-02-27
 
 ## Objective of This Note
 
-Define a practical A1.2 approach for Breeze using **DigitalOcean built-in services/features** so recovery targets are explicit, achievable, and auditable.
+Define a practical A1.2 approach for BL4CK using **DigitalOcean built-in services/features** so recovery targets are explicit, achievable, and auditable.
 
 ## Recovery Objectives (Draft Targets)
 
@@ -29,8 +29,8 @@ Fallback objective when PITR is unavailable:
 
 In scope for A1.2 recovery objectives:
 
-- Breeze API and web services
-- Breeze worker services
+- BL4CK API and web services
+- BL4CK worker services
 - PostgreSQL
 - Redis
 - Object storage for scripts/reports/artifacts
@@ -135,4 +135,4 @@ Keep these artifacts for each audit period:
 
 ## Example A1.2 Narrative (Draft)
 
-Breeze defines and maintains recovery objectives for critical production services, including platform RTO and data RPO targets. The organization plans to meet these objectives using DigitalOcean native recovery capabilities (Droplet backups/snapshots, Managed PostgreSQL backup and point-in-time restore, Spaces data protection, and monitored service failover patterns), supported by documented recovery runbooks, assigned ownership, and periodic recovery testing with retained evidence.
+BL4CK defines and maintains recovery objectives for critical production services, including platform RTO and data RPO targets. The organization plans to meet these objectives using DigitalOcean native recovery capabilities (Droplet backups/snapshots, Managed PostgreSQL backup and point-in-time restore, Spaces data protection, and monitored service failover patterns), supported by documented recovery runbooks, assigned ownership, and periodic recovery testing with retained evidence.

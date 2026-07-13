@@ -1,6 +1,6 @@
 ---
 title: Single Sign-On (SSO)
-description: Configure OIDC and SAML identity providers for organization-level single sign-on in Breeze RMM.
+description: Configure OIDC and SAML identity providers for organization-level single sign-on in BL4CK RMM.
 sidebar:
   order: 11
   label: SSO
@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze RMM supports single sign-on through OpenID Connect (OIDC) and SAML 2.0, at both the organization and the partner level. SSO allows users to authenticate with their existing identity provider (IdP) instead of managing separate Breeze passwords. Each organization can configure one active SSO provider for its own users, and a partner (MSP) can configure a partner-owned provider for its own technicians (see [Partner-Wide SSO](#partner-wide-sso-technician-login)). Either kind of provider can optionally enforce SSO-only login to disable password-based authentication.
+BL4CK RMM supports single sign-on through OpenID Connect (OIDC) and SAML 2.0, at both the organization and the partner level. SSO allows users to authenticate with their existing identity provider (IdP) instead of managing separate BL4CK passwords. Each organization can configure one active SSO provider for its own users, and a partner (MSP) can configure a partner-owned provider for its own technicians (see [Partner-Wide SSO](#partner-wide-sso-technician-login)). Either kind of provider can optionally enforce SSO-only login to disable password-based authentication.
 
 ---
 
@@ -20,11 +20,11 @@ Breeze RMM supports single sign-on through OpenID Connect (OIDC) and SAML 2.0, a
 | **Owner scope** | A provider is owned by either an **organization** (customer SSO) or the **partner** (MSP technician SSO) — exactly one of the two, never both. |
 | **Provider type** | `oidc` (OpenID Connect) or `saml` (SAML 2.0). |
 | **Provider status** | `inactive` (default on creation), `testing`, or `active`. Only `active` providers are used for login. |
-| **Auto-provisioning** | When enabled (default), users who authenticate via SSO are automatically created in Breeze if they do not already exist. |
+| **Auto-provisioning** | When enabled (default), users who authenticate via SSO are automatically created in BL4CK if they do not already exist. |
 | **SSO enforcement** | When `enforceSSO` is `true`, password-based login is disabled for the organization. Users must authenticate through the IdP. |
 | **Allowed domains** | Comma-separated list of email domains. If set, only users with matching email domains can authenticate via SSO. |
-| **Attribute mapping** | Maps IdP claim names to Breeze user fields (`email`, `name`, `firstName`, `lastName`, `groups`). |
-| **PKCE** | Proof Key for Code Exchange. Breeze uses PKCE (S256 method) for all OIDC authorization requests to prevent authorization code interception. |
+| **Attribute mapping** | Maps IdP claim names to BL4CK user fields (`email`, `name`, `firstName`, `lastName`, `groups`). |
+| **PKCE** | Proof Key for Code Exchange. BL4CK uses PKCE (S256 method) for all OIDC authorization requests to prevent authorization code interception. |
 | **Provider presets** | Built-in configurations for common IdPs (Azure AD, Okta, Google Workspace, Auth0) that pre-fill scopes, attribute mappings, and endpoint URLs. |
 
 ---
@@ -33,7 +33,7 @@ Breeze RMM supports single sign-on through OpenID Connect (OIDC) and SAML 2.0, a
 
 ### OIDC Presets
 
-Breeze ships with built-in presets that auto-configure scopes, attribute mappings, and discovery URLs:
+BL4CK ships with built-in presets that auto-configure scopes, attribute mappings, and discovery URLs:
 
 | Preset ID | Provider | Issuer Template | Scopes |
 |-----------|----------|-----------------|--------|
@@ -64,11 +64,11 @@ curl https://breeze.yourdomain.com/api/v1/sso/presets \
 ## Setting Up OIDC
 
 <Steps>
-1. **Register Breeze in your IdP.** Create an application/client in your identity provider. Set the redirect URI to `https://breeze.yourdomain.com/api/v1/sso/callback`. Note the Client ID and Client Secret.
+1. **Register BL4CK in your IdP.** Create an application/client in your identity provider. Set the redirect URI to `https://breeze.yourdomain.com/api/v1/sso/callback`. Note the Client ID and Client Secret.
 
-2. **Create the provider in Breeze.** Use the `POST /api/v1/sso/providers` endpoint. If you specify a `preset` and an `issuer`, Breeze will auto-discover the authorization, token, userinfo, and JWKS endpoints via the `.well-known/openid-configuration` document.
+2. **Create the provider in BL4CK.** Use the `POST /api/v1/sso/providers` endpoint. If you specify a `preset` and an `issuer`, BL4CK will auto-discover the authorization, token, userinfo, and JWKS endpoints via the `.well-known/openid-configuration` document.
 
-3. **Test the configuration.** Use the `POST /api/v1/sso/providers/:id/test` endpoint to verify that Breeze can reach the IdP's discovery document.
+3. **Test the configuration.** Use the `POST /api/v1/sso/providers/:id/test` endpoint to verify that BL4CK can reach the IdP's discovery document.
 
 4. **Activate the provider.** Set the status to `active` via `POST /api/v1/sso/providers/:id/status`.
 
@@ -151,7 +151,7 @@ curl https://breeze.yourdomain.com/api/v1/sso/presets \
 
 ### OIDC Discovery
 
-When you provide an `issuer` URL and the provider type is `oidc`, Breeze automatically fetches the IdP's `.well-known/openid-configuration` document and populates:
+When you provide an `issuer` URL and the provider type is `oidc`, BL4CK automatically fetches the IdP's `.well-known/openid-configuration` document and populates:
 
 - `authorizationUrl` -- Authorization endpoint
 - `tokenUrl` -- Token endpoint
@@ -168,16 +168,16 @@ If discovery fails (for example, if the IdP does not support well-known configur
   SAML 2.0 provider types are fully modeled in the database and the SSO service includes complete SAML request/response parsing, SP metadata generation, and redirect URL building. The SAML login flow through the SSO routes currently supports OIDC. SAML integration is available at the service layer and can be activated for your deployment.
 </Aside>
 
-The Breeze SSO service provides a full SAML 2.0 toolkit:
+The BL4CK SSO service provides a full SAML 2.0 toolkit:
 
 - **SP Metadata generation** -- Produces a standards-compliant XML metadata document for your IdP.
 - **AuthnRequest building** -- Generates SAML authentication requests with configurable NameID format and ForceAuthn.
 - **Response parsing** -- Decodes and parses SAML responses, extracting NameID, SessionIndex, and attributes.
-- **Attribute mapping** -- Maps SAML attribute URIs (e.g., `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress`) to Breeze user fields.
+- **Attribute mapping** -- Maps SAML attribute URIs (e.g., `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress`) to BL4CK user fields.
 
 ### Service Provider Metadata
 
-Breeze generates SP metadata with the following values:
+BL4CK generates SP metadata with the following values:
 
 | Field | Value |
 |-------|-------|
@@ -188,9 +188,9 @@ Breeze generates SP metadata with the following values:
 
 ### SAML Attribute Mapping
 
-Breeze automatically maps common SAML attribute URIs to user fields:
+BL4CK automatically maps common SAML attribute URIs to user fields:
 
-| SAML Attribute URI | Breeze Field |
+| SAML Attribute URI | BL4CK Field |
 |--------------------|--------------|
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress` | `email` |
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name` | `name` |
@@ -211,24 +211,24 @@ The OIDC login flow follows the Authorization Code + PKCE pattern:
 <Steps>
 1. **User visits login page.** The frontend calls `GET /api/v1/sso/check/:orgId` to determine if SSO is enabled for the organization.
 2. **User clicks "Sign in with SSO".** The browser navigates to `GET /api/v1/sso/login/:orgId`.
-3. **Breeze generates PKCE challenge and state.** A cryptographic `state`, `nonce`, and PKCE `codeVerifier`/`codeChallenge` pair are generated. The PKCE verifier, nonce, and redirect path are stored server-side in the `sso_sessions` table (10-minute TTL); the `state` is additionally bound to the initiating browser via a signed, HttpOnly cookie (`breeze_sso_state`, `SameSite=Lax`, `Secure` in production, scoped to the callback path, 10-minute Max-Age). The cookie carries an HMAC-SHA256 signature of the state (keyed on `APP_ENCRYPTION_KEY`/`SECRET_ENCRYPTION_KEY`, distinct from the JWT secret).
-4. **Redirect to IdP.** Breeze redirects the user to the IdP's authorization endpoint with the PKCE challenge, state, nonce, and redirect URI.
+3. **BL4CK generates PKCE challenge and state.** A cryptographic `state`, `nonce`, and PKCE `codeVerifier`/`codeChallenge` pair are generated. The PKCE verifier, nonce, and redirect path are stored server-side in the `sso_sessions` table (10-minute TTL); the `state` is additionally bound to the initiating browser via a signed, HttpOnly cookie (`breeze_sso_state`, `SameSite=Lax`, `Secure` in production, scoped to the callback path, 10-minute Max-Age). The cookie carries an HMAC-SHA256 signature of the state (keyed on `APP_ENCRYPTION_KEY`/`SECRET_ENCRYPTION_KEY`, distinct from the JWT secret).
+4. **Redirect to IdP.** BL4CK redirects the user to the IdP's authorization endpoint with the PKCE challenge, state, nonce, and redirect URI.
 5. **User authenticates at IdP.** The user signs in at the identity provider.
 6. **IdP redirects back.** The IdP redirects to `GET /api/v1/sso/callback` with an authorization `code` and `state` parameter.
-7. **Breeze validates the browser binding, then claims the state.** The `state` returned by the IdP is verified against the `breeze_sso_state` cookie using a constant-time comparison (`crypto.timingSafeEqual`) before anything else runs — a callback that did not originate from the same browser that started the flow is rejected. Only after the binding check does Breeze atomically consume the session row (`DELETE ... RETURNING` on a matching, non-expired `state`), which makes each state strictly single-use and immune to replay.
-8. **Code exchange.** Breeze exchanges the authorization code for tokens at the IdP's token endpoint, including the PKCE `codeVerifier`.
-9. **ID token verification.** If an ID token is returned, Breeze verifies the issuer, audience, expiration, and nonce claims.
-10. **User info retrieval.** Breeze calls the IdP's UserInfo endpoint to get the user's profile.
-11. **Attribute mapping.** The IdP's claims are mapped to Breeze user fields using the configured `attributeMapping`.
+7. **BL4CK validates the browser binding, then claims the state.** The `state` returned by the IdP is verified against the `breeze_sso_state` cookie using a constant-time comparison (`crypto.timingSafeEqual`) before anything else runs — a callback that did not originate from the same browser that started the flow is rejected. Only after the binding check does BL4CK atomically consume the session row (`DELETE ... RETURNING` on a matching, non-expired `state`), which makes each state strictly single-use and immune to replay.
+8. **Code exchange.** BL4CK exchanges the authorization code for tokens at the IdP's token endpoint, including the PKCE `codeVerifier`.
+9. **ID token verification.** If an ID token is returned, BL4CK verifies the issuer, audience, expiration, and nonce claims.
+10. **User info retrieval.** BL4CK calls the IdP's UserInfo endpoint to get the user's profile.
+11. **Attribute mapping.** The IdP's claims are mapped to BL4CK user fields using the configured `attributeMapping`.
 12. **Domain check.** If `allowedDomains` is set, the user's email domain is validated.
-13. **User provisioning.** If the user does not exist and `autoProvision` is enabled, a new Breeze user is created and assigned to the organization with the provider's `defaultRoleId`.
-14. **Session creation.** Breeze creates a JWT token pair (access + refresh) and a session record.
+13. **User provisioning.** If the user does not exist and `autoProvision` is enabled, a new BL4CK user is created and assigned to the organization with the provider's `defaultRoleId`.
+14. **Session creation.** BL4CK creates a JWT token pair (access + refresh) and a session record.
 15. **Redirect to app.** The user is redirected to the original page with a short-lived token exchange code in the URL fragment (`#ssoCode=...`).
 16. **Token exchange.** The frontend calls `POST /api/v1/sso/exchange` with the code to receive the JWT tokens.
 </Steps>
 
 ```
-Browser          Breeze API          Identity Provider
+Browser          BL4CK API          Identity Provider
   │                  │                      │
   │── GET /sso/login/:orgId ──►│            │
   │                  │── Generate PKCE ──►  │
@@ -271,8 +271,8 @@ Browser          Breeze API          Identity Provider
 | `clientId` | `string` | No | -- | OAuth 2.0 Client ID. |
 | `clientSecret` | `string` | No | -- | OAuth 2.0 Client Secret. Encrypted at rest. |
 | `scopes` | `string` | No | From preset or `openid profile email` | Space-separated OAuth scopes. |
-| `attributeMapping` | `object` | No | From preset or `{ email: "email", name: "name" }` | Maps IdP claims to Breeze fields. |
-| `autoProvision` | `boolean` | No | `true` | Create Breeze users on first SSO login. |
+| `attributeMapping` | `object` | No | From preset or `{ email: "email", name: "name" }` | Maps IdP claims to BL4CK fields. |
+| `autoProvision` | `boolean` | No | `true` | Create BL4CK users on first SSO login. |
 | `defaultRoleId` | `uuid` | No | -- | Role assigned to auto-provisioned users. Must be an org-scoped role in the target org (or, for partner providers, a partner-scoped role belonging to your partner). |
 | `allowedDomains` | `string` | No | -- | Comma-separated email domains. Empty means all domains are allowed. |
 | `enforceSSO` | `boolean` | No | `false` | Disable password login for the organization. |
@@ -307,13 +307,13 @@ Browser          Breeze API          Identity Provider
 
 ## Account Mapping and Provisioning
 
-When a user authenticates via SSO, Breeze follows this logic:
+When a user authenticates via SSO, BL4CK follows this logic:
 
 <Steps>
-1. **Email lookup.** The mapped `email` attribute is used to find an existing Breeze user (case-insensitive).
+1. **Email lookup.** The mapped `email` attribute is used to find an existing BL4CK user (case-insensitive).
 2. **Existing user found.** The user's SSO identity link (`user_sso_identities` table) is created or updated with the latest profile, tokens, and login timestamp. The user is logged in.
-3. **No existing user + auto-provision disabled.** The login is rejected with a "user not found" error. An administrator must create the Breeze account first.
-4. **No existing user + auto-provision enabled.** A new Breeze user is created with the mapped email and name. The user is added to the organization with the provider's `defaultRoleId`. SSO-provisioned users have no password set.
+3. **No existing user + auto-provision disabled.** The login is rejected with a "user not found" error. An administrator must create the BL4CK account first.
+4. **No existing user + auto-provision enabled.** A new BL4CK user is created with the mapped email and name. The user is added to the organization with the provider's `defaultRoleId`. SSO-provisioned users have no password set.
 5. **Organization membership check.** The user must have an `organization_users` record for the provider's organization. If not, the login is rejected with "no org access".
 </Steps>
 
@@ -372,7 +372,7 @@ If more than one partner provider is active, the button deterministically target
 
 ### Identity-First Sign-In (No Auto-Provisioning)
 
-Partner-axis sign-in is **identity-first** and never provisions accounts. An IdP identity that Breeze does not recognize is rejected and told to request an invite from an administrator — unlike organization providers, there is no just-in-time user creation on the partner axis. Technician accounts must exist (via invite) before they can sign in with SSO.
+Partner-axis sign-in is **identity-first** and never provisions accounts. An IdP identity that BL4CK does not recognize is rejected and told to request an invite from an administrator — unlike organization providers, there is no just-in-time user creation on the partner axis. Technician accounts must exist (via invite) before they can sign in with SSO.
 
 A partner provider's `defaultRoleId`, when set, must be a **partner-scoped role** belonging to your partner.
 
@@ -404,14 +404,14 @@ Login branding renders under the same rule as the partner SSO button: only on se
 
 ## Linking Your SSO Identity
 
-Users can link an SSO identity to their existing Breeze account themselves, from **Settings → Profile → Connect SSO**. Linking runs the normal sign-in round trip at the IdP and then attaches the resulting identity to the signed-in account, so future SSO logins match by identity rather than email.
+Users can link an SSO identity to their existing BL4CK account themselves, from **Settings → Profile → Connect SSO**. Linking runs the normal sign-in round trip at the IdP and then attaches the resulting identity to the signed-in account, so future SSO logins match by identity rather than email.
 
 If linking fails, the profile page surfaces one of these errors:
 
 | Error | Meaning |
 |-------|---------|
-| `email_mismatch` | The email asserted by the IdP does not match your Breeze account's email. |
-| `identity_in_use` | This IdP identity is already linked to a different Breeze user. |
+| `email_mismatch` | The email asserted by the IdP does not match your BL4CK account's email. |
+| `identity_in_use` | This IdP identity is already linked to a different BL4CK user. |
 | `user_gone` | Your account was removed while the linking flow was in progress. |
 
 ---
@@ -439,7 +439,7 @@ If linking fails, the profile page surfaces one of these errors:
 | `entity_id` | `varchar(500)` | SAML Entity ID. |
 | `sso_url` | `varchar(500)` | SAML SSO URL. |
 | `certificate` | `text` | SAML signing certificate. |
-| `attribute_mapping` | `jsonb` | Maps IdP claims to Breeze fields. |
+| `attribute_mapping` | `jsonb` | Maps IdP claims to BL4CK fields. |
 | `auto_provision` | `boolean` | Auto-create users. Default: `true`. |
 | `default_role_id` | `uuid` | Role for auto-provisioned users. |
 | `allowed_domains` | `varchar(1000)` | Comma-separated allowed email domains. |
@@ -453,7 +453,7 @@ If linking fails, the profile page surfaces one of these errors:
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | `uuid` | Primary key. |
-| `user_id` | `uuid` | Breeze user (foreign key). |
+| `user_id` | `uuid` | BL4CK user (foreign key). |
 | `provider_id` | `uuid` | SSO provider (foreign key). |
 | `external_id` | `varchar(255)` | User's `sub` claim from the IdP. |
 | `email` | `varchar(255)` | Email from the IdP. |
@@ -545,7 +545,7 @@ SSO operations are recorded in the audit log:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PUBLIC_URL` or `PUBLIC_APP_URL` or `DASHBOARD_URL` | Yes (one of) | Base URL of the Breeze dashboard. Used to construct the SSO callback URI (`{base}/api/v1/sso/callback`). Falls back to `http://localhost:3000`. |
+| `PUBLIC_URL` or `PUBLIC_APP_URL` or `DASHBOARD_URL` | Yes (one of) | Base URL of the BL4CK dashboard. Used to construct the SSO callback URI (`{base}/api/v1/sso/callback`). Falls back to `http://localhost:3000`. |
 | `SECRET_ENCRYPTION_KEY` or `APP_ENCRYPTION_KEY` | Yes | Used to encrypt/decrypt the `clientSecret` at rest. |
 
 ---
@@ -564,14 +564,14 @@ The provider is missing one or more of `clientId`, `clientSecret`, or `issuer`. 
 
 ### "OIDC discovery failed"
 
-Breeze could not fetch the `.well-known/openid-configuration` document from the issuer URL. Check that:
-- The issuer URL is correct and reachable from the Breeze API server.
+BL4CK could not fetch the `.well-known/openid-configuration` document from the issuer URL. Check that:
+- The issuer URL is correct and reachable from the BL4CK API server.
 - The IdP's discovery endpoint returns a valid JSON document.
 - No firewall or proxy is blocking the connection.
 
 ### "session_expired" redirect
 
-The SSO session (state parameter) has expired, or the callback could not be matched to the browser that started the flow. SSO sessions are valid for 10 minutes, and the `breeze_sso_state` cookie that binds the flow to the originating browser shares that lifetime. The user should retry the login flow in the same browser. If this happens frequently, check for clock skew between the Breeze server and the IdP, and confirm the browser is not stripping the `SameSite=Lax` callback cookie (for example, when the IdP redirect crosses an unexpected origin).
+The SSO session (state parameter) has expired, or the callback could not be matched to the browser that started the flow. SSO sessions are valid for 10 minutes, and the `breeze_sso_state` cookie that binds the flow to the originating browser shares that lifetime. The user should retry the login flow in the same browser. If this happens frequently, check for clock skew between the BL4CK server and the IdP, and confirm the browser is not stripping the `SameSite=Lax` callback cookie (for example, when the IdP redirect crosses an unexpected origin).
 
 ### "domain_not_allowed" redirect
 
@@ -579,7 +579,7 @@ The user's email domain is not in the provider's `allowedDomains` list. Update t
 
 ### "user_not_found" redirect
 
-The user does not exist in Breeze and `autoProvision` is disabled on the provider. Either:
+The user does not exist in BL4CK and `autoProvision` is disabled on the provider. Either:
 - Enable auto-provisioning on the provider (`autoProvision: true`).
 - Create the user account manually before they attempt SSO login.
 
@@ -589,7 +589,7 @@ Auto-provisioning is enabled but no `defaultRoleId` is configured on the provide
 
 ### "no_org_access" redirect
 
-The user exists in Breeze but does not have an `organization_users` record for the provider's organization. Add the user to the organization or enable auto-provisioning with a `defaultRoleId`.
+The user exists in BL4CK but does not have an `organization_users` record for the provider's organization. Add the user to the organization or enable auto-provisioning with a `defaultRoleId`.
 
 ### "Invalid or expired token exchange code" (400)
 
@@ -602,8 +602,8 @@ The user should retry the SSO login flow.
 
 ### SSO callback redirects to `/login?error=sso_error`
 
-An unhandled error occurred during the callback. Check the Breeze API server logs for the full error message. Common causes include:
-- Network connectivity issues between Breeze and the IdP's token endpoint.
-- Mismatched `clientSecret` (the secret in the IdP does not match what was configured in Breeze).
+An unhandled error occurred during the callback. Check the BL4CK API server logs for the full error message. Common causes include:
+- Network connectivity issues between BL4CK and the IdP's token endpoint.
+- Mismatched `clientSecret` (the secret in the IdP does not match what was configured in BL4CK).
 - ID token verification failure (wrong issuer, audience, or expired token).
 - Nonce mismatch (indicates a replay attack or stale session).

@@ -1,19 +1,19 @@
 ---
-title: Breeze Helper
+title: BL4CK Helper
 description: System tray application providing end-user AI chat, vision-based troubleshooting, and self-service tools.
 sidebar:
   order: 5
-  label: Breeze Helper
+  label: BL4CK Helper
 ---
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Breeze Helper is a companion application that runs in the end user's desktop session alongside the Breeze agent service. It provides a system tray icon with status indicators, an AI-powered chat interface for self-service troubleshooting, vision-based screen analysis, and computer control capabilities. The Helper bridges the gap between the background agent service (which runs as SYSTEM/root in Session 0) and the interactive user session where display, input, and notification APIs are available.
+The BL4CK Helper is a companion application that runs in the end user's desktop session alongside the BL4CK agent service. It provides a system tray icon with status indicators, an AI-powered chat interface for self-service troubleshooting, vision-based screen analysis, and computer control capabilities. The Helper bridges the gap between the background agent service (which runs as SYSTEM/root in Session 0) and the interactive user session where display, input, and notification APIs are available.
 
 The Helper is designed for **end users**, not IT administrators. It speaks in simple, non-technical language and uses a filtered subset of AI tools appropriate for the permission level configured by the organization. Destructive operations always require explicit approval before they reach the device.
 
 <Aside>
-  The Helper requires the Breeze agent to be enrolled and connected. It authenticates to the API using the agent's `brz_` token and communicates with the agent service over a local IPC socket.
+  The Helper requires the BL4CK agent to be enrolled and connected. It authenticates to the API using the agent's `brz_` token and communicates with the agent service over a local IPC socket.
 </Aside>
 
 ---
@@ -46,7 +46,7 @@ The Helper can be deployed automatically via config policy or installed manually
 <Tabs>
   <TabItem label="Windows">
 
-The Helper is spawned automatically by the Breeze agent service when a user logs in. The session broker (`sessionbroker/spawner_windows.go`) detects active user sessions and launches the Helper process using `CreateProcessAsUser` with a SYSTEM token, targeting the user's desktop session ID.
+The Helper is spawned automatically by the BL4CK agent service when a user logs in. The session broker (`sessionbroker/spawner_windows.go`) detects active user sessions and launches the Helper process using `CreateProcessAsUser` with a SYSTEM token, targeting the user's desktop session ID.
 
 No manual installation is required. The Helper binary is bundled with the agent installer.
 
@@ -131,7 +131,7 @@ The Helper provides a conversational AI interface for end users. Chat sessions a
 
 <Steps>
 
-1. Click the Breeze tray icon and select **Chat** (or open the Helper window).
+1. Click the BL4CK tray icon and select **Chat** (or open the Helper window).
 
 2. The Helper authenticates to the API using the agent's bearer token and creates a new AI session.
 

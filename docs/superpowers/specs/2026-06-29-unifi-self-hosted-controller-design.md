@@ -52,9 +52,9 @@ The agent enumerates the controller's local sites so the UI has something to map
 - Tenancy shape: scoped through `collector_id → integration → partner`. Add to `PARTNER_TENANT_TABLES` (or the appropriate shape) in `rls-coverage.integration.test.ts` with policies created in the same migration. (See CLAUDE.md RLS workflow.)
 
 ### `unifi_site_mappings`
-- Today keyed on cloud `unifi_host_id` + `unifi_site_id` → Breeze `site_id`. Extend so that when `unifi_host_id` is null, the mapping keys on `(collector_id, local_site_id) → site_id`.
+- Today keyed on cloud `unifi_host_id` + `unifi_site_id` → BL4CK `site_id`. Extend so that when `unifi_host_id` is null, the mapping keys on `(collector_id, local_site_id) → site_id`.
 - Add nullable `collector_id` and `local_site_id` columns; a `CHECK` enforces exactly one of {cloud host/site pair, self-hosted collector/local-site pair} is populated.
-- Mapping a local site to a Breeze site **auto-assigns the org** (site → org), which is the mechanism that lets one MSP controller cleanly span many customers.
+- Mapping a local site to a BL4CK site **auto-assigns the org** (site → org), which is the mechanism that lets one MSP controller cleanly span many customers.
 
 ## Agent changes (`agent/internal/unifi`)
 
@@ -82,7 +82,7 @@ Ingest must continue to enforce that the posting agent owns the collector — `g
 
 - **Connect step** gains a choice: **Cloud (Site Manager API key)** vs **Self-hosted controller**.
 - **Self-hosted flow:** register a controller (Controller URL, Collector agent dropdown, Local API key — no cloud key). The agent's discovered sites then populate the mapping card.
-- **Mapping card:** same UX as cloud, but sourced from `unifi_controller_sites` (agent-discovered) instead of cloud `/v1/sites`. Map each local site → Breeze site (→ org).
+- **Mapping card:** same UX as cloud, but sourced from `unifi_controller_sites` (agent-discovered) instead of cloud `/v1/sites`. Map each local site → BL4CK site (→ org).
 - For self-hosted, deep telemetry is **inherent**, not a separately gated card. The existing `hosts.length > 0` gate (`UnifiIntegration.tsx:712`) is replaced by a connection-type-aware condition.
 
 ## Tenancy / security

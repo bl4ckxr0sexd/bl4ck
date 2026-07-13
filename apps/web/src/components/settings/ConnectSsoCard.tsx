@@ -8,8 +8,8 @@ type LinkOption = { id: string; name: string; type: string; linked: boolean };
 // (`/settings/profile?ssoLinkError=<reason>`).
 const LINK_ERROR_COPY: Record<string, string> = {
   email_mismatch:
-    'That identity provider account uses a different email than your Breeze account. Sign in to your provider with the email on your Breeze account and try again.',
-  identity_in_use: 'That identity provider account is already linked to a different Breeze user.',
+    'That identity provider account uses a different email than your BL4CK account. Sign in to your provider with the email on your BL4CK account and try again.',
+  identity_in_use: 'That identity provider account is already linked to a different BL4CK user.',
   user_gone: 'Your account could not be found. Please sign in again.'
 };
 

@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-SLA Management lets you define recovery objectives for your backup-protected devices and automatically alerts you when those objectives aren't met. Set RPO (how much data loss you can tolerate) and RTO (how quickly you need to recover) targets, then let Breeze monitor compliance.
+SLA Management lets you define recovery objectives for your backup-protected devices and automatically alerts you when those objectives aren't met. Set RPO (how much data loss you can tolerate) and RTO (how quickly you need to recover) targets, then let BL4CK monitor compliance.
 
 ---
 
@@ -66,7 +66,7 @@ A chronological list of SLA events:
 
 ## How Breach Detection Works
 
-Breeze continuously monitors backup activity against your SLA policies:
+BL4CK continuously monitors backup activity against your SLA policies:
 
 1. **RPO check** — compares the time since the last completed backup to the RPO target. If more time has passed than the target allows, an RPO breach event is created.
 2. **RTO check** — measures actual restore times from test restores and verification runs. If the measured time exceeds the RTO target, an RTO breach is recorded.

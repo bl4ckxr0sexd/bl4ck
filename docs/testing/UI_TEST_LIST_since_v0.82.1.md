@@ -69,7 +69,7 @@ visible UI feedback = FAIL.
 36. **#1761 PAM rule matching cluster** — PAM rule editor: command-line match, negation, default-unmatched verdict.
 37. **#1752 UAC elevation → mobile approval** — (cross-surface) elevation request appears on mobile approval surface. *(Likely PARTIAL/BLOCKED — needs mobile + live elevation.)*
 38. **#1694 Remote session consent & notification** — start remote session → end-user consent prompt config.
-39. **#1863/#1864 Breeze Assist tab** — device → Breeze Assist: tray toggles shown when deploy off; badge honest.
+39. **#1863/#1864 BL4CK Assist tab** — device → BL4CK Assist: tray toggles shown when deploy off; badge honest.
 
 ## P1 — Tickets / Scripts / Config Policy
 

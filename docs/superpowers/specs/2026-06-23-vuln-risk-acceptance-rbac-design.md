@@ -42,7 +42,7 @@ so co-sign is a separate 1–2 week feature with its own spec.
 | Reopen gating | **Same new permission** as accept-risk | Reopen un-waives a finding (clears `acceptedBy`/`acceptedUntil`) — it is the reversal of the privileged act, so the same approver owns both. Mental model: "managing risk-acceptance = one permission." |
 | Mitigate gating | **Unchanged** (`devices:write`) | Mitigate asserts a compensating control is in place (technician work) and is reversible via the now-gated reopen. Accept-risk is the formal waiver. |
 | Dual-control | **Deferred** | Biggest governance win is the RBAC gate; co-sign is a separate feature (no existing machinery). |
-| Approver role | **Both scopes, minimal perms** | Breeze serves internal-IT (org) and MSPs (partner). The accept-risk route already accepts org + partner + system callers. |
+| Approver role | **Both scopes, minimal perms** | BL4CK serves internal-IT (org) and MSPs (partner). The accept-risk route already accepts org + partner + system callers. |
 
 ## Architecture
 

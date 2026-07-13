@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze RMM provides two distinct key types for different purposes:
+BL4CK RMM provides two distinct key types for different purposes:
 
 - **API Keys** grant programmatic access to the REST API for automation, integrations, and scripting.
 - **Enrollment Keys** are short-lived tokens used to onboard new agents into a specific organization and (optionally) site.
@@ -19,7 +19,7 @@ Both key types are organization-scoped and require appropriate permissions to ma
 
 ## API Keys
 
-API keys allow external systems to authenticate against the Breeze API without a user session. Each key is tied to a single organization and can be scoped to restrict which operations it may perform.
+API keys allow external systems to authenticate against the BL4CK API without a user session. Each key is tied to a single organization and can be scoped to restrict which operations it may perform.
 
 ### Key Format
 
@@ -235,7 +235,7 @@ curl -X DELETE https://breeze.yourdomain.com/api/v1/enrollment-keys/KEY_UUID \
 
 ## Multi-Tenant Access Control
 
-Both key types enforce the Breeze multi-tenant hierarchy:
+Both key types enforce the BL4CK multi-tenant hierarchy:
 
 | Scope | API Keys | Enrollment Keys |
 |-------|----------|-----------------|

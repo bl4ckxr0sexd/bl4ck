@@ -39,7 +39,7 @@ describe('ConsentForm', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(interactionFixture()));
     render(<ConsentForm uid="uid-1" />);
 
-    expect(await screen.findByText(/Claude wants to access your Breeze tenant/)).toBeTruthy();
+    expect(await screen.findByText(/Claude wants to access your BL4CK tenant/)).toBeTruthy();
     expect(screen.getByText(/Read your fleet data/)).toBeTruthy();
     expect(screen.getByText(/Make non-destructive changes/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
@@ -53,7 +53,7 @@ describe('ConsentForm', () => {
     // Heading is the human-readable client_name; the opaque client_id is
     // surfaced underneath so reviewers can still verify which OAuth client
     // is asking — important because client_name is operator-supplied.
-    expect(await screen.findByText(/Claude wants to access your Breeze tenant/)).toBeTruthy();
+    expect(await screen.findByText(/Claude wants to access your BL4CK tenant/)).toBeTruthy();
     expect(screen.getByText(/Client ID: client_abc/)).toBeTruthy();
   });
 
@@ -65,7 +65,7 @@ describe('ConsentForm', () => {
       }),
     );
     render(<ConsentForm uid="uid-1" />);
-    expect(await screen.findByText(/client_abc wants to access your Breeze tenant/)).toBeTruthy();
+    expect(await screen.findByText(/client_abc wants to access your BL4CK tenant/)).toBeTruthy();
     expect(screen.queryByText(/Client ID:/)).toBeNull();
   });
 
@@ -229,7 +229,7 @@ describe('ConsentForm', () => {
       // Successful load should clear the marker so future flows start fresh.
       fetchMock.mockResolvedValueOnce(jsonResponse(interactionFixture()));
       const second = render(<ConsentForm uid="uid-1" />);
-      await screen.findByText(/Claude wants to access your Breeze tenant/);
+      await screen.findByText(/Claude wants to access your BL4CK tenant/);
       second.unmount();
 
       // Verify the marker is gone — a subsequent 401 should redirect (not hard-stop).

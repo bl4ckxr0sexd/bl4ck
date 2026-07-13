@@ -219,7 +219,7 @@ export default function GoogleWorkspaceIntegration() {
       <div className="rounded-xl border bg-card p-6 shadow-xs">
         <h2 className="text-lg font-semibold">Connection</h2>
         <p className="mb-4 text-sm text-muted-foreground">
-          Paste the service-account JSON key and the super-admin it impersonates. Breeze makes a live
+          Paste the service-account JSON key and the super-admin it impersonates. BL4CK makes a live
           Directory API call to verify domain-wide delegation before saving.
           {!isConnected && ' Saving requires MFA verification.'}
         </p>

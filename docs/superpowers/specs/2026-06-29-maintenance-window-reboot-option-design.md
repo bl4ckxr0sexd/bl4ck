@@ -23,7 +23,7 @@ reboot (`shutdown -r +15`) with a wall warning to logged-in users.
 - A per-policy boolean toggle on the maintenance feature: reboot devices that
   have a pending reboot during the window.
 - Independent of patching — fires for **any** pending reboot, not only reboots
-  produced by a Breeze patch job.
+  produced by a BL4CK patch job.
 - Warn logged-in users before rebooting (reuse existing mechanism).
 - Support **Windows and Linux**. macOS is out of scope (the agent cannot detect
   a pending reboot on macOS — it always reports `false`).

@@ -1,4 +1,4 @@
-# Breeze AI for Office — Plan 2: Session Loop (routes, SDK wiring, tool round-trip)
+# BL4CK AI for Office — Plan 2: Session Loop (routes, SDK wiring, tool round-trip)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -3468,7 +3468,7 @@ clientAiSessionRoutes.post(
       return dlpBlockedResponse(c, auth, sessionId, textResult.blockReason);
     }
 
-    // ── workbookContext cells leave Breeze for the provider too — same chokepoint ──
+    // ── workbookContext cells leave BL4CK for the provider too — same chokepoint ──
     const redactions: DlpRedactionEvent[] = [...textResult.redactions];
     const wb = body.workbookContext;
     let contextCells: unknown[][] | undefined;

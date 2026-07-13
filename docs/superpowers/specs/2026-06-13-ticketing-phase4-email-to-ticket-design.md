@@ -139,7 +139,7 @@ All matching/resolution happens through **`resolvePartnerByRecipient(recipient) 
 
 ## 6. Security & Multi-Tenant Isolation
 
-**Why this section is load-bearing:** inbound email is untrusted external input arriving on a path with **no session/JWT**, so the request-context RLS scoping the rest of Breeze relies on does not apply automatically. The worker runs under `withSystemDbAccessContext` (matching the shipped `ticketSlaWorker` / `ticketNotifyWorker` precedent), which **bypasses RLS** — so isolation here is **app-enforced**, not RLS-enforced, and the app-level checks below are therefore mandatory, not best-effort.
+**Why this section is load-bearing:** inbound email is untrusted external input arriving on a path with **no session/JWT**, so the request-context RLS scoping the rest of BL4CK relies on does not apply automatically. The worker runs under `withSystemDbAccessContext` (matching the shipped `ticketSlaWorker` / `ticketNotifyWorker` precedent), which **bypasses RLS** — so isolation here is **app-enforced**, not RLS-enforced, and the app-level checks below are therefore mandatory, not best-effort.
 
 - **Webhook edge:** HMAC-verified, no session auth, rate-limited (reuse the existing rate-limit helper). Raw body read before parsing for signature stability in Hono.
 - **Tenant identity from recipient only:** partner is established solely by `resolvePartnerByRecipient` (§4); all sender-supplied data (`From`, `In-Reply-To`, `References`, subject token) is untrusted and used only *within* the already-resolved partner. No partner/org is ever inferred from sender data.

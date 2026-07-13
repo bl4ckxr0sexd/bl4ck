@@ -8,7 +8,7 @@ Reviewer mode: `security-best-practices`
 
 ## Executive Summary
 
-I reviewed the current Breeze codebase with a security focus on authentication, authorization, remote-control flows, token handling, and externally reachable endpoints in the Node/TypeScript API, Astro/React web app, and supporting Go agent paths that materially affect the web/API trust boundary.
+I reviewed the current BL4CK codebase with a security focus on authentication, authorization, remote-control flows, token handling, and externally reachable endpoints in the Node/TypeScript API, Astro/React web app, and supporting Go agent paths that materially affect the web/API trust boundary.
 
 The first remediation pass fixed the original four findings around `dev/push`, browser token persistence, desktop viewer token scoping, and MFA setup verification. Subsequent remediation passes also fixed the agent WebSocket orphaned-result trust issue, helper output sanitization/scope enforcement gaps, and several adjacent API authorization inconsistencies in deployment, software, script-library, sensitive-data, and monitoring routes.
 
@@ -67,7 +67,7 @@ Evidence:
 - `fetchWithAuth()` then reads that access token and places it in the `Authorization` header for API requests.
 
 Impact:
-- Any XSS in the Breeze web origin, or a malicious browser extension with page access, can exfiltrate a live bearer token and replay API calls as the user. Because the app already uses an HttpOnly refresh-cookie flow, persisting the access token increases blast radius without being strictly necessary.
+- Any XSS in the BL4CK web origin, or a malicious browser extension with page access, can exfiltrate a live bearer token and replay API calls as the user. Because the app already uses an HttpOnly refresh-cookie flow, persisting the access token increases blast radius without being strictly necessary.
 
 Fix:
 - Keep access tokens in memory only and rely on the existing refresh-cookie flow to restore them after page reload.
@@ -92,7 +92,7 @@ Evidence:
 - `/desktop-ws/connect/exchange` converts that payload directly into a fresh access token via `createAccessToken(codeRecord.tokenPayload)`.
 
 Impact:
-- Any process that obtains a valid desktop connect code can exchange it for a general Breeze API bearer token with the user's normal scope, rather than a token restricted to the remote-viewer flow. That unnecessarily widens the consequences of deep-link interception or compromise of the local viewer app.
+- Any process that obtains a valid desktop connect code can exchange it for a general BL4CK API bearer token with the user's normal scope, rather than a token restricted to the remote-viewer flow. That unnecessarily widens the consequences of deep-link interception or compromise of the local viewer app.
 
 Fix:
 - Mint a dedicated viewer/session token with a separate audience or token type, scoped to the specific remote session and limited to desktop-viewer endpoints only.

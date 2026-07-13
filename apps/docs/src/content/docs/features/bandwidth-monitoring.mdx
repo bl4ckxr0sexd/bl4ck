@@ -5,7 +5,7 @@ description: Per-interface network bandwidth tracking with historical data, util
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Bandwidth Monitoring tracks network throughput on every physical and virtual interface of your managed devices. The Breeze agent collects per-interface byte counters on each heartbeat, computes delta-based rates (bytes per second in and out), and reports both aggregate and per-interface statistics to the API. Historical bandwidth data is stored in the `device_metrics` table alongside CPU, RAM, and disk metrics, enabling long-term trending, capacity planning, and threshold-based alerting.
+Bandwidth Monitoring tracks network throughput on every physical and virtual interface of your managed devices. The BL4CK agent collects per-interface byte counters on each heartbeat, computes delta-based rates (bytes per second in and out), and reports both aggregate and per-interface statistics to the API. Historical bandwidth data is stored in the `device_metrics` table alongside CPU, RAM, and disk metrics, enabling long-term trending, capacity planning, and threshold-based alerting.
 
 Bandwidth data is collected automatically -- no additional configuration is required. As soon as a device enrolls and begins sending heartbeats, its network interfaces are tracked. The agent filters out loopback, container, and bridge interfaces so that only meaningful physical and virtual adapters appear in the data.
 
@@ -186,7 +186,7 @@ You can override the interval using the `interval` query parameter (`1m`, `5m`, 
 
 ## Alerting
 
-Bandwidth metrics can be used with Breeze alert rules to notify you when throughput crosses a threshold. Common alerting scenarios include:
+Bandwidth metrics can be used with BL4CK alert rules to notify you when throughput crosses a threshold. Common alerting scenarios include:
 
 ### Bandwidth threshold alerts
 

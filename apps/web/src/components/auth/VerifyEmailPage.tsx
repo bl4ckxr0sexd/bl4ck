@@ -29,7 +29,7 @@ const ERROR_COPY: Record<
     body: 'Please use the most recent verification email — the older link is no longer valid.',
   },
   network: {
-    title: 'We couldn’t reach Breeze',
+    title: 'We couldn’t reach BL4CK',
     body: 'Check your connection and try the link again.',
   },
   unknown: {
@@ -113,8 +113,8 @@ export default function VerifyEmailPage() {
           <h2 className="text-lg font-semibold">Email verified</h2>
           <p className="text-sm text-muted-foreground">
             {state.autoActivated
-              ? 'Your account is now active. You can sign in to start using Breeze.'
-              : 'Thanks for confirming your email. You can close this tab and return to Breeze.'}
+              ? 'Your account is now active. You can sign in to start using BL4CK.'
+              : 'Thanks for confirming your email. You can close this tab and return to BL4CK.'}
           </p>
         </div>
         <a

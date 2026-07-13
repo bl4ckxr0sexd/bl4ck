@@ -4,7 +4,7 @@
 IT technicians managing fleets of endpoints (primary), IT managers reviewing dashboards (secondary). Techs are often multi-tasking across monitors, triaging alerts, running scripts, remoting into machines. They need information density without overwhelm. Managers need quick status reads.
 
 ### Brand Personality
-**Fast, reliable, approachable.** Breeze should feel like a calm control center — not frantic, not sterile. Confidence-inspiring without being corporate or cold. The name "Breeze" implies effortlessness.
+**Fast, reliable, approachable.** BL4CK should feel like a calm control center — not frantic, not sterile. Confidence-inspiring without being corporate or cold. The name "BL4CK" implies effortlessness.
 
 ### Aesthetic Direction
 - **Tone**: Business/professional with warmth. Think: competent colleague, not enterprise software.

@@ -278,7 +278,7 @@ export default function PSAConnectionWizard() {
               <table className="min-w-full divide-y text-sm">
                 <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                   <tr>
-                    <th className="px-4 py-3 text-left font-semibold">Breeze field</th>
+                    <th className="px-4 py-3 text-left font-semibold">BL4CK field</th>
                     <th className="px-4 py-3 text-left font-semibold">PSA field</th>
                     <th className="px-4 py-3 text-left font-semibold">Default</th>
                   </tr>

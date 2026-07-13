@@ -296,7 +296,7 @@ export default function ConnectDesktopButton({ deviceId, className = '', compact
 
         setStatus('launching');
 
-        // Try to hand off to the Breeze Viewer first
+        // Try to hand off to the BL4CK Viewer first
         tryDeepLink(deepLink);
 
         // Poll the tunnel to detect whether the viewer picked it up.

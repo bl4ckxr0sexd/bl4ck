@@ -69,7 +69,7 @@ To back up one device:
 
 The job appears immediately in the dashboard's Recent Jobs feed.
 
-If the device is offline, Breeze returns an error immediately and does not create a backup job. If queue dispatch fails after job creation, the job is marked **Failed** with the dispatch error so the history stays accurate.
+If the device is offline, BL4CK returns an error immediately and does not create a backup job. If queue dispatch fails after job creation, the job is marked **Failed** with the dispatch error so the history stays accurate.
 
 ---
 
@@ -106,7 +106,7 @@ Jobs are triggered either **automatically** by a policy schedule, **manually** v
 </Aside>
 
 <Aside type="note">
-  Restore jobs also use the same durable command pipeline. If a restore command times out, Breeze marks the device command failed and propagates the timeout into the restore job result so it does not remain stuck in **Pending** or **Running** forever.
+  Restore jobs also use the same durable command pipeline. If a restore command times out, BL4CK marks the device command failed and propagates the timeout into the restore job result so it does not remain stuck in **Pending** or **Running** forever.
 </Aside>
 
 ---

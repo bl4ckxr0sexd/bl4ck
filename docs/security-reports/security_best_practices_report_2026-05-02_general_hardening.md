@@ -55,7 +55,7 @@ Mitigation:
 - If the billing service already performs stricter allowlisting, document it and still add API-side validation so the security boundary is visible in this repo.
 
 False positive notes:
-- Exploitability depends on the upstream billing service honoring the forwarded `return_url`. The Breeze API currently does not show that protection.
+- Exploitability depends on the upstream billing service honoring the forwarded `return_url`. The BL4CK API currently does not show that protection.
 
 ### G-002: APNS stub logs push notification tokens
 

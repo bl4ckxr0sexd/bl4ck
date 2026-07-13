@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give Breeze's AI agent a tier-1 Microsoft 365 helpdesk capability (lookup user, recent sign-ins, group memberships, disable account, reset password) executed through Delegant's `/v1/tools/invoke` wire contract, scoped per-customer-tenant, with mutations gated by Breeze's existing approval UI.
+**Goal:** Give BL4CK's AI agent a tier-1 Microsoft 365 helpdesk capability (lookup user, recent sign-ins, group memberships, disable account, reset password) executed through Delegant's `/v1/tools/invoke` wire contract, scoped per-customer-tenant, with mutations gated by BL4CK's existing approval UI.
 
-**Architecture:** Five new `m365_*` tools register into Breeze's existing static `aiTools` Map. A thin `delegantClient.ts` owns all HTTP + principal-JWT minting + error mapping to Delegant. Each AI session binds to one customer via a new `delegant_m365_connections` row (pointers into Delegant, no secrets). Approvals stay in Breeze (`ai_tool_executions` + `waitForApproval`); audit stays in Delegant (hash-chained ledger); the two link by a correlation id. No direct-to-Graph fallback — if Delegant is down, tools fail loud and the AI tells the user.
+**Architecture:** Five new `m365_*` tools register into BL4CK's existing static `aiTools` Map. A thin `delegantClient.ts` owns all HTTP + principal-JWT minting + error mapping to Delegant. Each AI session binds to one customer via a new `delegant_m365_connections` row (pointers into Delegant, no secrets). Approvals stay in BL4CK (`ai_tool_executions` + `waitForApproval`); audit stays in Delegant (hash-chained ledger); the two link by a correlation id. No direct-to-Graph fallback — if Delegant is down, tools fail loud and the AI tells the user.
 
 **Tech Stack:** TypeScript, Hono (api), Drizzle ORM (Postgres, hand-written dated SQL migrations applied by `autoMigrate.ts`), `jose` for EdDSA JWT, Vitest, pnpm + turbo monorepo. AI tools use the Anthropic SDK `Tool` shape.
 
@@ -20,7 +20,7 @@
 - `apps/api/src/db/schema/delegant.ts` — `delegantM365Connections` table definition.
 - `apps/api/migrations/2026-05-27-b-delegant-m365-connections.sql` — create the connection table.
 - `apps/api/migrations/2026-05-27-c-ai-sessions-delegant-connection.sql` — add `delegant_m365_connection_id` to `ai_sessions` and `delegant_tool_call_id` to `ai_tool_executions`.
-- `apps/api/src/services/delegantClient.ts` — JWT mint + HTTP + response→result mapping. The whole Breeze↔Delegant boundary.
+- `apps/api/src/services/delegantClient.ts` — JWT mint + HTTP + response→result mapping. The whole BL4CK↔Delegant boundary.
 - `apps/api/src/services/delegantClient.test.ts` — unit tests for the client.
 - `apps/api/src/services/aiToolsM365.ts` — the five `m365_*` tool definitions + handlers + a `registerM365Tools()` function.
 - `apps/api/src/services/aiToolsM365.test.ts` — unit tests for the handlers.
@@ -104,7 +104,7 @@ describe('delegant env config', () => {
   });
 });
 ```
-> The dynamic-import-with-query trick avoids module cache staleness; if Breeze's vitest config can't resolve the query suffix, the `.catch` falls back to the plain import. Keep it simple — the assertion that matters is that the constants exist and read from `process.env`.
+> The dynamic-import-with-query trick avoids module cache staleness; if BL4CK's vitest config can't resolve the query suffix, the `.catch` falls back to the plain import. Keep it simple — the assertion that matters is that the constants exist and read from `process.env`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -229,13 +229,13 @@ git commit -m "feat(m365): delegant_m365_connections schema"
 - Create: `apps/api/migrations/2026-05-27-b-delegant-m365-connections.sql`
 - Create: `apps/api/migrations/2026-05-27-c-ai-sessions-delegant-connection.sql`
 
-> Breeze migrations are hand-written dated SQL applied transactionally by `autoMigrate.ts`. File naming: `YYYY-MM-DD-<letter>-<slug>.sql`. The latest existing file is `2026-05-27-a-elevation-status-add-actuating.sql`, so use letters `b` and `c`.
+> BL4CK migrations are hand-written dated SQL applied transactionally by `autoMigrate.ts`. File naming: `YYYY-MM-DD-<letter>-<slug>.sql`. The latest existing file is `2026-05-27-a-elevation-status-add-actuating.sql`, so use letters `b` and `c`.
 
 - [ ] **Step 1: Write the table-creation migration**
 
 Create `apps/api/migrations/2026-05-27-b-delegant-m365-connections.sql`:
 ```sql
--- Per-customer M365 connection pointers for the Breeze AI agent's Delegant
+-- Per-customer M365 connection pointers for the BL4CK AI agent's Delegant
 -- integration. Stores references into Delegant + display metadata only.
 -- NO secrets here: the per-customer Entra client secret lives in Delegant.
 CREATE TABLE IF NOT EXISTS delegant_m365_connections (
@@ -257,7 +257,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS delegant_m365_org_customer_uniq
 CREATE INDEX IF NOT EXISTS delegant_m365_org_idx
   ON delegant_m365_connections (org_id);
 ```
-> Check whether sibling tables (e.g. `c2c_connections`) have RLS policies attached. If Breeze enforces row-level security per-org on tenant data, add the matching `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` + policy here, mirroring the c2c table exactly. Open the migration that created `c2c_connections` to confirm.
+> Check whether sibling tables (e.g. `c2c_connections`) have RLS policies attached. If BL4CK enforces row-level security per-org on tenant data, add the matching `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` + policy here, mirroring the c2c table exactly. Open the migration that created `c2c_connections` to confirm.
 
 - [ ] **Step 2: Write the column-addition migration**
 
@@ -316,7 +316,7 @@ git commit -m "feat(m365): migrations for connections table + session/execution 
 - Create: `apps/api/src/services/delegantClient.ts`
 - Test: `apps/api/src/services/delegantClient.test.ts`
 
-> `jose` is already a transitive/dev dep in most Breeze installs (the api uses JWTs for OAuth). Confirm with `cd ~/Breeze && pnpm --filter @breeze/api list jose`. If absent, `pnpm --filter @breeze/api add jose` and commit the lockfile change in this task.
+> `jose` is already a transitive/dev dep in most BL4CK installs (the api uses JWTs for OAuth). Confirm with `cd ~/Breeze && pnpm --filter @breeze/api list jose`. If absent, `pnpm --filter @breeze/api add jose` and commit the lockfile change in this task.
 
 - [ ] **Step 1: Write the failing test for JWT claims**
 
@@ -690,7 +690,7 @@ function logInvoke(fields: {
   }
 }
 ```
-> Replace `console.log`/`console.error` with Breeze's actual logger if one is conventional in `services/` (check how `c2cM365.ts` logs). The structured-line requirement is what matters: never log `parameters` (UPNs go to Delegant's audit, not Breeze logs).
+> Replace `console.log`/`console.error` with BL4CK's actual logger if one is conventional in `services/` (check how `c2cM365.ts` logs). The structured-line requirement is what matters: never log `parameters` (UPNs go to Delegant's audit, not BL4CK logs).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -819,7 +819,7 @@ export function formatResultForLlm(
 
 - [ ] **Step 4: Add the DB-backed helpers**
 
-Append to `apps/api/src/services/m365Helpers.ts` (adapt the exact `db`/`eq` imports and the principal-id source to whatever Task 0.3 revealed — the agent/technician Delegant principal ids must come from somewhere: either columns on the Breeze org / user, or a small mapping table; for v1 manual seeding they can be read from config or a `delegant_principals` lookup. Document the chosen source in the runbook, Task 12):
+Append to `apps/api/src/services/m365Helpers.ts` (adapt the exact `db`/`eq` imports and the principal-id source to whatever Task 0.3 revealed — the agent/technician Delegant principal ids must come from somewhere: either columns on the BL4CK org / user, or a small mapping table; for v1 manual seeding they can be read from config or a `delegant_principals` lookup. Document the chosen source in the runbook, Task 12):
 ```ts
 import { db } from '../db';
 import { eq, and } from 'drizzle-orm';
@@ -1379,9 +1379,9 @@ In `~/Delegant`, in the broker result + the `/v1/tools/invoke` handler, include 
 ```bash
 cd ~/Delegant && git add src/broker/broker.ts src/api/wire/v1.ts test/... && git commit -m "feat(wire): return toolCallId on /v1/tools/invoke for consumer correlation"
 ```
-Then extend the Breeze client (`delegantClient.ts`) `ok` result to carry it: `{ kind: 'ok'; data: unknown; toolCallId?: string }`, populated from `body.toolCallId`. Update the Task 5 mapping test accordingly.
+Then extend the BL4CK client (`delegantClient.ts`) `ok` result to carry it: `{ kind: 'ok'; data: unknown; toolCallId?: string }`, populated from `body.toolCallId`. Update the Task 5 mapping test accordingly.
 
-- [ ] **Step 3: Persist `delegant_tool_call_id` on the execution row (Breeze)**
+- [ ] **Step 3: Persist `delegant_tool_call_id` on the execution row (BL4CK)**
 
 In the `onPostToolUse` path (Step 0.3), when an M365 tool returns `ok` with a `toolCallId`, write it to `ai_tool_executions.delegant_tool_call_id` for that execution. Add a unit test asserting the column is set after a successful M365 invoke.
 
@@ -1390,7 +1390,7 @@ In the `onPostToolUse` path (Step 0.3), when an M365 tool returns `ok` with a `t
 Run: `pnpm --filter @breeze/api test delegantClient aiToolsM365`
 Expected: PASS.
 
-- [ ] **Step 5: Commit (Breeze)**
+- [ ] **Step 5: Commit (BL4CK)**
 
 ```bash
 git add apps/api/src/services/delegantClient.ts apps/api/src/services/aiAgentSdk.ts apps/api/src/services/*.test.ts
@@ -1407,9 +1407,9 @@ git commit -m "feat(m365): correlate executions to Delegant tool-call id"
 - [ ] **Step 1: Write the runbook**
 
 Create `docs/runbooks/m365-helpdesk-agent.md` covering:
-- **Env vars** (`DELEGANT_BASE_URL`, `DELEGANT_SERVICE_TOKEN`, `DELEGANT_PRINCIPAL_SIGNING_KEY`, `DELEGANT_PRINCIPAL_KID`, and the v1 `DELEGANT_TEST_AGENT_ID` / `DELEGANT_TEST_ACTING_USER_ID` used by `resolvePrincipals`). Where each is generated: the signing key pair is created once; the public JWK is registered in Delegant's `jwtKeySet` under the matching `kid`; Breeze holds the PKCS8 private key.
-- **Delegant-side prerequisites** (must pre-exist via Delegant DB/CLI): a `breeze_ai_agent` principal (its id → `DELEGANT_TEST_AGENT_ID`), a `breeze_user` principal per technician (id → `DELEGANT_TEST_ACTING_USER_ID`), and a policy permitting `breeze_ai_agent` to invoke these tools (must be `allow`, not `require_approval`, or Breeze will get `unexpected_pending`).
-- **Seed the test customer connection** (Breeze SQL):
+- **Env vars** (`DELEGANT_BASE_URL`, `DELEGANT_SERVICE_TOKEN`, `DELEGANT_PRINCIPAL_SIGNING_KEY`, `DELEGANT_PRINCIPAL_KID`, and the v1 `DELEGANT_TEST_AGENT_ID` / `DELEGANT_TEST_ACTING_USER_ID` used by `resolvePrincipals`). Where each is generated: the signing key pair is created once; the public JWK is registered in Delegant's `jwtKeySet` under the matching `kid`; BL4CK holds the PKCS8 private key.
+- **Delegant-side prerequisites** (must pre-exist via Delegant DB/CLI): a `breeze_ai_agent` principal (its id → `DELEGANT_TEST_AGENT_ID`), a `breeze_user` principal per technician (id → `DELEGANT_TEST_ACTING_USER_ID`), and a policy permitting `breeze_ai_agent` to invoke these tools (must be `allow`, not `require_approval`, or BL4CK will get `unexpected_pending`).
+- **Seed the test customer connection** (BL4CK SQL):
 ```sql
 INSERT INTO delegant_m365_connections
   (org_id, customer_label, customer_display_name, delegant_org_id, delegant_connection_id, m365_tenant_id, status)
@@ -1417,7 +1417,7 @@ VALUES
   ('<breeze-org-uuid>', 'sandbox', 'Sandbox Tenant', '<delegant-org-id>', '<delegant-connection-id>', '<m365-tenant-id>', 'active');
 ```
 - **`unexpected_pending` troubleshooting:** check Delegant's policy table for this org; ensure the five tools resolve to `allow` for `breeze_ai_agent`.
-- **Forensic flow:** Breeze audit log → `ai_tool_executions` row → `delegant_tool_call_id` → Delegant `GET /v1/audit/tool-calls/{id}`.
+- **Forensic flow:** BL4CK audit log → `ai_tool_executions` row → `delegant_tool_call_id` → Delegant `GET /v1/audit/tool-calls/{id}`.
 
 - [ ] **Step 2: Commit**
 
@@ -1432,7 +1432,7 @@ git commit -m "docs(m365): operator runbook + manual seeding"
 
 **Files:**
 - Create: `apps/api/test-live/m365.live.test.ts`
-- Possibly modify: a vitest config to include `test-live` only when a flag is set (mirror Delegant's `test:live` pattern; check if Breeze already has a live/integration config from `vitest.integration.config.ts`).
+- Possibly modify: a vitest config to include `test-live` only when a flag is set (mirror Delegant's `test:live` pattern; check if BL4CK already has a live/integration config from `vitest.integration.config.ts`).
 
 - [ ] **Step 1: Write the live suite (skips without creds)**
 
@@ -1505,6 +1505,6 @@ Open a PR summarizing the five tools, the boundary, the two migrations, and the 
 - **Cross-org guard** (Task 7 Steps 1, 3) and **no-customer guard** are first-class required tests — they prevent horizontal escalation and accidental no-tenant calls. Do not skip.
 - **Never ship the `__sessionId` placeholder** in Task 7 — wire the real session-id source from Step 0.3.
 - **Never log `parameters`** (Task 5) — UPNs belong only in Delegant's audit.
-- **`unexpected_pending` is fail-loud, not a wait** (Task 5) — Breeze owns approvals.
-- **Two repos:** Tasks 1–10, 12–14 are Breeze; Task 11 Step 2 may touch Delegant. Commit in the correct repo.
+- **`unexpected_pending` is fail-loud, not a wait** (Task 5) — BL4CK owns approvals.
+- **Two repos:** Tasks 1–10, 12–14 are BL4CK; Task 11 Step 2 may touch Delegant. Commit in the correct repo.
 - **Prerequisite for Tasks 13–14:** a disposable M365 sandbox tenant + seeded Delegant principals. Steps 1–12 don't need it.

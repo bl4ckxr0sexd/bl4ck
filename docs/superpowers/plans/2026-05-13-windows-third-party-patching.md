@@ -673,7 +673,7 @@ git commit -m "feat(agent): extract vendor from winget package IDs"
 - [ ] **Step 1: Write migration**
 
 ```sql
--- Curated catalog of third-party packages with Breeze metadata.
+-- Curated catalog of third-party packages with BL4CK metadata.
 -- System-wide (no org_id); writes gated to partner-admin role at the route layer.
 -- Intentionally unscoped — listed in rls-coverage allowlist.
 
@@ -2450,7 +2450,7 @@ After all phases land:
 - [ ] **Install path**: trigger an install job from the existing patch UI on the test VM; verify winget runs through the user-helper IPC path (already in place) and the patch flips to `installed`.
 - [ ] **Catalog UI**: add a new package, edit it, delete it; verify partner-admin gate (non-admin user gets 403).
 - [ ] **AI test** (Phase 9, opt-in): set `ENABLE_AI_PATCH_TESTING=1` in dev, manually re-test `7zip.7zip`, see a pass/fail result land in the catalog.
-- [ ] **Customer-facing summary**: update `apps/docs/` (via the `update-breeze-docs` skill) and `apps/web` marketing pages to note "Breeze now supports third-party Windows app patching via winget with a curated catalog of N apps."
+- [ ] **Customer-facing summary**: update `apps/docs/` (via the `update-breeze-docs` skill) and `apps/web` marketing pages to note "BL4CK now supports third-party Windows app patching via winget with a curated catalog of N apps."
 
 ---
 

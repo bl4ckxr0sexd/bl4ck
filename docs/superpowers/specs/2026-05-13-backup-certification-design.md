@@ -9,7 +9,7 @@
 
 ## 1. Motivation
 
-Breeze RMM has 11 backup feature areas spanning file-level, Hyper-V image, MSSQL database, cloud-to-cloud (Microsoft 365), local vault (SMB/USB), bare-metal recovery, DR plans, encryption, SLA/policy, retention/GFS, and VSS/system-state. Backup correctness is the product's most consequential property: a silently-broken backup is worse than no backup, because it destroys customer trust precisely when it's most needed.
+BL4CK RMM has 11 backup feature areas spanning file-level, Hyper-V image, MSSQL database, cloud-to-cloud (Microsoft 365), local vault (SMB/USB), bare-metal recovery, DR plans, encryption, SLA/policy, retention/GFS, and VSS/system-state. Backup correctness is the product's most consequential property: a silently-broken backup is worse than no backup, because it destroys customer trust precisely when it's most needed.
 
 This system exists to give us three things, in order of priority:
 
@@ -23,7 +23,7 @@ This is explicitly **not** a compliance or audit deliverable. It is internal eng
 
 These three terms are used precisely throughout the spec.
 
-- **Subject Under Test (SUT)** — a specific Breeze backup feature being verified, identified by a slug like `file-level-backup-windows-s3`. One feature can have multiple SUTs (e.g., the same feature against different storage providers).
+- **Subject Under Test (SUT)** — a specific BL4CK backup feature being verified, identified by a slug like `file-level-backup-windows-s3`. One feature can have multiple SUTs (e.g., the same feature against different storage providers).
 - **Cert Run** — a single execution of the harness against a SUT. Produces an Evidence Bundle. If every assertion passes, also produces a signed Cert Manifest.
 - **Evidence Bundle** — the heavy artifact recording exactly what happened during a cert run: hashes, logs, intermediate state, the YAML test definition. Lives in S3 with Object Lock.
 - **Cert Manifest** — a small, signed JSON document that says "on date D, commit C, with backup-critical source hashes H1..Hn, the SUT passed every test with evidence pointer E." Committed to the repo. This is what the release gate checks.
@@ -42,10 +42,10 @@ Every cert run uses byte-exact restore verification. The chain is:
 
 1. Generate or load canonical seed data with known SHA-256 hashes (corpus-level manifest hash + per-file hashes).
 2. Snapshot-hash the seed in place (immediately before backup).
-3. Trigger backup via Breeze API; record the agent's reported snapshot ID.
+3. Trigger backup via BL4CK API; record the agent's reported snapshot ID.
 4. Verify the backup landed in the configured storage target (object exists, size matches, content hash matches what the agent reported).
 5. Wipe the target volume.
-6. Trigger restore via Breeze API.
+6. Trigger restore via BL4CK API.
 7. Re-hash the restored data and diff against the pre-backup hash list.
 8. Verify filesystem metadata (ACLs, owners, timestamps where they're supposed to round-trip).
 
@@ -89,8 +89,8 @@ Across all features, the rule is the same: pick a level where bit-flips, encodin
 └────────────────────────────────────────────────────────────────────┘
                               ↓
                   ┌─────────────────────────┐
-                  │  Cert API instance      │ ← real Breeze API + agent
-                  │  Breeze agent (real)    │   under test, NOT mocked
+                  │  Cert API instance      │ ← real BL4CK API + agent
+                  │  BL4CK agent (real)    │   under test, NOT mocked
                   └─────────────────────────┘
                               ↓
                   ┌─────────────────────────┐
@@ -298,7 +298,7 @@ Operationally, it's one more thing to maintain. The tradeoff is forensic clarity
 
 Each target has a version-pinned template, content-hash recorded in the Cert Manifest:
 
-- `win-server-2022-breeze-agent-<version>` — clean Windows Server, Breeze agent at a known version, no test data.
+- `win-server-2022-breeze-agent-<version>` — clean Windows Server, BL4CK agent at a known version, no test data.
 - `win-11-pro-breeze-agent-<version>`
 - `ubuntu-2404-breeze-agent-<version>`
 - `rhel-9-breeze-agent-<version>`
@@ -322,7 +322,7 @@ It cannot reach production data stores. Belt and suspenders: the cert API instan
 | Adapter | Does | Does NOT do |
 |---|---|---|
 | `proxmox.ts` | Clone-from-template, start/stop, snapshot/rollback, console log capture | Run code inside the guest |
-| `winrm.ts` | Run commands inside a Windows guest, push/pull files, hash trees | Know about Breeze |
+| `winrm.ts` | Run commands inside a Windows guest, push/pull files, hash trees | Know about BL4CK |
 | `ssh.ts` | Same, for macOS/Linux guests | Same |
 | `breeze-api.ts` | Authenticated API calls (login, trigger backup, query snapshot) | Care which VM the agent is on |
 | `s3.ts` / `azure.ts` / `gcs.ts` / `b2.ts` | HEAD/GET storage objects, list bucket contents, verify Object Lock state | Drive backup jobs |
@@ -343,7 +343,7 @@ feature: file-level-backup-windows-s3
 description: |
   Seed a Windows guest with a 1 GB corpus including
   open-file (locked DB) cases, back it up to S3 via the
-  Breeze agent, wipe target volume, restore from snapshot,
+  BL4CK agent, wipe target volume, restore from snapshot,
   byte-compare every file.
 target:
   kind: proxmox-windows-guest
@@ -427,7 +427,7 @@ steps:
 |---|---|---|
 | `seed` | Lay down canonical corpus on target | corpus version, manifest hash, per-file SHA-256 |
 | `snapshot_hash` | Hash a directory tree on target | hash list, total size, file count |
-| `trigger_backup` | Drive backup via Breeze API | job ID, agent-reported result, API DB record |
+| `trigger_backup` | Drive backup via BL4CK API | job ID, agent-reported result, API DB record |
 | `trigger_restore` | Drive restore via API | restore job ID, target path, result |
 | `verify_artifact_in_storage` | Confirm backup is actually in storage and matches agent claims | provider GET hash, DB record, agent log fingerprint |
 | `wipe` | Destructively erase target | proof of erasure (post-wipe scan must be empty) |

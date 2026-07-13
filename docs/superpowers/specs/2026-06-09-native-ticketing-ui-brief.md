@@ -6,7 +6,7 @@
 
 ## 1. Feature Summary
 
-The technician-facing ticketing surface in apps/web: a partner-wide queue and a ticket workbench where MSP techs triage, respond, and resolve all day. The highest-interaction-density screen in Breeze; it must feel like a calm control center, not a fire hose.
+The technician-facing ticketing surface in apps/web: a partner-wide queue and a ticket workbench where MSP techs triage, respond, and resolve all day. The highest-interaction-density screen in BL4CK; it must feel like a calm control center, not a fire hose.
 
 ## 2. Primary User Action
 

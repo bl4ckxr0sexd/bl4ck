@@ -223,7 +223,7 @@ export default function C2CConnectionWizard({ onClose, onComplete }: C2CConnecti
                   One-click Microsoft 365 integration
                 </p>
                 <p className="mt-1 text-xs text-blue-700 dark:text-blue-300">
-                  Your Breeze instance has a pre-configured Microsoft 365 app. Click &quot;Grant Access&quot; to
+                  Your BL4CK instance has a pre-configured Microsoft 365 app. Click &quot;Grant Access&quot; to
                   authorize backup access to your M365 tenant. A Global Admin must approve the consent prompt.
                 </p>
               </div>

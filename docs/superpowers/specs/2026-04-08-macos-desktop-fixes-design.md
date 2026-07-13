@@ -44,13 +44,13 @@ The `login_window` context uses IOHIDPostEvent which works at the login window, 
 
 ### Fix 1: Stop touching Remote Management — gate behind Config Policy
 
-**Principle:** Breeze never touches Apple Screen Sharing unless the user explicitly opts in via Config Policy. When VNC is needed and Screen Sharing is off, inform the user instead of fixing it for them.
+**Principle:** BL4CK never touches Apple Screen Sharing unless the user explicitly opts in via Config Policy. When VNC is needed and Screen Sharing is off, inform the user instead of fixing it for them.
 
 **Config Policy integration:**
 
 - New Config Policy boolean: `manageRemoteManagement` (default: `false`)
-- When `false` (default): Breeze never calls kickstart to enable or disable Screen Sharing
-- When `true`: Breeze manages Screen Sharing for VNC tunnels (enable on open, disable on idle/close, cleanup on startup)
+- When `false` (default): BL4CK never calls kickstart to enable or disable Screen Sharing
+- When `true`: BL4CK manages Screen Sharing for VNC tunnels (enable on open, disable on idle/close, cleanup on startup)
 
 **Changes to `agent/internal/tunnel/manager.go`:**
 
@@ -63,7 +63,7 @@ The `login_window` context uses IOHIDPostEvent which works at the login window, 
 
 - When opening a VNC tunnel: check if Screen Sharing is running (port 5900)
 - If not running and `managedByPolicy` is false → return a descriptive error:
-  `"Screen Sharing is disabled on this device. Enable 'Manage Remote Management' in Config Policy to allow Breeze to control this, or enable it manually in System Preferences > Sharing."`
+  `"Screen Sharing is disabled on this device. Enable 'Manage Remote Management' in Config Policy to allow BL4CK to control this, or enable it manually in System Preferences > Sharing."`
 - If not running and `managedByPolicy` is true → enable via kickstart as before
 
 **Changes to `agent/internal/tunnel/vnc_darwin.go`:**

@@ -1,4 +1,4 @@
-# SOC 2 A1.3 Recovery Testing Notes (Breeze, DigitalOcean Plan)
+# SOC 2 A1.3 Recovery Testing Notes (BL4CK, DigitalOcean Plan)
 
 Last updated: 2026-02-28
 
@@ -10,7 +10,7 @@ Last updated: 2026-02-28
 
 ## Objective of This Note
 
-Define a repeatable, auditable recovery testing program for Breeze that validates A1.2 recovery objectives using DigitalOcean-native capabilities and existing Breeze runbooks.
+Define a repeatable, auditable recovery testing program for BL4CK that validates A1.2 recovery objectives using DigitalOcean-native capabilities and existing BL4CK runbooks.
 
 ## Testing Scope
 
@@ -110,7 +110,7 @@ Recommended report template:
 - Approver: Engineering leadership
 - Review participants: Platform engineer, database owner, security/compliance representative
 
-## Integration with Existing Breeze Docs
+## Integration with Existing BL4CK Docs
 
 Primary runbooks/procedures:
 
@@ -129,4 +129,4 @@ After each test:
 
 ## Example A1.3 Narrative (Draft)
 
-Breeze performs recurring recovery testing through tabletop and technical restore exercises that validate documented recovery objectives for critical systems. Test results are measured against RTO/RPO targets, exceptions are recorded with corrective actions, and recovery procedures are updated based on lessons learned. Evidence of tests, outcomes, and remediation is retained for audit support.
+BL4CK performs recurring recovery testing through tabletop and technical restore exercises that validate documented recovery objectives for critical systems. Test results are measured against RTO/RPO targets, exceptions are recorded with corrective actions, and recovery procedures are updated based on lessons learned. Evidence of tests, outcomes, and remediation is retained for audit support.

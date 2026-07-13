@@ -119,7 +119,7 @@ describe('SecurityIntegration', () => {
     expect(screen.getByText(/pending sync/i)).toBeInTheDocument();
   });
 
-  it('maps a discovered site to a Breeze org and posts the right body', async () => {
+  it('maps a discovered site to a BL4CK org and posts the right body', async () => {
     useOrgStore.setState({ currentOrgId: null });
     mockPartnerLoad({ integration: existingIntegration, sites: [discoveredSite] });
 

@@ -1218,7 +1218,7 @@ In `agent/internal/helper/install_linux.go`, replace the inline `fmt.Sprintf` in
 func renderAutoStartEntry(binaryPath string) string {
 	return fmt.Sprintf(`[Desktop Entry]
 Type=Application
-Name=Breeze Helper
+Name=BL4CK Helper
 Exec=%q
 Hidden=false
 NoDisplay=true

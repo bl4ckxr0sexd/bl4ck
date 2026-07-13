@@ -93,7 +93,7 @@ Seed with `"expiresInSeconds": 15`. Open the app immediately. Watch the ring com
 
 ### E. Recursive hold
 
-Seed with `"requestingClientLabel": "Breeze Mobile"`. The Approve button becomes a "Hold to approve" bar with a teal progress fill. Holding for the full 5s should fire biometric, then approve.
+Seed with `"requestingClientLabel": "BL4CK Mobile"`. The Approve button becomes a "Hold to approve" bar with a teal progress fill. Holding for the full 5s should fire biometric, then approve.
 
 ### F. Offline cold open
 
@@ -111,14 +111,14 @@ Tapping Approve will fail (no network) — this is acceptable for v1. Brief prom
 
 ```bash
 docker exec breeze-postgres psql -U breeze -d breeze -c \
-  "DELETE FROM approval_requests WHERE requesting_client_label IN ('Dev Seed','Claude Desktop','Breeze Mobile');"
+  "DELETE FROM approval_requests WHERE requesting_client_label IN ('Dev Seed','Claude Desktop','BL4CK Mobile');"
 ```
 
 ## Known limits (acceptable for v1)
 
 - **EAS project ID required for push.** Without `npx eas init`, the `getExpoPushTokenAsync` call throws an actionable error and no push is delivered. The approval screen still renders if you open the app cold after seeding (`refreshPending` thunk fetches and `setFocus` lands on the first pending row). Lock-screen push specifically needs EAS.
 - **Server expiry is implicit.** Routes refuse to approve/deny rows past `expires_at`, but no background job flips `status` to `expired`. Mobile UI handles this via `markExpired` locally on countdown completion. A cleanup job is a follow-up.
-- **`isRecursive` heuristic** matches on `requestingClientLabel.startsWith('Breeze Mobile')`. A server-issued `isRecursive` flag is the proper fix for phase 2.
+- **`isRecursive` heuristic** matches on `requestingClientLabel.startsWith('BL4CK Mobile')`. A server-issued `isRecursive` flag is the proper fix for phase 2.
 - **Report-as-suspicious** is a stub Pressable with no onPress — phase 2.
 - **Multi-pending swipe** not implemented — focus is single-id v1; second pending shows next after the first decision lands.
 - **Light mode** tokens defined but not iterated; dark is canonical.

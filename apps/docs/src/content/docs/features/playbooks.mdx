@@ -7,19 +7,19 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Playbooks are structured, multi-step remediation workflows that run against a single device. Each playbook defines an ordered sequence of steps -- diagnose, act, wait, verify, rollback -- that execute tools on the target device and evaluate the results. Playbooks codify your standard operating procedures so that incident response is consistent, auditable, and repeatable regardless of who triggers it.
 
-Breeze ships with built-in playbooks for common scenarios (disk cleanup, service restart, memory pressure relief). Organizations can also create custom playbooks scoped to their own environment. Playbooks can be triggered manually by administrators, automatically by the AI assistant in response to alerts, or programmatically through the API.
+BL4CK ships with built-in playbooks for common scenarios (disk cleanup, service restart, memory pressure relief). Organizations can also create custom playbooks scoped to their own environment. Playbooks can be triggered manually by administrators, automatically by the AI assistant in response to alerts, or programmatically through the API.
 
 Every execution is recorded with per-step timing, tool input/output, and pass/fail status. If a step fails, the playbook's failure policy determines whether execution stops, continues, or triggers a rollback sequence.
 
 <Aside type="tip">
-  Built-in playbooks (Disk Cleanup, Service Restart with Health Check, Memory Pressure Relief) are automatically created when the Breeze API starts for the first time. They are available to all organizations out of the box -- no setup required.
+  Built-in playbooks (Disk Cleanup, Service Restart with Health Check, Memory Pressure Relief) are automatically created when the BL4CK API starts for the first time. They are available to all organizations out of the box -- no setup required.
 </Aside>
 
 ---
 
 ## Running a Playbook
 
-Playbooks can be triggered in several ways from the Breeze dashboard.
+Playbooks can be triggered in several ways from the BL4CK dashboard.
 
 ### From the AI Assistant
 
@@ -112,7 +112,7 @@ Each step can define an `onFailure` behavior that controls what happens when it 
 
 ## Built-in Playbooks
 
-Breeze includes three built-in playbooks that are available to all organizations out of the box. They are updated automatically with each release.
+BL4CK includes three built-in playbooks that are available to all organizations out of the box. They are updated automatically with each release.
 
 ### Disk Cleanup
 
@@ -281,7 +281,7 @@ The `variables` object provides runtime values for `{{variable}}` placeholders i
 
 ### AI-triggered execution
 
-The Breeze AI assistant can execute playbooks as part of an automated incident response conversation. When the AI identifies a matching playbook for a detected issue, it calls the execute endpoint with `triggeredBy: "ai"` and includes the `conversationId` in the execution context. The AI then monitors execution progress and updates step results as each step completes.
+The BL4CK AI assistant can execute playbooks as part of an automated incident response conversation. When the AI identifies a matching playbook for a detected issue, it calls the execute endpoint with `triggeredBy: "ai"` and includes the `conversationId` in the execution context. The AI then monitors execution progress and updates step results as each step completes.
 
 ### Alert-triggered execution
 

@@ -1,10 +1,10 @@
-# Design Brief — Breeze Mobile
+# Design Brief — BL4CK Mobile
 
 > Produced via `$impeccable shape` on 2026-05-06. Hand off to `$impeccable craft` for implementation, starting with approval mode.
 
 ## 1. Feature Summary
 
-A trusted-device companion app for Breeze RMM. Primary job: out-of-band approval surface for MCP step-up (and future PAM elevation) requests, the security identity that makes high-tier AI agent actions safe. Secondary jobs: AI conversation with the Breeze agent, fleet status glances, push-delivered alerts. Users are MSP techs, sysadmins, and owners of their own systems.
+A trusted-device companion app for BL4CK RMM. Primary job: out-of-band approval surface for MCP step-up (and future PAM elevation) requests, the security identity that makes high-tier AI agent actions safe. Secondary jobs: AI conversation with the BL4CK agent, fleet status glances, push-delivered alerts. Users are MSP techs, sysadmins, and owners of their own systems.
 
 ## 2. Primary User Action
 
@@ -16,7 +16,7 @@ Everything else (AI chat, status, alerts) is ambient. Design loyalty goes to the
 
 **Color strategy: Committed.** One color carries the surface. Brand anchor: `oklch(58% 0.13 200)` — cool teal-leaning cyan. Status semantics: approve `oklch(70% 0.18 145)`, deny `oklch(62% 0.22 25)`, warning `oklch(78% 0.15 75)`. Neutrals tinted toward brand (`oklch(15% 0.012 200)` dark surface, `oklch(98% 0.005 200)` light). PRODUCT.md anti-references (default blue, gradient text, generic system fonts) explicitly violated by the current skeleton — this brief moves us off them.
 
-**Theme scene sentence:** *The owner of a 30-tech MSP, in bed at 11:47pm, glances at their phone because Breeze just buzzed — they need to read the request, trust it's real, and tap once.* → Dark is canonical, light is supported but not the design.
+**Theme scene sentence:** *The owner of a 30-tech MSP, in bed at 11:47pm, glances at their phone because BL4CK just buzzed — they need to read the request, trust it's real, and tap once.* → Dark is canonical, light is supported but not the design.
 
 **Anchor references:**
 - **Duo Mobile / Okta Verify** — push approval ergonomics, but warmer.
@@ -75,7 +75,7 @@ Per-surface override: approval takeover briefly shifts toward higher gravity (mo
 - **Report as suspicious**: tertiary link below buttons → opens a sheet with one-tap "This wasn't me" → revokes the requesting OAuth client immediately and signs out the suspicious session.
 
 ### Auth / first run
-- **Sign in**: email + password (or magic link if Breeze supports), then biometric enrollment, then push permission, then a single-screen "What this app does" with three lines (approve requests · talk to AI · check systems) — not a multi-step onboarding.
+- **Sign in**: email + password (or magic link if BL4CK supports), then biometric enrollment, then push permission, then a single-screen "What this app does" with three lines (approve requests · talk to AI · check systems) — not a multi-step onboarding.
 - **Locked**: app reopens locked → biometric to enter (configurable: every open / after 15min / after 1hr).
 
 ### Settings menu
@@ -132,7 +132,7 @@ During build, lean on these impeccable refs:
 1. **Push notification payload**: how much detail can/should be in the lock-screen notification itself? Recommendation: action verb + org name only, no arguments. Full details require unlock. Confirm before wiring.
 2. **Biometric fallback**: if biometric fails (sweaty thumb, sunglasses + Face ID), do we allow passcode? Yes for v1, but log the fallback. Revisit.
 3. **OAuth client display**: how the requesting client identifies itself ("Claude Desktop · Todd's MacBook Pro"). Need to confirm what the OAuth registration metadata actually contains and how we display unverified/sketchy clients differently from trusted ones (faded vs. bold name? "Verified" badge?).
-4. **Multi-account**: does a single phone bind to one Breeze identity, or can a tech with two MSPs paired to it switch contexts? v1: one identity. Revisit if real demand.
+4. **Multi-account**: does a single phone bind to one BL4CK identity, or can a tech with two MSPs paired to it switch contexts? v1: one identity. Revisit if real demand.
 5. **Geist license**: confirm Geist's OFL terms cover bundled use in a published mobile app. Free, but verify before locking.
 
 ---
@@ -153,7 +153,7 @@ Captured during the phase 1 build / verification but not designed yet. Each beco
 
 A trusted-device security model is incomplete without lifecycle controls. Lost phones, retired laptops, decommissioned MCP integrations — all need a clean revocation path. Two parallel surfaces share the same UX patterns and audit primitives:
 
-**1. User's own mobile devices** (the phones running Breeze Mobile):
+**1. User's own mobile devices** (the phones running BL4CK Mobile):
 - *Schema*: extend `mobile_devices` with `status` (`active`/`blocked`), `blocked_at`, `blocked_by_user_id`, `blocked_reason`. Tracking columns (`last_active_at`, `model`, `os_version`, `app_version`) already exist.
 - *User self-service* — Mobile Settings → "This device + others": list of paired devices, per-row last-active timestamp, "Revoke" action that flips status to `blocked` and clears push tokens. Cannot revoke the current device (must do that from another device or via web).
 - *Web Settings → Security → Devices*: same list as a richer table view. Owner of own systems case.
@@ -161,7 +161,7 @@ A trusted-device security model is incomplete without lifecycle controls. Lost p
 - *Approval enforcement*: blocked devices return 401/403 from `/api/v1/mobile/approvals/*`. Their push tokens are excluded from `getUserPushTokens()`.
 - *Audit trail*: every block/unblock writes to `audit_log` with actor, target device, reason.
 
-**2. OAuth clients per user** (Claude Desktop, Cursor, Breeze AI agent sessions, future MCP integrations):
+**2. OAuth clients per user** (Claude Desktop, Cursor, BL4CK AI agent sessions, future MCP integrations):
 - Schema basis already exists via `oauth_clients` + `oauth_grants` + `oauth_sessions`.
 - *Mobile Settings → "Connected apps"*: list of clients the user has authorized, each row shows last-seen + last-approval-decided. Revoke action invalidates all grants for that client.
 - *Web Settings → Connected apps*: same. The brief's "Paired sessions list with revoke" line in Settings hints at this — formalize here.

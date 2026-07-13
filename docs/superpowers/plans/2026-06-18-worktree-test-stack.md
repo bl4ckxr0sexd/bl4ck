@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A `wt-stack` CLI that takes the current git worktree and brings up a migrated, seeded, Playwright-ready Breeze stack (Postgres + Redis + API + Web + Portal + Caddy) running the worktree's own code, exposing a JSON descriptor for agents and Playwright to consume.
+**Goal:** A `wt-stack` CLI that takes the current git worktree and brings up a migrated, seeded, Playwright-ready BL4CK stack (Postgres + Redis + API + Web + Portal + Caddy) running the worktree's own code, exposing a JSON descriptor for agents and Playwright to consume.
 
 **Architecture:** A tsx CLI namespaces the existing Compose stack by Compose **project name**. A new override file (`docker-compose.override.yml.worktree`) drops `container_name`, adds a code-mounted Portal dev service, and (Phase 2) switches to ephemeral host ports + tmpfs Postgres. The CLI brings the stack up, waits for healthchecks, seeds the DB, discovers published host ports, and writes `.breeze-stack.json`. Playwright reads that descriptor instead of hardcoded container names / ports.
 
@@ -1040,7 +1040,7 @@ git commit -m "feat(wt-stack): ls subcommand lists running stacks"
 ```markdown
 ---
 name: worktree-stack
-description: Use when an agent needs a running, seeded, Playwright-ready Breeze stack for the current git worktree. Brings up pg+redis+api+web+portal+caddy running the worktree's own code and emits a JSON descriptor.
+description: Use when an agent needs a running, seeded, Playwright-ready BL4CK stack for the current git worktree. Brings up pg+redis+api+web+portal+caddy running the worktree's own code and emits a JSON descriptor.
 ---
 
 # Worktree Test Stack

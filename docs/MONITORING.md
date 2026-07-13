@@ -1,6 +1,6 @@
-# Breeze RMM - Monitoring Guide
+# BL4CK RMM - Monitoring Guide
 
-This guide covers setting up comprehensive monitoring for the Breeze RMM platform, including metrics collection, visualization, alerting, error tracking, and log aggregation.
+This guide covers setting up comprehensive monitoring for the BL4CK RMM platform, including metrics collection, visualization, alerting, error tracking, and log aggregation.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ This guide covers setting up comprehensive monitoring for the Breeze RMM platfor
 
 ## Overview
 
-The Breeze monitoring stack provides:
+The BL4CK monitoring stack provides:
 
 - **Metrics Collection**: Prometheus scrapes metrics from API, Redis, PostgreSQL, and host systems
 - **Visualization**: Grafana dashboards for real-time and historical analysis
@@ -34,7 +34,7 @@ The Breeze monitoring stack provides:
                                     └────────┬────────┘
                                              │
 ┌──────────────┐     ┌──────────────┐   ┌────┴────┐     ┌──────────────┐
-│  Breeze API  │────▶│  Prometheus  │───│  Rules  │────▶│   Grafana    │
+│  BL4CK API  │────▶│  Prometheus  │───│  Rules  │────▶│   Grafana    │
 │   /metrics   │     │  (Metrics)   │   │ Engine  │     │ (Dashboards) │
 └──────────────┘     └──────────────┘   └─────────┘     └──────────────┘
                             │
@@ -46,7 +46,7 @@ The Breeze monitoring stack provides:
    └────────────┘    └────────────┘    └────────────┘
 
 ┌──────────────┐     ┌──────────────┐
-│  Breeze API  │────▶│    Sentry    │
+│  BL4CK API  │────▶│    Sentry    │
 │   (Errors)   │     │   (Errors)   │
 └──────────────┘     └──────────────┘
 
@@ -113,7 +113,7 @@ Pre-computed metrics for efficient dashboard queries:
 
 1. **Access Grafana**: `http://localhost:3000`
 2. **Default credentials**: admin / admin (change on first login)
-3. **Dashboards**: Navigate to Dashboards > Breeze RMM
+3. **Dashboards**: Navigate to Dashboards > BL4CK RMM
 
 ### Configuration Files
 
@@ -123,7 +123,7 @@ Pre-computed metrics for efficient dashboard queries:
 
 ### Available Dashboards
 
-#### Breeze Overview Dashboard
+#### BL4CK Overview Dashboard
 
 The main dashboard provides:
 
@@ -140,7 +140,7 @@ The main dashboard provides:
 
 1. Click "+" > "New Dashboard"
 2. Add panels using Prometheus queries
-3. Save to the Breeze folder
+3. Save to the BL4CK folder
 4. Export JSON for version control
 
 Example query for request rate:

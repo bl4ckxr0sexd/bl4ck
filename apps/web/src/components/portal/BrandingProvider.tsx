@@ -31,7 +31,7 @@ export function usePortalBranding(): PortalBranding {
 
   if (!context) {
     return {
-      name: 'Breeze Portal'
+      name: 'BL4CK Portal'
     };
   }
 

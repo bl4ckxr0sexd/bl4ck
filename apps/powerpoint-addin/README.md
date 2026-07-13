@@ -1,6 +1,6 @@
-# Breeze AI for Office — PowerPoint add-in
+# BL4CK AI for Office — PowerPoint add-in
 
-Task-pane add-in delivering the governed Breeze AI assistant to MSP client
+Task-pane add-in delivering the governed BL4CK AI assistant to MSP client
 end-users inside PowerPoint. Spec: `docs/superpowers/specs/2026-06-12-breeze-ai-for-office-design.md`.
 
 ## Prerequisites

@@ -5,13 +5,13 @@ description: Remote Desktop, Remote Terminal, and File Transfer for managed devi
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Breeze provides three distinct real-time access capabilities for managed devices: **Remote Desktop** (interactive screen viewing and control), **Remote Terminal** (browser-based interactive shell), and **File Transfer** (bi-directional file movement between the technician and the device). Each is a separate session type created through the same `/remote/sessions` API.
+BL4CK provides three distinct real-time access capabilities for managed devices: **Remote Desktop** (interactive screen viewing and control), **Remote Terminal** (browser-based interactive shell), and **File Transfer** (bi-directional file movement between the technician and the device). Each is a separate session type created through the same `/remote/sessions` API.
 
-Remote desktop sessions use WebRTC as the primary transport. The Breeze server acts as a signaling relay during connection setup — it brokers the initial SDP offer/answer exchange and ICE candidate negotiation between the native viewer app and the device agent. Once the peer-to-peer connection is established, video, audio, and input data flow directly between the viewer and the agent and do not transit the Breeze server.
+Remote desktop sessions use WebRTC as the primary transport. The BL4CK server acts as a signaling relay during connection setup — it brokers the initial SDP offer/answer exchange and ICE candidate negotiation between the native viewer app and the device agent. Once the peer-to-peer connection is established, video, audio, and input data flow directly between the viewer and the agent and do not transit the BL4CK server.
 
-The Breeze stack includes a **coturn TURN server** that relays WebRTC traffic when a direct peer-to-peer connection is not possible (symmetric NAT, restrictive firewalls). The API generates short-lived TURN credentials via a shared secret and distributes them to both the viewer and agent during ICE negotiation. See [Environment Variables](/deploy/environment/#webrtc--turn) for configuration.
+The BL4CK stack includes a **coturn TURN server** that relays WebRTC traffic when a direct peer-to-peer connection is not possible (symmetric NAT, restrictive firewalls). The API generates short-lived TURN credentials via a shared secret and distributes them to both the viewer and agent during ICE negotiation. See [Environment Variables](/deploy/environment/#webrtc--turn) for configuration.
 
-If WebRTC negotiation fails even with TURN (e.g., TURN is misconfigured or unreachable), the viewer automatically falls back to a WebSocket transport that relays JPEG frames through the Breeze server. The WebSocket fallback has reduced capabilities compared to WebRTC — no audio, no clipboard sync, no multi-monitor switching, and no low-latency cursor streaming.
+If WebRTC negotiation fails even with TURN (e.g., TURN is misconfigured or unreachable), the viewer automatically falls back to a WebSocket transport that relays JPEG frames through the BL4CK server. The WebSocket fallback has reduced capabilities compared to WebRTC — no audio, no clipboard sync, no multi-monitor switching, and no low-latency cursor streaming.
 
 <Aside>
   Multi-factor authentication (MFA) is required for all remote access sessions. Your role must also include the `remote:access` permission — see **Settings → Roles** if session creation returns "Access denied."
@@ -41,7 +41,7 @@ Remote Desktop streams the device's screen to your browser and forwards your mou
 
 ### Connection flow
 
-The browser and device negotiate a WebRTC peer-to-peer connection through the Breeze server:
+The browser and device negotiate a WebRTC peer-to-peer connection through the BL4CK server:
 
 1. `POST /remote/sessions` with `type: "desktop"` — creates the session record.
 2. `GET /remote/ice-servers` — retrieve STUN/TURN server configuration.
@@ -55,9 +55,9 @@ Once the P2P connection is active, screen data flows directly between the browse
 
 ### Windows Session 0 Support
 
-When the Breeze agent runs as a Windows service, it operates in Session 0 — an isolated session with no interactive desktop. Standard screen capture APIs (DXGI, GDI) and input injection all fail in Session 0.
+When the BL4CK agent runs as a Windows service, it operates in Session 0 — an isolated session with no interactive desktop. Standard screen capture APIs (DXGI, GDI) and input injection all fail in Session 0.
 
-Breeze solves this with a **session broker** architecture:
+BL4CK solves this with a **session broker** architecture:
 
 <Steps>
 
@@ -86,7 +86,7 @@ The `list_sessions` command returns available user sessions by merging the WTS s
 
 The same session broker architecture extends to macOS and Linux. When the agent runs as a LaunchDaemon (macOS) or systemd service (Linux), it has no display access. The agent detects this via the `IsHeadless` flag (checked by `hasConsole()` on Unix).
 
-In headless mode, all desktop and screenshot commands are routed through IPC to the Breeze Helper process running in the user's desktop session, rather than attempting direct screen capture which would silently fail. The Helper handles screen capture using platform-native APIs (Core Graphics on macOS, X11/Wayland on Linux).
+In headless mode, all desktop and screenshot commands are routed through IPC to the BL4CK Helper process running in the user's desktop session, rather than attempting direct screen capture which would silently fail. The Helper handles screen capture using platform-native APIs (Core Graphics on macOS, X11/Wayland on Linux).
 
 <Aside>
   If no Helper process is connected when a remote desktop session is requested in headless mode, the agent returns an error immediately rather than streaming zero frames.
@@ -94,10 +94,10 @@ In headless mode, all desktop and screenshot commands are routed through IPC to 
 
 ### Multi-Display Support
 
-Breeze supports multi-monitor remote desktop. The viewer can switch between displays on the target device. Each display is captured independently using DXGI Desktop Duplication.
+BL4CK supports multi-monitor remote desktop. The viewer can switch between displays on the target device. Each display is captured independently using DXGI Desktop Duplication.
 
 <Aside type="caution">
-  DXGI Desktop Duplication is delta-based — a static display with no visual changes produces zero frames. Breeze forces a desktop repaint using `InvalidateRect` and `RedrawWindow` after a monitor switch to ensure the first frame is captured immediately.
+  DXGI Desktop Duplication is delta-based — a static display with no visual changes produces zero frames. BL4CK forces a desktop repaint using `InvalidateRect` and `RedrawWindow` after a monitor switch to ensure the first frame is captured immediately.
 </Aside>
 
 ### Adaptive Bitrate
@@ -116,7 +116,7 @@ Remote desktop sessions can optionally stream system audio from the device to th
 
 ### Secure Desktop Capture
 
-Breeze can capture the Windows secure desktop (Ctrl+Alt+Del screen, UAC prompts, lock screen). This is possible because the helper process runs as SYSTEM with `GENERIC_ALL` access to the input desktop. Secure desktop capture is automatic — no additional configuration is required.
+BL4CK can capture the Windows secure desktop (Ctrl+Alt+Del screen, UAC prompts, lock screen). This is possible because the helper process runs as SYSTEM with `GENERIC_ALL` access to the input desktop. Secure desktop capture is automatic — no additional configuration is required.
 
 ### Session Consent & End-User Notification
 
@@ -132,7 +132,7 @@ When a session is active, a small indicator ("*Jordan Lee is connected*" with a 
 
 **What the end user sees in Consent mode**
 
-The consent dialog asks the user to allow or deny the remote session, with **Deny selected by default** — a privacy prompt never grants access on a stray keypress. If the user doesn't respond before the prompt times out, Breeze applies the policy's fallback (see below).
+The consent dialog asks the user to allow or deny the remote session, with **Deny selected by default** — a privacy prompt never grants access on a stray keypress. If the user doesn't respond before the prompt times out, BL4CK applies the policy's fallback (see below).
 
 **Settings (per Configuration Policy → Remote Access)**
 
@@ -145,11 +145,11 @@ The consent dialog asks the user to allow or deny the remote session, with **Den
 | Technician identity shown | Name & email / Name only / Generic | **Name & email** | How much of the technician's identity is revealed to the end user. **Generic** shows "*A technician*" with no name or email. |
 
 <Aside>
-  These surfaces are drawn by the **Breeze Helper** running in the signed-in user's desktop session. On an unattended machine (no user logged in, or the Helper not installed), there is no one to notify or ask — in **Consent** mode, Breeze then applies the *"When consent can't be asked"* fallback. With **Proceed** (the default), unattended and headless machines are never locked out.
+  These surfaces are drawn by the **BL4CK Helper** running in the signed-in user's desktop session. On an unattended machine (no user logged in, or the Helper not installed), there is no one to notify or ask — in **Consent** mode, BL4CK then applies the *"When consent can't be asked"* fallback. With **Proceed** (the default), unattended and headless machines are never locked out.
 </Aside>
 
 <Aside type="note">
-  **Upgrade behavior:** Because the default prompt mode is **Notify**, devices with the Breeze Helper installed begin showing a start notice for remote sessions after upgrade. To restore silent behavior, set the **Remote Access** feature on a Configuration Policy to prompt mode **Off**.
+  **Upgrade behavior:** Because the default prompt mode is **Notify**, devices with the BL4CK Helper installed begin showing a start notice for remote sessions after upgrade. To restore silent behavior, set the **Remote Access** feature on a Configuration Policy to prompt mode **Off**.
 </Aside>
 
 Every consent outcome is audit logged — granted, denied, or bypassed (with the reason, for example no user logged in).
@@ -164,14 +164,14 @@ If the hardware encoder stalls (for example, due to a driver issue), the agent a
 
 ### VNC Fallback and In-Window Switcher (macOS)
 
-Some macOS devices and scenarios — older releases, certain hardware configurations, or sessions started at the login screen — cannot use WebRTC remote desktop. Breeze auto-detects these situations and falls back to VNC via the built-in macOS Screen Sharing service.
+Some macOS devices and scenarios — older releases, certain hardware configurations, or sessions started at the login screen — cannot use WebRTC remote desktop. BL4CK auto-detects these situations and falls back to VNC via the built-in macOS Screen Sharing service.
 
-In the **Breeze Viewer** desktop app, you can switch between WebRTC and VNC transports inside the same session window. If WebRTC degrades or fails, the viewer hands off to VNC without closing the window or losing your place. When conditions improve, you can switch back. From the web app, the **Remote Desktop** button hands off to the viewer via a deep link when VNC is the right transport, so the experience is consistent whether you start from the browser or the app.
+In the **BL4CK Viewer** desktop app, you can switch between WebRTC and VNC transports inside the same session window. If WebRTC degrades or fails, the viewer hands off to VNC without closing the window or losing your place. When conditions improve, you can switch back. From the web app, the **Remote Desktop** button hands off to the viewer via a deep link when VNC is the right transport, so the experience is consistent whether you start from the browser or the app.
 
 When the fallback activates, the system tunnels VNC through the agent connection. When you disconnect, the VNC password is cleared — no credentials persist on the device.
 
 <Aside type="note">
-  The agent no longer disables Apple Remote Management on startup. If you use Screen Sharing alongside Breeze, it stays enabled. VNC fallback behavior is controlled by the `manageRemoteManagement` Configuration Policy flag (off by default). When VNC is needed and Screen Sharing is not already enabled, the agent returns an informative error asking you to enable the policy or enable Screen Sharing manually on the device.
+  The agent no longer disables Apple Remote Management on startup. If you use Screen Sharing alongside BL4CK, it stays enabled. VNC fallback behavior is controlled by the `manageRemoteManagement` Configuration Policy flag (off by default). When VNC is needed and Screen Sharing is not already enabled, the agent returns an informative error asking you to enable the policy or enable Screen Sharing manually on the device.
 </Aside>
 
 ### Session Switcher
@@ -210,7 +210,7 @@ Network Proxy lets you access TCP services on an agent's local network without a
 
 3. Pick a **bridge agent** from the dropdown. The dropdown lists only online agents; it defaults to the device that was linked to the asset, if that device is currently online.
 
-4. Click **Connect**. The LAN device's web UI (router admin page, NAS management panel, printer interface, etc.) loads in an iframe inside Breeze.
+4. Click **Connect**. The LAN device's web UI (router admin page, NAS management panel, printer interface, etc.) loads in an iframe inside BL4CK.
 
 5. Use the **Open in new tab** button to detach the UI into its own browser tab if you prefer a full-window view.
 
@@ -230,13 +230,13 @@ Network Proxy lets you access TCP services on an agent's local network without a
 
 ### Wake-on-LAN
 
-Wake-on-LAN powers on an offline device from the Breeze dashboard without visiting it physically. Because the Breeze server cannot send packets on your local network, the wake is relayed through another online agent on the same network as the target.
+Wake-on-LAN powers on an offline device from the BL4CK dashboard without visiting it physically. Because the BL4CK server cannot send packets on your local network, the wake is relayed through another online agent on the same network as the target.
 
 **Requirements:**
 
 - The target device must have Wake-on-LAN enabled in its BIOS/UEFI (often labelled "Power on by LAN" or "Wake on Magic Packet").
-- The target must have checked in at least once so Breeze has its MAC address(es) and one or more recorded non-APIPA IPv4 subnets. APIPA addresses (`169.254.0.0/16`) are skipped — they're a sign of a broken DHCP lease and don't represent the real LAN.
-- At least one other agent must be online at the same site and on a matching subnet to relay the magic packet. Breeze tries every plausible candidate subnet recorded for the target, in priority order, until one succeeds.
+- The target must have checked in at least once so BL4CK has its MAC address(es) and one or more recorded non-APIPA IPv4 subnets. APIPA addresses (`169.254.0.0/16`) are skipped — they're a sign of a broken DHCP lease and don't represent the real LAN.
+- At least one other agent must be online at the same site and on a matching subnet to relay the magic packet. BL4CK tries every plausible candidate subnet recorded for the target, in priority order, until one succeeds.
 
 **Sending a wake:**
 
@@ -246,15 +246,15 @@ Wake-on-LAN powers on an offline device from the Breeze dashboard without visiti
 
 2. Click **Actions** and select **Wake**.
 
-3. Breeze automatically chooses an online relay agent at the target's site and subnet, sends the magic packet, and reports the relay device and MAC addresses attempted.
+3. BL4CK automatically chooses an online relay agent at the target's site and subnet, sends the magic packet, and reports the relay device and MAC addresses attempted.
 
 </Steps>
 
-If a wake cannot be sent, Breeze returns a specific reason rather than failing silently — the most common are: the target has no recorded MAC address, no known IPv4 subnet (only IPv6), or no online agent is available at its site and subnet to relay the packet. Every wake attempt — successful or not — is recorded in the audit log with the actor, target, relay device, MACs attempted, and result.
+If a wake cannot be sent, BL4CK returns a specific reason rather than failing silently — the most common are: the target has no recorded MAC address, no known IPv4 subnet (only IPv6), or no online agent is available at its site and subnet to relay the packet. Every wake attempt — successful or not — is recorded in the audit log with the actor, target, relay device, MACs attempted, and result.
 
 ### Pluggable Remote-Desktop Launcher
 
-By default, **Connect → Desktop** opens the built-in Breeze WebRTC desktop session. MSPs that standardise on a third-party tool (RustDesk, ScreenConnect, TeamViewer, AnyDesk, and similar) can configure Breeze to hand off to that tool instead, per partner.
+By default, **Connect → Desktop** opens the built-in BL4CK WebRTC desktop session. MSPs that standardise on a third-party tool (RustDesk, ScreenConnect, TeamViewer, AnyDesk, and similar) can configure BL4CK to hand off to that tool instead, per partner.
 
 **Configuring a provider:**
 
@@ -264,7 +264,7 @@ By default, **Connect → Desktop** opens the built-in Breeze WebRTC desktop ses
 
 2. Keep the built-in WebRTC desktop session (the default, which cannot be deleted), or click **Add provider**.
 
-3. Give the provider a name and a launch-URL template. The template supports placeholders that Breeze substitutes at click time:
+3. Give the provider a name and a launch-URL template. The template supports placeholders that BL4CK substitutes at click time:
    - `{id}` — the device's per-tool identifier, read from a device custom field
    - `{password}` — an optional preset password (URL-encoded automatically)
    - `{customFieldKey}` — the value of any device custom field by key
@@ -275,7 +275,7 @@ By default, **Connect → Desktop** opens the built-in Breeze WebRTC desktop ses
 
 </Steps>
 
-Each device then needs that custom field populated with its identifier for the tool. When a user clicks **Connect → Desktop**, Breeze substitutes the values and either opens the URL in a new browser tab (`http`/`https`) or hands it to the operating system's protocol handler (any other scheme, e.g. `rustdesk://`). If the launcher can't issue a URL — provider disabled, no provider configured, device is missing the required custom field, or the resolved URL fails the scheme check — the UI surfaces the specific reason instead of silently falling back to WebRTC, so you can fix the configuration rather than guess why a click did nothing.
+Each device then needs that custom field populated with its identifier for the tool. When a user clicks **Connect → Desktop**, BL4CK substitutes the values and either opens the URL in a new browser tab (`http`/`https`) or hands it to the operating system's protocol handler (any other scheme, e.g. `rustdesk://`). If the launcher can't issue a URL — provider disabled, no provider configured, device is missing the required custom field, or the resolved URL fails the scheme check — the UI surfaces the specific reason instead of silently falling back to WebRTC, so you can fix the configuration rather than guess why a click did nothing.
 
 **Security:**
 
@@ -412,7 +412,7 @@ When a session ends (`disconnected` or `failed`), the platform records `duration
 
 ## Rate Limits
 
-Breeze enforces per-organisation and per-user limits on concurrent remote access resources. When a limit is reached, the creation request returns `429 Too Many Requests`.
+BL4CK enforces per-organisation and per-user limits on concurrent remote access resources. When a limit is reached, the creation request returns `429 Too Many Requests`.
 
 | Resource | Per-org | Per-user |
 |----------|---------|----------|
@@ -438,7 +438,7 @@ To free session capacity, close active sessions from the Active Sessions list on
 
 **MFA required for all remote access.** Every session creation request is gated by MFA verification at the route level. A valid MFA check must be present before a remote session can be created.
 
-**Server is a signaling relay for WebRTC.** The Breeze server brokers WebRTC negotiation (SDP offer/answer and ICE candidates). Once the P2P connection is established, device data does not transit the server. If the WebSocket fallback is active, frame data is relayed through the server but is not persisted.
+**Server is a signaling relay for WebRTC.** The BL4CK server brokers WebRTC negotiation (SDP offer/answer and ICE candidates). Once the P2P connection is established, device data does not transit the server. If the WebSocket fallback is active, frame data is relayed through the server but is not persisted.
 
 **All sessions are audit logged.** Every session creation, state transition, and termination is recorded with the actor identity, device identifier, start time, end time, duration in seconds, and bytes transferred. Audit records are immutable.
 
@@ -513,7 +513,7 @@ WebRTC negotiation failed and the viewer has not yet fallen back to WebSocket. C
 
 - **TURN not configured** — Verify `TURN_HOST` and `TURN_SECRET` are set in `.env` and the coturn container is running (`docker compose logs coturn`). If using an external TURN server, check its status via SSH.
 - **Firewall blocking TURN ports** — Coturn needs TCP and UDP port 3478, plus UDP ports in the relay range (default 49152–65535, or tightened to 49152–49252). Verify the ports are reachable with `nc -z -w 3 TURN_IP 3478` (TCP) and `nc -u -z -w 3 TURN_IP 3478` (UDP).
-- **Wrong `TURN_HOST`** — Must be the TURN server's public IP, not a private address. If Breeze is behind Cloudflare Tunnel, TURN must run on a separate host with its own public IP — see [TURN Server](/deploy/turn-server/).
+- **Wrong `TURN_HOST`** — Must be the TURN server's public IP, not a private address. If BL4CK is behind Cloudflare Tunnel, TURN must run on a separate host with its own public IP — see [TURN Server](/deploy/turn-server/).
 - **Shared secret mismatch** — `TURN_SECRET` in `.env` must exactly match `static-auth-secret` in the coturn config.
 
 The viewer should automatically fall back to the WebSocket transport after a timeout.

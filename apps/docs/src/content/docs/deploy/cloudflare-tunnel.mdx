@@ -1,6 +1,6 @@
 ---
 title: Cloudflare Tunnel
-description: Run Breeze behind a Cloudflare Tunnel with no inbound ports, and optionally lock the dashboard behind Cloudflare Access.
+description: Run BL4CK behind a Cloudflare Tunnel with no inbound ports, and optionally lock the dashboard behind Cloudflare Access.
 sidebar:
   order: 5
   label: Cloudflare Tunnel
@@ -8,7 +8,7 @@ sidebar:
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) lets you expose Breeze without opening any inbound ports on your server. The `cloudflared` daemon makes an outbound connection to Cloudflare's edge, and all traffic reaches Breeze through that tunnel. Your origin IP stays hidden, and the firewall can deny all inbound traffic.
+A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) lets you expose BL4CK without opening any inbound ports on your server. The `cloudflared` daemon makes an outbound connection to Cloudflare's edge, and all traffic reaches BL4CK through that tunnel. Your origin IP stays hidden, and the firewall can deny all inbound traffic.
 
 This is a popular self-hosting setup, and the bundled Caddy config is built to support it out of the box.
 
@@ -35,7 +35,7 @@ Both the dashboard and agent traffic arrive on the same hostname (port 443) and 
 
 ## TLS Termination: HTTP Origin Required
 
-Cloudflare terminates HTTPS at its edge, and the tunnel from `cloudflared` to your server is already encrypted. The hop from `cloudflared` into Breeze must therefore be **plain HTTP**. If Caddy also tries to obtain its own Let's Encrypt certificate, the two TLS layers collide — ACME validation has no inbound port to answer on, and the tunnel fails to connect.
+Cloudflare terminates HTTPS at its edge, and the tunnel from `cloudflared` to your server is already encrypted. The hop from `cloudflared` into BL4CK must therefore be **plain HTTP**. If Caddy also tries to obtain its own Let's Encrypt certificate, the two TLS layers collide — ACME validation has no inbound port to answer on, and the tunnel fails to connect.
 
 There are two supported ways to satisfy this. **Option A keeps Caddy** as the path router (recommended). **Option B bypasses Caddy** and routes paths in the tunnel itself.
 
@@ -43,7 +43,7 @@ There are two supported ways to satisfy this. **Option A keeps Caddy** as the pa
 
 Keep Caddy in front and have it listen on plain `:80`. Caddy still handles the path split, compression, security headers, and SSE tuning. Plain `:80` is the default `CADDY_SITE_ADDRESS`, so the only rule is: **do not set `CADDY_SITE_ADDRESS` to a domain** — a domain value switches Caddy into Let's Encrypt mode, which is exactly what you must avoid behind a tunnel.
 
-**Breeze `.env`:**
+**BL4CK `.env`:**
 
 ```bash
 # Plain HTTP — let Cloudflare handle TLS at the edge.
@@ -89,7 +89,7 @@ ingress:
 ## Prerequisites
 
 - A domain on a Cloudflare account (the zone must be active on Cloudflare).
-- A working Breeze stack reachable internally on the Caddy container.
+- A working BL4CK stack reachable internally on the Caddy container.
 - The bundled `tunnel` (cloudflared) service from `deploy/docker-compose.prod.yml`, or your own `cloudflared` install.
 
 ---
@@ -104,7 +104,7 @@ ingress:
 
 2. **Add a public hostname**
 
-   In the tunnel's **Public Hostname** tab, add your Breeze hostname (for example `breeze.example.com`) and point its **Service** at the Caddy container. The service type must be **HTTP**, not HTTPS — see [TLS Termination](#tls-termination-http-origin-required) above.
+   In the tunnel's **Public Hostname** tab, add your BL4CK hostname (for example `breeze.example.com`) and point its **Service** at the Caddy container. The service type must be **HTTP**, not HTTPS — see [TLS Termination](#tls-termination-http-origin-required) above.
 
    ```
    Service type: HTTP
@@ -128,7 +128,7 @@ ingress:
 
    Place the matching `<TUNNEL_ID>.json` credentials file (downloaded from Cloudflare) in the same directory. Set `CLOUDFLARED_IMAGE_REF` in your `.env` to a digest-pinned `cloudflared` image.
 
-4. **Tell Breeze it sits behind a proxy**
+4. **Tell BL4CK it sits behind a proxy**
 
    Because every request now arrives from `cloudflared` → Caddy, both layers must be told which hop to trust for the real client IP. The traffic chain is `cloudflared (172.30.0.10) → caddy (172.30.0.11) → api`.
 
@@ -172,7 +172,7 @@ ingress:
 
 ## Restricting the Dashboard with Cloudflare Access
 
-Breeze has no built-in IP allowlist for the dashboard, so IP or identity restrictions belong at the proxy. With a tunnel already in place, [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) is the cleanest way to gate the admin UI while leaving agent traffic open to the internet.
+BL4CK has no built-in IP allowlist for the dashboard, so IP or identity restrictions belong at the proxy. With a tunnel already in place, [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) is the cleanest way to gate the admin UI while leaving agent traffic open to the internet.
 
 The key constraint: agents connect from wherever your managed machines live (roaming laptops, customer sites, dynamic IPs), so you cannot allowlist the agents. Instead, protect everything **except** the agent paths.
 

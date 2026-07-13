@@ -38,7 +38,7 @@ SentinelOne is available through `/api/v1/s1/*` with an encrypted per-org connec
 - `POST /api/v1/s1/isolate` — device isolation or unisolation.
 - `POST /api/v1/s1/threat-action` — threat kill/quarantine/rollback.
 - `POST /api/v1/s1/sync` — trigger manual sync.
-- `POST /api/v1/s1/sites/map` — map/unmap an S1 site to a Breeze organization.
+- `POST /api/v1/s1/sites/map` — map/unmap an S1 site to a BL4CK organization.
 
 ### Background jobs
 
@@ -49,7 +49,7 @@ SentinelOne is available through `/api/v1/s1/*` with an encrypted per-org connec
 ## Huntress
 
 ### Overview
-Breeze supports a per-organization Huntress connector that syncs endpoint agent and incident intelligence into unified incident workflows.
+BL4CK supports a per-organization Huntress connector that syncs endpoint agent and incident intelligence into unified incident workflows.
 
 ### API Endpoints
 - `GET /api/v1/huntress/integration`
@@ -66,7 +66,7 @@ Breeze supports a per-organization Huntress connector that syncs endpoint agent 
    - optional `accountId`
    - optional `apiBaseUrl` (must be HTTPS on `*.huntress.io`)
    - `webhookSecret` (required for webhook ingestion)
-2. If webhook delivery is enabled in Huntress, configure the Breeze webhook endpoint:
+2. If webhook delivery is enabled in Huntress, configure the BL4CK webhook endpoint:
    - `POST /api/v1/huntress/webhook`
    - include either integration id or account id in webhook routing metadata
    - if multiple active integrations use the same account id, include an explicit integration id
@@ -79,7 +79,7 @@ Breeze supports a per-organization Huntress connector that syncs endpoint agent 
 - Agent deduplication is based on `(integration_id, huntress_agent_id)`.
 
 ### Correlation Behavior
-- Huntress agents are mapped to Breeze devices by normalized hostname.
+- Huntress agents are mapped to BL4CK devices by normalized hostname.
 - Huntress incidents are mapped to devices via:
   1. The Huntress agent's pre-established device mapping (itself based on hostname).
   2. Direct hostname fallback when no agent link exists.

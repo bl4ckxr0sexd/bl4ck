@@ -1,4 +1,4 @@
-# Breeze ML Operations Runbook
+# BL4CK ML Operations Runbook
 
 This runbook covers the ML/AI surfaces shipped by the 2026-06 roadmap stack:
 alert correlation, RCA, metric rollups, anomalies, remediation suggestions,

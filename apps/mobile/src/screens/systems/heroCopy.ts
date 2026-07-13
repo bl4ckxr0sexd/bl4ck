@@ -25,7 +25,7 @@ export function deriveHeroState(
     return {
       copy: 'No devices yet.',
       segments: null,
-      legend: 'Pair your first device from the Breeze web portal.',
+      legend: 'Pair your first device from the BL4CK web portal.',
     };
   }
 

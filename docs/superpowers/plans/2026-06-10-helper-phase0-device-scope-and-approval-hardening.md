@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close security finding A (HIGH) — make the Breeze Helper token unable to reach any device but its own and unable to self-approve actions — without depending on PR #1183.
+**Goal:** Close security finding A (HIGH) — make the BL4CK Helper token unable to reach any device but its own and unable to self-approve actions — without depending on PR #1183.
 
 **Architecture:** A central device-scope gate in `executeTool` keyed on a new `AuthContext.helperDeviceId` forces every Helper tool's device input to the Helper's own device and denies org-wide tools; the Helper defaults to a curated single-device read-only tool set; the self-approve endpoint is removed so approvals can only come from the existing authenticated `/ai` path.
 
@@ -43,7 +43,7 @@ In `apps/api/src/middleware/auth.ts`, inside `export interface AuthContext { ...
 
 ```ts
   /**
-   * Set ONLY for Breeze Helper sessions (helperAuth). When present, the
+   * Set ONLY for BL4CK Helper sessions (helperAuth). When present, the
    * AI-tools executeTool gate forces every tool's device input to this device
    * id and denies org-wide tools — the Helper can act only on its own device.
    * Undefined for all normal (user/agent) contexts.
@@ -123,7 +123,7 @@ In `apps/api/src/services/aiTools.ts`, add near the other shared helpers (e.g. j
 ```ts
 /**
  * Helper device-scoping (security finding A, Phase 0).
- * Maps each tool the Breeze Helper may run to the input field naming its
+ * Maps each tool the BL4CK Helper may run to the input field naming its
  * target device. A tool absent from this map is org-wide and is DENIED under
  * a Helper context. The Helper's default tool set (helperToolFilter `basic`)
  * is kept in sync with these keys.

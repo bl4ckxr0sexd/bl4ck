@@ -66,13 +66,13 @@ becomes the patch engine, running winget directly against **machine scope**, wit
 
 - **Chocolatey** stays exactly as-is (registered if `choco` on PATH). Not touched.
 - **Supply-chain hardening:** any downloaded bootstrap artifact MUST be pinned to
-  a specific version and SHA-256 verified against the signed Breeze release
+  a specific version and SHA-256 verified against the signed BL4CK release
   manifest before use. No unpinned runtime fetches. (Fits the existing
   `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` / signed-manifest infra and
   `check-supply-chain-hardening.sh`.)
 - **No new deployed binary.** The work lands inside the existing Go agent.
 - **No new required endpoint egress** on customer machines: bootstrap artifacts
-  are served from the Breeze API (the channel the agent already reaches), not
+  are served from the BL4CK API (the channel the agent already reaches), not
   from github.com / aka.ms / nuget.org.
 
 ## Architecture Decision: build into the agent
@@ -111,7 +111,7 @@ and re-checked on version drift.
 
 ### Provision (only when missing / below min)
 
-- Fetch the pinned bootstrap artifact set from the **Breeze API** (see Component
+- Fetch the pinned bootstrap artifact set from the **BL4CK API** (see Component
   4): App Installer `.msixbundle`, dependency packages (`Microsoft.VCLibs`,
   `Microsoft.UI.Xaml`), and the App Installer **license XML**.
 - Verify each artifact's SHA-256 against the signed manifest.
@@ -175,16 +175,16 @@ than failing the job.
 
 ## Component 4 — bootstrap artifact delivery (Breeze-mirrored)
 
-- Breeze mirrors the Microsoft-published bundles (winget-cli GitHub release
+- BL4CK mirrors the Microsoft-published bundles (winget-cli GitHub release
   assets + VCLibs/UI.Xaml + license XML) as **pinned, versioned release
   artifacts** in the existing signed-manifest artifact system.
-- Mirroring ≠ rebuilding: bundles remain Microsoft-signed; Breeze caches a pinned
+- Mirroring ≠ rebuilding: bundles remain Microsoft-signed; BL4CK caches a pinned
   copy and serves it over the API the agent already trusts.
-- The agent downloads them from the Breeze API on demand (Server 2019/2022 and
+- The agent downloads them from the BL4CK API on demand (Server 2019/2022 and
   edge cases only — a minority of the fleet), verifies SHA-256 against the
   manifest, then provisions.
 - **Maintenance task:** a periodic "pull latest App Installer from MS → publish
-  to Breeze artifacts" refresh (manual or scheduled). Version pin bumped
+  to BL4CK artifacts" refresh (manual or scheduled). Version pin bumped
   deliberately, not "latest at runtime."
 
 ## Data Flow (v1, machine scope, no user required)

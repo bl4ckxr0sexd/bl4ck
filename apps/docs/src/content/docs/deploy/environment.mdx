@@ -1,6 +1,6 @@
 ---
 title: Environment Variables
-description: Complete reference for all Breeze RMM configuration variables.
+description: Complete reference for all BL4CK RMM configuration variables.
 sidebar:
   order: 2
   label: Environment Variables
@@ -113,7 +113,7 @@ deployment env vars.
 | `HELPER_BINARY_DIR` | `/data/binaries/helper` | | Local directory containing helper binaries |
 | `BINARY_VERSION_FILE` | — | | Path to `VERSION` file for local mode DB registration (set automatically in Docker Compose) |
 | `BINARY_VERSION` | — | | Release tag for GitHub redirect mode (falls back to `BREEZE_VERSION`, then `latest`) |
-| `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` | `yzx8ftmcls6uBetFC5SYnZhBo+cbur3IX50TbBthTso=` (official releases) | Yes (prod) | Comma-separated raw base64 Ed25519 public keys that sign release manifests. Use the published default for official Breeze releases (it is a public key, safe to commit); only change it if you sign your own binaries. The API refuses to start in production without it. `BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` is accepted as an alias. |
+| `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` | `yzx8ftmcls6uBetFC5SYnZhBo+cbur3IX50TbBthTso=` (official releases) | Yes (prod) | Comma-separated raw base64 Ed25519 public keys that sign release manifests. Use the published default for official BL4CK releases (it is a public key, safe to commit); only change it if you sign your own binaries. The API refuses to start in production without it. `BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` is accepted as an alias. |
 | `AGENT_AUTO_PROMOTE` | `true` | | Controls whether a newly registered/synced agent release immediately becomes the fleet upgrade target. `true` (default): publishing a release promotes it to the fleet at once. `false`: new binaries stay downloadable but the fleet only advances when you explicitly promote a version (platform admin + MFA) — see [Controlled agent fleet rollout](/deploy/upgrades/#controlled-agent-fleet-rollout). |
 
 See [Binary Distribution](/deploy/binaries/) for details on local vs GitHub mode and S3 offloading.
@@ -133,7 +133,7 @@ See [Binary Distribution](/deploy/binaries/) for details on local vs GitHub mode
 
 ## WebRTC / TURN
 
-The Breeze stack includes a [coturn](https://github.com/coturn/coturn) TURN server for WebRTC relay. Without TURN, remote desktop connections fail when either peer is behind symmetric NAT or a restrictive firewall.
+The BL4CK stack includes a [coturn](https://github.com/coturn/coturn) TURN server for WebRTC relay. Without TURN, remote desktop connections fail when either peer is behind symmetric NAT or a restrictive firewall.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
@@ -147,7 +147,7 @@ The Breeze stack includes a [coturn](https://github.com/coturn/coturn) TURN serv
 </Aside>
 
 <Aside>
-  If Breeze runs behind Cloudflare Tunnel or another HTTP-only proxy, TURN must run on a separate host with a public IP. Point `TURN_HOST` to the external TURN server's IP. See [TURN Server](/deploy/turn-server/) for setup instructions.
+  If BL4CK runs behind Cloudflare Tunnel or another HTTP-only proxy, TURN must run on a separate host with a public IP. Point `TURN_HOST` to the external TURN server's IP. See [TURN Server](/deploy/turn-server/) for setup instructions.
 </Aside>
 
 ## Monitoring
@@ -244,7 +244,7 @@ Two rate-limit tiers protect the API. The generic per-user limit covers logged-i
 | `CLOUDFLARE_ZONE_ID` | — | Cloudflare zone ID for your domain |
 
 <Aside>
-  mTLS is fully optional. When these variables are unset, Breeze operates normally without mutual TLS.
+  mTLS is fully optional. When these variables are unset, BL4CK operates normally without mutual TLS.
 </Aside>
 
 ## Cloudflare Access JWT trust
@@ -253,8 +253,8 @@ Two rate-limit tiers protect the API. The generic per-user limit covers logged-i
 |---|---|---|
 | `CF_ACCESS_TRUST_ENABLED` | `false` | Set `true` to short-circuit `POST /auth/login` when a valid `Cf-Access-Jwt-Assertion` header is present. Off by default. See [Cloudflare Access trust](/deploy/cloudflare-access-trust/). |
 | `CF_ACCESS_TEAM_DOMAIN` | — | Required when trust is enabled. Bare hostname of your Cloudflare team domain, e.g. `example.cloudflareaccess.com`. No scheme. |
-| `CF_ACCESS_AUD` | — | Required when trust is enabled. AUD tag for the Cloudflare Access application protecting Breeze. |
-| `CF_ACCESS_TRUSTS_MFA` | `false` | Treat a valid CF Access JWT as MFA-satisfied for the minted Breeze session. Only enable if your CF Access policy actually requires step-up MFA. |
+| `CF_ACCESS_AUD` | — | Required when trust is enabled. AUD tag for the Cloudflare Access application protecting BL4CK. |
+| `CF_ACCESS_TRUSTS_MFA` | `false` | Treat a valid CF Access JWT as MFA-satisfied for the minted BL4CK session. Only enable if your CF Access policy actually requires step-up MFA. |
 
 ## Cloud-to-Cloud Backup (M365)
 
@@ -273,8 +273,8 @@ These enable partners to connect a Microsoft 365 shared support mailbox so custo
 
 | Variable | Default | Description |
 |---|---|---|
-| `TICKET_MAILBOX_M365_CLIENT_ID` | — | Azure AD app (client) ID for the **Breeze Ticketing** app. When set with the secret, the Microsoft 365 mailbox card appears under Settings → Ticketing → Inbound Email. |
-| `TICKET_MAILBOX_M365_CLIENT_SECRET` | — | Client secret for the Breeze Ticketing Azure app. |
+| `TICKET_MAILBOX_M365_CLIENT_ID` | — | Azure AD app (client) ID for the **BL4CK Ticketing** app. When set with the secret, the Microsoft 365 mailbox card appears under Settings → Ticketing → Inbound Email. |
+| `TICKET_MAILBOX_M365_CLIENT_SECRET` | — | Client secret for the BL4CK Ticketing Azure app. |
 | `PUBLIC_TICKET_MAILBOX_APP_ID` | — | Build-time, browser-exposed app id shown in the Application Access Policy PowerShell snippet on the settings card. Safe to publish -- it is the app's public client id. |
 
 <Aside>
@@ -285,7 +285,7 @@ These enable partners to connect a Microsoft 365 shared support mailbox so custo
 
 | Variable | Default | Description |
 |---|---|---|
-| `BREEZE_VERSION` | `latest` | Breeze release tag for Docker images (e.g. `0.50.0`). Also used by GitHub redirect mode for agent binary downloads. |
+| `BREEZE_VERSION` | `latest` | BL4CK release tag for Docker images (e.g. `0.50.0`). Also used by GitHub redirect mode for agent binary downloads. |
 | `DOCKER_PLATFORM` | `linux/amd64` | Container platform. GHCR images are amd64 only. On Apple Silicon, use `docker-compose.override.yml.local-build` to build native arm64 images instead. |
 | `REDIS_MAXMEMORY` | `256mb` | Maximum memory Redis is allowed to use. Redis runs with `noeviction` policy so BullMQ jobs are never silently dropped. |
 
@@ -348,7 +348,7 @@ from the SDK subprocess environment — so a stray or unmapped `IS_HOSTED` can
 never redirect platform AI traffic to a third-party endpoint.
 
 Cost tracking is best-effort. The SDK can't price a non-Anthropic model id, so
-it reports `total_cost_usd: 0`; Breeze then falls back to token-based pricing,
+it reports `total_cost_usd: 0`; BL4CK then falls back to token-based pricing,
 and an **unrecognized model id is priced at conservative Opus-tier
 `DEFAULT_PRICING` ($5/$25 per MTok)** — i.e. likely an *over*-estimate for a
 cheap local model, not `$0`. For accurate accounting, add the served model id to

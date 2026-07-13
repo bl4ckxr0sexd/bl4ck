@@ -6,7 +6,7 @@
 
 ## Summary
 
-Add the ability to import QuickBooks customers into Breeze as Organizations, each
+Add the ability to import QuickBooks customers into BL4CK as Organizations, each
 with one default Site, carrying contact and address information. The flow is
 interactive **browse → select → import**, modeled on the existing catalog
 distributor import. Re-imports are idempotent via a QuickBooks customer-id link
@@ -206,7 +206,7 @@ An "Import from QuickBooks" screen in the accounting/integrations area:
 ## Out of Scope (YAGNI)
 
 - Background/scheduled sync of customers (interactive import only).
-- Two-way push (Breeze org → QB customer); that's the separate `upsertCustomer`
+- Two-way push (BL4CK org → QB customer); that's the separate `upsertCustomer`
   seam.
 - Sub-customer → Site hierarchy (each QB customer gets exactly one default Site).
 - Updating existing orgs from QB on re-import (skipped, not updated). Can be a

@@ -105,7 +105,7 @@ const FEATURE_META: Record<FeatureType, { label: string; Icon: LucideIcon }> = {
   sensitive_data:     { label: 'Data Discovery',      Icon: FileSearch },
   peripheral_control: { label: 'Peripheral Control',  Icon: Usb },
   event_log:          { label: 'Event Logs',          Icon: ScrollText },
-  helper:             { label: 'Breeze Assist',       Icon: LifeBuoy },
+  helper:             { label: 'BL4CK Assist',       Icon: LifeBuoy },
   onedrive_helper:    { label: 'OneDrive Helper',     Icon: Cloud },
   vulnerability:      { label: 'Vulnerability Scanning', Icon: ShieldAlert },
 };
@@ -121,7 +121,7 @@ const LEVEL_LABELS: Record<AssignmentLevel, string> = {
   site: 'Site',
   device_group: 'Device Group',
   device: 'Device',
-  default: 'Breeze Defaults',
+  default: 'BL4CK Defaults',
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -234,17 +234,17 @@ export default function DeviceEffectiveConfigTab({ deviceId }: DeviceEffectiveCo
           href="/configuration-policies/defaults"
           className="mt-2 inline-block text-sm font-medium text-primary hover:underline"
         >
-          View Breeze Defaults
+          View BL4CK Defaults
         </a>
       </div>
     );
   }
 
   const { features, inheritanceChain } = data;
-  // The synthetic "Breeze Defaults" layer (level 'default') is excluded from the
+  // The synthetic "BL4CK Defaults" layer (level 'default') is excluded from the
   // assigned-policy count AND the inheritance-chain table below — it is not a real
   // assigned policy and has no policy page to link to. Its feature types instead
-  // collapse into the "Not enforced — using Breeze Defaults" strip, and the
+  // collapse into the "Not enforced — using BL4CK Defaults" strip, and the
   // dedicated /configuration-policies/defaults page covers them in full.
   const assignedChain = inheritanceChain.filter((e) => e.level !== 'default');
   const configuredTypes = ALL_FEATURE_TYPES.filter((ft) => features[ft]);
@@ -332,7 +332,7 @@ export default function DeviceEffectiveConfigTab({ deviceId }: DeviceEffectiveCo
         <div className="rounded-lg border bg-card p-5 shadow-xs">
           <div className="flex items-center gap-2">
             <h4 className="text-sm font-semibold text-muted-foreground">Not enforced</h4>
-            <span className="text-xs text-muted-foreground">— using Breeze Defaults</span>
+            <span className="text-xs text-muted-foreground">— using BL4CK Defaults</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {baselineTypes.map((ft) => {
@@ -352,7 +352,7 @@ export default function DeviceEffectiveConfigTab({ deviceId }: DeviceEffectiveCo
       )}
 
       {/* Inheritance chain — real assigned policies only (the synthetic
-          "Breeze Defaults" node is excluded; see assignedChain above). */}
+          "BL4CK Defaults" node is excluded; see assignedChain above). */}
       {assignedChain.length > 0 && (
         <div className="rounded-lg border bg-card p-6 shadow-xs">
           <h4 className="font-semibold mb-3">Inheritance Chain</h4>

@@ -45,7 +45,7 @@ type SavedBranding = {
 
 const defaultBranding: BrandingData = {
   organizationName: '',
-  portalName: 'Breeze Portal',
+  portalName: 'BL4CK Portal',
   portalUrl: '',
   supportEmail: '',
   primaryColor: '#2563eb',
@@ -410,7 +410,7 @@ export default function BrandingEditor({ organizationId, onDirty, onSave }: Bran
   const secondarySwatch = normalizeHex(resolvedSecondary) ?? defaultBranding.secondaryColor;
   const primaryToken = resolveUiColorToken(resolvedPrimary, defaultBranding.primaryColor);
   const secondaryToken = resolveUiColorToken(resolvedSecondary, defaultBranding.secondaryColor);
-  const initials = getInitials(branding.organizationName || 'Breeze');
+  const initials = getInitials(branding.organizationName || 'BL4CK');
   const safeLogoLightPreview = sanitizeImageSrc(logoLightPreview);
   const safeLogoDarkPreview = sanitizeImageSrc(logoDarkPreview);
   const safeFaviconPreview = sanitizeImageSrc(faviconPreview);
@@ -628,7 +628,7 @@ export default function BrandingEditor({ organizationId, onDirty, onSave }: Bran
                       <p className="text-xs opacity-80">Weekly activity summary</p>
                     </div>
                   </div>
-                  <span className="text-xs font-semibold uppercase tracking-wide">Breeze</span>
+                  <span className="text-xs font-semibold uppercase tracking-wide">BL4CK</span>
                 </div>
                 <div className="space-y-3 p-4 text-sm">
                   <p>Hello Priya,</p>

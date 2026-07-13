@@ -24,7 +24,7 @@ export function ColdOpenChips({ onPick }: Props) {
           { color: theme.textMd, marginBottom: spacing[3] },
         ]}
       >
-        Ask Breeze.
+        Ask BL4CK.
       </Text>
       <View style={{ gap: spacing[2] }}>
         {SUGGESTIONS.map((s) => (

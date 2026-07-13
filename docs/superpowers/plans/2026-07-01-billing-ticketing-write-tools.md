@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give the Breeze AI/MCP surface full write coverage over the billing engine (invoices, catalog, contracts, quotes/proposals) and close the ticketing write gaps, while first repairing the currently-broken billing read tools and adding a contract test that prevents tool-registry drift.
+**Goal:** Give the BL4CK AI/MCP surface full write coverage over the billing engine (invoices, catalog, contracts, quotes/proposals) and close the ticketing write gaps, while first repairing the currently-broken billing read tools and adding a contract test that prevents tool-registry drift.
 
 **Architecture:** Each billing domain gets one **action-multiplexer** AI tool (`manage_invoices`, `manage_catalog`, `manage_contracts`, `manage_quotes`) that dispatches on an `action` enum to the existing actor-guarded service functions (`invoiceService`, `catalogService`, `contractService`, `quoteService`/`quoteLifecycle`). Ticketing extends the existing `manage_tickets` multiplexer with new actions. Every tool builds an actor (`{ userId, partnerId, accessibleOrgIds }`) from `AuthContext` and relies on the service layer's internal `requireOrgAccess` for org isolation; ticket-by-id actions additionally run `findTicketWithAccess` first because the ticket service does not self-enforce scope. Financial state transitions and cross-org moves are Tier 3 (human approval in-app / `ai:execute` + prod allowlist over MCP); draft/line edits are Tier 2 (auto-execute + audit).
 

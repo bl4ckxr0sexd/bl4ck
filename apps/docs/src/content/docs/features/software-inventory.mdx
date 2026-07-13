@@ -376,7 +376,7 @@ Returns all per-device results for a given deployment. Use this to understand wh
   The `/devices/:id/software` endpoint returns persisted agent-reported data from the database. The `/software/inventory/*` endpoints currently serve from an in-memory layer that does not persist across server restarts. If you see different results between the two, this is expected. A future release will unify both endpoints against the database.
 </Aside>
 
-The device software inventory records what is actually installed on each endpoint. This data is reported by the Breeze agent during periodic scans and is stored in the `software_inventory` database table.
+The device software inventory records what is actually installed on each endpoint. This data is reported by the BL4CK agent during periodic scans and is stored in the `software_inventory` database table.
 
 ### Inventory Record Fields
 
@@ -391,7 +391,7 @@ The device software inventory records what is actually installed on each endpoin
 | `installDate` | date | When the software was installed. |
 | `installLocation` | text | File system path where the software is installed. |
 | `uninstallString` | text | The uninstall command or registry key for removing the software. |
-| `isManaged` | boolean | Whether the software is managed through the Breeze catalog. Defaults to `false`. |
+| `isManaged` | boolean | Whether the software is managed through the BL4CK catalog. Defaults to `false`. |
 | `lastSeen` | timestamp | When the agent last reported this software as installed. |
 
 ### Inventory Source Types
@@ -400,9 +400,9 @@ Each inventory item includes a `source` field indicating how the software was de
 
 | Source | Description |
 |--------|-------------|
-| `deployment` | Installed through a Breeze software deployment. |
+| `deployment` | Installed through a BL4CK software deployment. |
 | `baseline` | Present on the device when it was first enrolled (discovered during initial scan). |
-| `user` | Installed manually by a user outside of Breeze management. |
+| `user` | Installed manually by a user outside of BL4CK management. |
 
 ### Querying All Inventory
 
@@ -549,7 +549,7 @@ All software endpoints require authentication and are scoped to `organization`, 
 
 ## Winget Integration (Windows)
 
-On Windows devices, the Breeze agent can use the **Windows Package Manager (winget)** as a software provider for installations, updates, and uninstalls. Winget operations run through the **user helper IPC** channel because winget requires a user session context — it cannot run directly from a Windows service (Session 0).
+On Windows devices, the BL4CK agent can use the **Windows Package Manager (winget)** as a software provider for installations, updates, and uninstalls. Winget operations run through the **user helper IPC** channel because winget requires a user session context — it cannot run directly from a Windows service (Session 0).
 
 ### How it works
 

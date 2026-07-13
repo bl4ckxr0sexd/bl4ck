@@ -103,7 +103,7 @@ describe('ConnectSsoCard (#2183)', () => {
 
     render(<ConnectSsoCard />);
 
-    expect(await screen.findByText(/already linked to a different Breeze user/i)).toBeInTheDocument();
+    expect(await screen.findByText(/already linked to a different BL4CK user/i)).toBeInTheDocument();
   });
 
   it('shows an error banner for ?ssoLinkError=user_gone', async () => {

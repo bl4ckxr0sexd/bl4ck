@@ -2,7 +2,7 @@ import { fetchWithAuth } from './auth';
 import type { RiskTier, AssuranceLevel } from '@breeze/shared';
 
 /**
- * Breeze Authenticator (Phase 4) — partner approval-security policy client.
+ * BL4CK Authenticator (Phase 4) — partner approval-security policy client.
  * Reads/writes the per-MSP enforcement floor. The server re-validates the
  * raise-only invariant; this client constrains the UI to it as well.
  */

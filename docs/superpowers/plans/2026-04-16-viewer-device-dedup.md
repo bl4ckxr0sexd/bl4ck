@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** When the user clicks "Connect" for a device that already has an open Breeze Viewer window, focus the existing window instead of opening a new one.
+**Goal:** When the user clicks "Connect" for a device that already has an open BL4CK Viewer window, focus the existing window instead of opening a new one.
 
 **Architecture:** Web app adds `device=<deviceId>` to the `breeze://connect` deep link. Viewer maintains a `device_id → window_label` map. On a new deep link, the Rust router checks the device map first; on a match it focuses the existing window and returns early instead of building a new one. The just-created server-side session for the duplicate click is left to the existing stale-session sweep.
 

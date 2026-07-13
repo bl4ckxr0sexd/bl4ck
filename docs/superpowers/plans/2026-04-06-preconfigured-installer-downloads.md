@@ -521,7 +521,7 @@ if [ ! -f "$ENROLLMENT_JSON" ]; then
 fi
 
 # Install the PKG
-echo "Installing Breeze Agent..."
+echo "Installing BL4CK Agent..."
 sudo installer -pkg "$SCRIPT_DIR/breeze-agent.pkg" -target /
 
 # Read enrollment config (macOS ships python3)
@@ -541,7 +541,7 @@ sudo /usr/local/bin/breeze-agent enroll "\${ENROLL_ARGS[@]}"
 # Clean up credentials
 rm -f "$ENROLLMENT_JSON"
 
-echo "Breeze agent installed and enrolled successfully."
+echo "BL4CK agent installed and enrolled successfully."
 `;
 
 interface MacosZipValues {

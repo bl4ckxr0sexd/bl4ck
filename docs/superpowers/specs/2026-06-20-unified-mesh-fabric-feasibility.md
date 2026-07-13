@@ -210,7 +210,7 @@ The historical "Phase 3 native file sharing" is **absorbed into Phase 2**.
 The hardest requirement (self-hosters run the whole fabric with zero
 Breeze-cloud dependency) is satisfied because:
 
-- The coordinator is "just another Breeze service" — it ships in the compose
+- The coordinator is "just another BL4CK service" — it ships in the compose
   bundle next to api/web/postgres/redis and distributes WireGuard configs/ACLs
   the same way it already distributes config policies.
 - The relay reuses the **coturn operational pattern self-hosters already run**

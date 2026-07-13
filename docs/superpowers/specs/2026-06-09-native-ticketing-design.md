@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-09
 **Status:** Approved design, pre-implementation
-**Scope decision:** Build ticketing natively in Breeze rather than integrating with LanternOps. LanternOps (Django) code is not portable, but its production-tested data model and business logic serve as the blueprint.
+**Scope decision:** Build ticketing natively in BL4CK rather than integrating with LanternOps. LanternOps (Django) code is not portable, but its production-tested data model and business logic serve as the blueprint.
 
 ## Background / Current State (verified 2026-06-09)
 
@@ -157,7 +157,7 @@ Explicit checks against the long-term PSA roadmap. Implementation plans must not
 - **Service catalog (future)**: `ticket_parts` gains a nullable `catalog_item_id` FK when a `catalog_items` table exists (LanternOps pattern: `TicketPart.product` nullable). Parts stay usable free-text forever.
 - **Accounting & distributor integrations (QuickBooks, Xero, Sherweb, Pax8, TechData, …)**: follow the existing PSA pattern — per-integration connection tables + external-ref **mapping tables** (like `psa_ticket_mappings`), never columns on core tables. Time entries/parts → accounting invoice lines; catalog/parts → distributor SKUs. Nothing in the core schema needs to change for any of these.
 - **Large-scale MSP operations**: per-partner sequences are race-safe; queue queries are index-backed (status, assignee, org, SLA fields — composite indexes in the migration); `assignedTeam` already exists on `tickets` for team-based routing; custom statuses, boards/views, and round-robin assignment layer on without schema breakage.
-- **External API consumers**: the technician routes are the public API (same auth/RBAC as the rest of Breeze) — no separate "internal" API to deprecate later.
+- **External API consumers**: the technician routes are the public API (same auth/RBAC as the rest of BL4CK) — no separate "internal" API to deprecate later.
 
 ## 9. Testing
 

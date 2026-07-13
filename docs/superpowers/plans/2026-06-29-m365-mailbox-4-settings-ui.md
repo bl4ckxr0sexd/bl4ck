@@ -14,7 +14,7 @@
 - Every POST/DELETE wraps in `runAction` (`apps/web/src/lib/runAction.ts`); catch pattern: 401 → let auth redirect; non-401 `ActionError` already toasted by `runAction`; other errors → `showToast`.
 - The component path must be added to `no-silent-mutations.test.ts` `TARGET_GLOBS` AND the hardcoded count bumped in the same change.
 - Web has NO client-side permission store — render for everyone; the API enforces admin+MFA. (Don't gate buttons on a missing permission store.)
-- No internal infra details; the PowerShell snippet uses the Breeze Ticketing app id from a public config value (`PUBLIC_TICKET_MAILBOX_APP_ID`) or is fetched from the connections endpoint — never hardcode a tenant/secret.
+- No internal infra details; the PowerShell snippet uses the BL4CK Ticketing app id from a public config value (`PUBLIC_TICKET_MAILBOX_APP_ID`) or is fetched from the connections endpoint — never hardcode a tenant/secret.
 
 ## File Structure
 
@@ -153,15 +153,15 @@ const STATUS_LABEL: Record<MailboxConnectionDTO['status'], string> = {
   disabled: 'Disabled',
 };
 
-const APP_ID = (import.meta as unknown as { env?: Record<string, string> }).env?.PUBLIC_TICKET_MAILBOX_APP_ID ?? '<Breeze Ticketing app id>';
+const APP_ID = (import.meta as unknown as { env?: Record<string, string> }).env?.PUBLIC_TICKET_MAILBOX_APP_ID ?? '<BL4CK Ticketing app id>';
 
 function powershellSnippet(mailbox: string): string {
   return [
     '# Run in Exchange Online PowerShell (Connect-ExchangeOnline) as a tenant admin:',
-    `New-DistributionGroup -Name "Breeze Ticketing Mailboxes" -Type Security -Members "${mailbox}"`,
+    `New-DistributionGroup -Name "BL4CK Ticketing Mailboxes" -Type Security -Members "${mailbox}"`,
     `New-ApplicationAccessPolicy -AppId ${APP_ID} \\`,
-    '  -PolicyScopeGroupId "Breeze Ticketing Mailboxes" -AccessRight RestrictAccess \\',
-    '  -Description "Restrict Breeze Ticketing to the support mailbox"',
+    '  -PolicyScopeGroupId "BL4CK Ticketing Mailboxes" -AccessRight RestrictAccess \\',
+    '  -Description "Restrict BL4CK Ticketing to the support mailbox"',
   ].join('\n');
 }
 
@@ -407,4 +407,4 @@ git commit -m "feat(web): surface M365 consent redirect status as a toast"
 
 Suggested PR sequence (stacked, mirroring Phase 4): **Plan 1 → Plan 2 → Plan 3 → Plan 4**, each off the prior. Plan 1 ships the table + consent (verifiable in isolation: connect a mailbox, see `connected`). Plan 2 ships inbound (mail becomes tickets). Plan 3 ships outbound (replies from the mailbox). Plan 4 ships the UI. Each plan's RLS/test gates must be green before stacking the next.
 
-**Env to add across deploys** (`/opt/breeze/.env` + the `api` service `environment:` block): `TICKET_MAILBOX_M365_CLIENT_ID`, `TICKET_MAILBOX_M365_CLIENT_SECRET`, and `PUBLIC_TICKET_MAILBOX_APP_ID` (web). The Azure "Breeze Ticketing" app needs `Mail.ReadWrite` + `Mail.Send` (application) and the callback `…/api/v1/tickets/mailbox/callback` registered as a redirect URI.
+**Env to add across deploys** (`/opt/breeze/.env` + the `api` service `environment:` block): `TICKET_MAILBOX_M365_CLIENT_ID`, `TICKET_MAILBOX_M365_CLIENT_SECRET`, and `PUBLIC_TICKET_MAILBOX_APP_ID` (web). The Azure "BL4CK Ticketing" app needs `Mail.ReadWrite` + `Mail.Send` (application) and the callback `…/api/v1/tickets/mailbox/callback` registered as a redirect URI.

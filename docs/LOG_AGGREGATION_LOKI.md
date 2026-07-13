@@ -1,6 +1,6 @@
 # Log Aggregation (Loki + Promtail)
 
-Breeze production compose includes Loki and Promtail by default.
+BL4CK production compose includes Loki and Promtail by default.
 
 ## Components
 

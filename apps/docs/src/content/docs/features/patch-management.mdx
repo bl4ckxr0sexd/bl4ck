@@ -7,7 +7,7 @@ import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 import { Image } from 'astro:assets';
 import patchesScreenshot from '../../../assets/screenshots/patches.png';
 
-<Image src={patchesScreenshot} alt="Breeze Patch Management showing update rings, compliance, and deployment controls" />
+<Image src={patchesScreenshot} alt="BL4CK Patch Management showing update rings, compliance, and deployment controls" />
 
 Patch Management gives you full control over the complete update lifecycle for every device in your fleet: discover available patches, review and approve them, deploy to targets, and roll back if something goes wrong. The system is designed to make large-scale patching auditable and safe — every action is recorded, partial failures are surfaced immediately, and no patch reaches a device without an explicit approval step.
 
@@ -27,7 +27,7 @@ Compliance reports give you a point-in-time snapshot of your fleet's patch statu
 | **`apple`** | macOS and iOS system updates distributed through Apple Software Update |
 | **`linux`** | Distribution packages managed via the native package manager (apt, yum, dnf, zypper, etc.) |
 | **`third_party`** | Updates for non-OS applications (browsers, runtimes, productivity tools) detected via winget on Windows devices. Enriched with vendor metadata and CVE data through the [Third-Party Package Catalog](#third-party-application-patching) |
-| **`custom`** | Internally published updates distributed through Breeze's custom patch channel |
+| **`custom`** | Internally published updates distributed through BL4CK's custom patch channel |
 
 ### Severity Levels
 
@@ -62,16 +62,16 @@ Compliance reports give you a point-in-time snapshot of your fleet's patch statu
 
 ## Third-Party Application Patching
 
-Beyond operating-system updates, Breeze patches third-party applications detected via **winget** on Windows devices — browsers, runtimes, and productivity tools such as Chrome, Firefox, Edge, Zoom, Teams, Git, Node.js, Python, and Visual Studio Code. These patches flow through the same approval, deployment, and rollback workflow as OS patches.
+Beyond operating-system updates, BL4CK patches third-party applications detected via **winget** on Windows devices — browsers, runtimes, and productivity tools such as Chrome, Firefox, Edge, Zoom, Teams, Git, Node.js, Python, and Visual Studio Code. These patches flow through the same approval, deployment, and rollback workflow as OS patches.
 
 ### How Windows Third-Party Patching Runs
 
-The Breeze agent runs winget directly, in the agent's own **SYSTEM** process, against **machine scope** — there is no dependency on a user being logged in, and no separate helper process in the loop. Scanning, installing, and uninstalling third-party patches all happen the same way regardless of whether anyone is signed in to the device, consistent with how OS patches are already applied.
+The BL4CK agent runs winget directly, in the agent's own **SYSTEM** process, against **machine scope** — there is no dependency on a user being logged in, and no separate helper process in the loop. Scanning, installing, and uninstalling third-party patches all happen the same way regardless of whether anyone is signed in to the device, consistent with how OS patches are already applied.
 
 Scope is machine-wide installs only. Per-user (per-profile) winget installs are not scanned or patched by this engine.
 
 <Aside type="note">
-This requires winget (the **App Installer**) to already be present on the device. It ships by default on Windows 10, Windows 11, and Windows Server 2025. On Windows Server 2019 and 2022, winget is often missing, and automatic provisioning of winget on those servers is a planned follow-up rather than something Breeze does today. Until it ships, a Server 2019/2022 device without winget reports the third-party engine as unavailable and simply detects no third-party patches — expected behavior, since servers of that vintage typically aren't running desktop apps like browsers or Zoom in the first place.
+This requires winget (the **App Installer**) to already be present on the device. It ships by default on Windows 10, Windows 11, and Windows Server 2025. On Windows Server 2019 and 2022, winget is often missing, and automatic provisioning of winget on those servers is a planned follow-up rather than something BL4CK does today. Until it ships, a Server 2019/2022 device without winget reports the third-party engine as unavailable and simply detects no third-party patches — expected behavior, since servers of that vintage typically aren't running desktop apps like browsers or Zoom in the first place.
 </Aside>
 
 This is purely an agent execution-path change: approval rings, patch policies, and compliance reporting are unaffected, and third-party patches continue to flow through the same `third_party` source described below.
@@ -80,7 +80,7 @@ This is purely an agent execution-path change: approval rings, patch policies, a
 
 A curated **package catalog** standardises metadata for known third-party applications. It ships pre-seeded with around 20 common applications, and platform admins manage it at **Admin → Third-Party Catalog**.
 
-Each catalog entry pairs a winget package ID with a vendor, friendly name, category, and a default severity. When a device reports an available third-party update, Breeze matches it to the catalog so the patch shows the correct vendor and a sensible severity even before any vulnerability data is available. Updates from applications not in the catalog still appear in the patches list, but without this enrichment.
+Each catalog entry pairs a winget package ID with a vendor, friendly name, category, and a default severity. When a device reports an available third-party update, BL4CK matches it to the catalog so the patch shows the correct vendor and a sensible severity even before any vulnerability data is available. Updates from applications not in the catalog still appear in the patches list, but without this enrichment.
 
 To add or edit an entry:
 
@@ -100,7 +100,7 @@ Deleting an entry removes future enrichment for that vendor but does not delete 
 
 ### CVE Enrichment from OSV.dev
 
-Breeze automatically enriches third-party patches with vulnerability data from [OSV.dev](https://osv.dev), a free public vulnerability database. For any catalog entry that has an **OSV ecosystem** configured, a background job queries OSV roughly once a day, attaches the matching CVE identifiers to the patch, and raises the patch's severity if OSV reports a higher rating than the catalog default.
+BL4CK automatically enriches third-party patches with vulnerability data from [OSV.dev](https://osv.dev), a free public vulnerability database. For any catalog entry that has an **OSV ecosystem** configured, a background job queries OSV roughly once a day, attaches the matching CVE identifiers to the patch, and raises the patch's severity if OSV reports a higher rating than the catalog default.
 
 In the **Patches** list, patches with known vulnerabilities show red **CVE chips** beneath the patch title (the first few CVEs, with a "+N more" indicator). Each chip links to the corresponding entry in the NIST National Vulnerability Database. **Source filter chips** at the top of the list let you narrow to Microsoft, Apple, Linux, or third-party patches and show the count for each.
 
@@ -110,7 +110,7 @@ A third-party patch only receives CVE data if its catalog entry has an OSV ecosy
 
 ### Smoke Testing Releases (Optional)
 
-Breeze can optionally run an AI-assisted smoke test on a third-party release before you roll it out widely. The test installs the release via winget on a dedicated Windows test VM and uses an AI model to judge whether the upgrade succeeded from the command output.
+BL4CK can optionally run an AI-assisted smoke test on a third-party release before you roll it out widely. The test installs the release via winget on a dedicated Windows test VM and uses an AI model to judge whether the upgrade succeeded from the command output.
 
 Smoke testing is **off by default** and only runs when the platform operator has configured a test VM. When enabled for a catalog entry (the **Breeze-tested** option), a re-test can be triggered manually:
 
@@ -220,7 +220,7 @@ A patch job is the unit of work that delivers approved patches to a set of devic
 
 Devices must be online (WebSocket connected) to receive the install command. If a device is offline when a job runs, it will be marked as pending within the job and will not receive the command until it reconnects, depending on how the job is configured.
 
-Scheduled patch jobs are reliable across restarts. If a job's scheduled run is ever lost before it reaches the queue — for example during a service restart — Breeze automatically detects the stranded job after its scheduled time and re-runs it, so no scheduled patch cycle is silently skipped.
+Scheduled patch jobs are reliable across restarts. If a job's scheduled run is ever lost before it reaches the queue — for example during a service restart — BL4CK automatically detects the stranded job after its scheduled time and re-runs it, so no scheduled patch cycle is silently skipped.
 
 ### Monitoring Jobs
 
@@ -392,7 +392,7 @@ Content-Type: application/json
 | `scheduleDayOfWeek` | string | For weekly schedules: `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` |
 | `scheduleDayOfMonth` | integer | For monthly schedules: day 1–28 |
 | `rebootPolicy` | string | Post-patch reboot behavior: `never`, `if_required`, `always`, or `maintenance_window` |
-| `exclusiveWindowsUpdate` | boolean | **Manage Windows Update exclusively through Breeze.** When enabled, Breeze disables the device's native Windows Update automatic-install channel, so updates on that device only arrive through Breeze's approval rings and schedule — no unexpected OS-initiated installs or reboots outside your policy. Turning it back off restores Windows' native update behavior. **Windows-only** — has no effect on macOS or Linux devices. Default: `false` |
+| `exclusiveWindowsUpdate` | boolean | **Manage Windows Update exclusively through BL4CK.** When enabled, BL4CK disables the device's native Windows Update automatic-install channel, so updates on that device only arrive through BL4CK's approval rings and schedule — no unexpected OS-initiated installs or reboots outside your policy. Turning it back off restores Windows' native update behavior. **Windows-only** — has no effect on macOS or Linux devices. Default: `false` |
 
 Patch settings inherit through the hierarchy. A device with a more specific policy override uses those settings rather than the parent policy's settings. Use `GET /configuration-policies/:id/resolve-patch-config/:deviceId` to see the effective resolved config for a specific device.
 
@@ -406,7 +406,7 @@ Each patch policy must declare which **patch sources** it manages, and at least 
 |--------|--------|
 | `os` | Operating-system updates (Windows Update, Apple Software Update, and Linux distribution packages) |
 | `third_party` | Non-OS application updates detected via the third-party package catalog |
-| `custom` | Internally published updates distributed through Breeze's custom patch channel |
+| `custom` | Internally published updates distributed through BL4CK's custom patch channel |
 | `firmware` | Firmware updates |
 | `drivers` | Device driver updates |
 

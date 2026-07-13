@@ -1597,7 +1597,7 @@ git commit -m "ci(cert): backup-cert-check workflow in advisory mode"
 Create `.github/CODEOWNERS`:
 
 ```
-# CODEOWNERS for Breeze RMM
+# CODEOWNERS for BL4CK RMM
 # Declares review ownership. Append-only directories like
 # cert-manifests/ require explicit review for any change.
 
@@ -1757,7 +1757,7 @@ Create `docs/backup-certification/README.md`:
 ```markdown
 # Backup Certification System
 
-Internal system that proves Breeze RMM backup features actually work,
+Internal system that proves BL4CK RMM backup features actually work,
 by signing source-hashed evidence of byte-exact restore tests.
 
 ## What it certifies

@@ -1,8 +1,8 @@
-# Breeze RMM - Claude Context
+# BL4CK RMM - Claude Context
 
 ## Project Overview
 
-Breeze is a fast, modern Remote Monitoring and Management (RMM) platform for MSPs and internal IT teams. Target: 10,000+ agents with enterprise features.
+BL4CK is a fast, modern Remote Monitoring and Management (RMM) platform for MSPs and internal IT teams. Target: 10,000+ agents with enterprise features.
 
 ## Tech Stack
 
@@ -50,7 +50,7 @@ For production backfills of `org_id` on hot tables (>1M rows), batch via `UPDATE
 
 ### Partner-Wide First (config/policy tables) — epic #2135
 
-Breeze is an MSP tool: techs define one policy and apply it to ALL their orgs. **Every new config-ish table (policies, templates, rules, windows, baselines) defaults to dual-ownership: `org_id` XOR `partner_id`, both nullable, exactly one set.** `org_id NOT NULL` on a new config table needs an explicit justification in the PR (e.g. `backup_configs` — org-owned storage credentials). Org-first designs have required painful retrofits every time (#1724, #2126–#2129).
+BL4CK is an MSP tool: techs define one policy and apply it to ALL their orgs. **Every new config-ish table (policies, templates, rules, windows, baselines) defaults to dual-ownership: `org_id` XOR `partner_id`, both nullable, exactly one set.** `org_id NOT NULL` on a new config table needs an explicit justification in the PR (e.g. `backup_configs` — org-owned storage credentials). Org-first designs have required painful retrofits every time (#1724, #2126–#2129).
 
 The playbook (copy a `2026-07-01-*-partner-ownership.sql` migration as the reference):
 1. **Migration**: `partner_id` FK + `org_id` nullable + `<table>_one_owner_chk` CHECK `((org_id IS NULL) <> (partner_id IS NULL))` + partner index + ONE dual-axis RLS policy (`system OR org-access OR partner-access`), replacing any per-command org-only policies.
