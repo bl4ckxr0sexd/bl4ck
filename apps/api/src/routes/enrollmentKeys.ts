@@ -1093,9 +1093,16 @@ enrollmentKeyRoutes.get(
 
         const apiHost = new URL(serverUrl).host;
         const useLegacyFilenameToken = allowLegacyMacosInstallerFilenameToken();
+        // User-visible bundle name — safe to rebrand. The signed installer reads
+        // the token from the sibling bootstrap.json by a HARDCODED name and, in
+        // legacy mode, parses only the [TOKEN@HOST] group from its own bundle name
+        // (prefix-agnostic) — neither depends on the "Bl4ck Installer" prefix.
+        // oldAppName and bootstrapPayloadName below MUST stay "Breeze Installer*"
+        // to match the CI-signed source bundle and the installer's hardcoded lookup
+        // (FilenameTokenParser.swift: payloadFileName = "Breeze Installer.bootstrap.json").
         const newAppName = useLegacyFilenameToken
-          ? `Breeze Installer [${issued.token}@${apiHost}].app`
-          : "Breeze Installer.app";
+          ? `Bl4ck Installer [${issued.token}@${apiHost}].app`
+          : "Bl4ck Installer.app";
         const bootstrapPayloadName = "Breeze Installer.bootstrap.json";
 
         let renamedZip: Buffer | undefined;
@@ -1144,7 +1151,7 @@ enrollmentKeyRoutes.get(
           c.header("Content-Type", "application/zip");
           const downloadFilename = useLegacyFilenameToken
             ? `${newAppName}.zip`
-            : "breeze-agent-macos-installer.zip";
+            : "bl4ck-agent-macos-installer.zip";
           c.header(
             "Content-Disposition",
             `attachment; filename="${downloadFilename}"`,

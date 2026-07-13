@@ -376,7 +376,7 @@ describe('serveWindowsBootstrapMsi', () => {
 
     const cd = headers.get('content-disposition');
     expect(cd).toBe(
-      'attachment; filename="Breeze Agent (ABCDE12345@api.example.com).msi"',
+      'attachment; filename="Bl4ck Agent (ABCDE12345@api.example.com).msi"',
     );
     // Regression guard for #1956: a square-bracket [TOKEN@HOST] delimiter is
     // eaten by MSI's Formatted-field engine, dropping the token so agents never

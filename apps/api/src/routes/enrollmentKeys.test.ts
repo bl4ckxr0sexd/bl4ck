@@ -84,7 +84,7 @@ vi.mock("../services/installerBuilder", () => ({
   assertMacosInstallerPkgsReachable: vi.fn(async () => {}),
   fetchMacosInstallerAppZip: vi.fn(async () => null),
   serveWindowsBootstrapMsi: vi.fn((c: any, args: { msi: Buffer; token: string; apiHost: string }) => {
-    const filename = `Breeze Agent (${args.token}@${args.apiHost}).msi`;
+    const filename = `Bl4ck Agent (${args.token}@${args.apiHost}).msi`;
     c.header("Content-Type", "application/octet-stream");
     c.header("Content-Disposition", `attachment; filename="${filename}"`);
     c.header("Content-Length", String(args.msi.length));
@@ -920,7 +920,7 @@ describe("GET /public-download/:platform", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
     expect(res.headers.get("Content-Disposition")).toMatch(
-      /^attachment; filename="Breeze Agent \(ABCDE12345@api\.example\.com\)\.msi"$/,
+      /^attachment; filename="Bl4ck Agent \(ABCDE12345@api\.example\.com\)\.msi"$/,
     );
     // No db.update — download does not consume enrollment slots
     expect(db.update).not.toHaveBeenCalled();
@@ -1329,16 +1329,19 @@ describe("GET /:id/installer/macos — app-bundle path", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/zip");
     const cd = res.headers.get("Content-Disposition") ?? "";
-    expect(cd).toBe('attachment; filename="breeze-agent-macos-installer.zip"');
+    expect(cd).toBe('attachment; filename="bl4ck-agent-macos-installer.zip"');
     expect(cd).not.toContain("ABC1234567");
     expect(res.headers.get("Cache-Control")).toBe("no-store");
 
-    // renameAppInZip was called with correct args
+    // renameAppInZip was called with correct args. oldAppName stays "Breeze
+    // Installer.app" (matches the CI-signed source bundle); the bootstrap payload
+    // name stays hardcoded to match the installer's lookup; only the user-visible
+    // newAppName is rebranded.
     expect(vi.mocked(renameAppInZip)).toHaveBeenCalledWith(
       Buffer.from("fixture-app-zip"),
       expect.objectContaining({
         oldAppName: "Breeze Installer.app",
-        newAppName: "Breeze Installer.app",
+        newAppName: "Bl4ck Installer.app",
         extraFiles: [
           {
             path: "Breeze Installer.bootstrap.json",
@@ -1378,12 +1381,12 @@ describe("GET /:id/installer/macos — app-bundle path", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Disposition") ?? "").toContain(
-      "Breeze Installer [ABC1234567@api.example.com].app.zip",
+      "Bl4ck Installer [ABC1234567@api.example.com].app.zip",
     );
     expect(vi.mocked(renameAppInZip)).toHaveBeenCalledWith(
       Buffer.from("fixture-app-zip"),
       expect.objectContaining({
-        newAppName: "Breeze Installer [ABC1234567@api.example.com].app",
+        newAppName: "Bl4ck Installer [ABC1234567@api.example.com].app",
       }),
     );
     expect(vi.mocked(renameAppInZip).mock.calls[0]?.[1]).not.toHaveProperty(
