@@ -329,6 +329,34 @@ export function isAllowedOrigin(origin: string): boolean {
   return false;
 }
 
+/**
+ * The client-facing host of the request, preferring the proxy-forwarded host
+ * (Caddy/reverse proxies set X-Forwarded-Host) and falling back to Host.
+ */
+function getRequestHost(c: Context): string | null {
+  const forwarded = c.req.header('x-forwarded-host')?.split(',')[0]?.trim();
+  const host = (forwarded && forwarded.length > 0 ? forwarded : c.req.header('host')?.trim()) ?? '';
+  return host.length > 0 ? host.toLowerCase() : null;
+}
+
+/**
+ * True when the request's Origin host matches the request's own host — i.e. a
+ * same-origin request, which by definition cannot be a cross-site (CSRF) attack:
+ * a browser sends the target's real Host regardless of the attacker's page, and
+ * it sets Origin to the attacker's site, so a forged cross-origin request never
+ * matches. This lets same-origin deployments work without the operator having to
+ * list their own origin in CORS_ALLOWED_ORIGINS, while cross-site is still blocked.
+ */
+export function isSameOriginRequest(c: Context, origin: string): boolean {
+  const host = getRequestHost(c);
+  if (!host) return false;
+  try {
+    return new URL(origin).host.toLowerCase() === host;
+  } catch {
+    return false;
+  }
+}
+
 export function validateCookieCsrfRequest(c: Context): string | null {
   const csrfHeader = c.req.header(CSRF_HEADER_NAME)?.trim();
   if (!csrfHeader || csrfHeader.length === 0) {
@@ -352,7 +380,7 @@ export function validateCookieCsrfRequest(c: Context): string | null {
   }
 
   const origin = c.req.header('origin');
-  if (origin && !isAllowedOrigin(origin)) {
+  if (origin && !isAllowedOrigin(origin) && !isSameOriginRequest(c, origin)) {
     return 'Invalid request origin';
   }
 
