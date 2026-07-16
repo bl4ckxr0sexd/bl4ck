@@ -35,7 +35,11 @@
     Language="1033">
 
     <SummaryInformation Description="Breeze RMM endpoint agent" />
-    <MediaTemplate EmbedCab="yes" />
+    <!-- CompressionLevel="high" = LZX (vs the default mszip) for a smaller
+         embedded CAB. Fully supported by Windows Installer; only trade-off is
+         slightly slower build/decompress. Pairs with the stripped (-s -w) Go
+         binaries built by the Makefile. -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <MajorUpgrade
       DowngradeErrorMessage="A newer version of Breeze Agent is already installed."
       Schedule="afterInstallExecute" />
@@ -62,11 +66,32 @@
     <?endif?>
     <Property Id="BOOTSTRAP_TOKEN" Secure="yes" Hidden="yes" />
     <Property Id="ARPNOREPAIR" Value="1" />
-    <Property Id="POWERSHELL_EXE" Secure="yes" />
-    <Property Id="BREEZE_KILL_CMD" Secure="yes" />
-    <Property Id="BREEZE_ACL_CMD" Secure="yes" />
-    <Property Id="BREEZE_SC_FAILURE_CMD" Secure="yes" />
-    <CustomAction Id="SetPowerShellPath" Property="POWERSHELL_EXE" Value="[System64Folder]WindowsPowerShell\v1.0\powershell.exe" />
+
+    <!-- Every shell custom action below runs via the WiX Util extension's
+         WixQuietExec64 / WixSilentExec64 (BinaryRef="Wix4UtilCA_X64"), which
+         launches the child process with CREATE_NO_WINDOW so there is never a
+         console flash — the whole point of this conversion. A deferred quiet/
+         silent-exec CA takes its command line from CustomActionData, and MSI
+         delivers CustomActionData from a property whose NAME equals the CA Id.
+         So each deferred CA "Foo" is paired with an immediate SetProperty CA
+         "SetFooCmd" that formats the command (resolving [Directory], [#File],
+         secrets, etc. at schedule time) into property "Foo". The lone immediate
+         CA (KillBreezeProcesses) instead reads the fixed WixQuietExec64CmdLine
+         property, since immediate quiet-exec CAs have no CustomActionData.
+
+         EnrollAgent and BootstrapEnroll assemble a command that embeds secrets
+         (enrollment key/secret, bootstrap token), so:
+           * they use WixSilentExec64, which — unlike WixQuietExec64 — does NOT
+             echo the command line or its output to the installer log;
+           * their CustomActionData-carrier properties are declared Hidden here,
+             which lists them in MsiHiddenProperties so the assembled value is
+             masked in verbose (/l*v) logs even at the SetProperty step;
+           * the deferred CAs additionally set HideTarget="yes".
+         The carriers are private (mixed-case, not Secure): CustomActionData
+         delivery needs the property name to match the mixed-case CA Id exactly,
+         and Secure="yes" would force an all-uppercase name. -->
+    <Property Id="EnrollAgent" Hidden="yes" />
+    <Property Id="BootstrapEnroll" Hidden="yes" />
 
     <!-- Kill any running Breeze processes before InstallValidate so file
          replacement isn't blocked by locked exes.
@@ -88,16 +113,20 @@
          "process not found" error so a fresh box with nothing to kill
          still returns success (#944). Admin token (required by the MSI)
          is sufficient for cross-session SeDebugPrivilege-backed
-         termination. -->
-    <SetProperty Id="BREEZE_KILL_CMD" Value="[System64Folder]cmd.exe" Before="KillBreezeProcesses" Sequence="execute" />
+         termination. Runs as an IMMEDIATE WixQuietExec64 (reads the fixed
+         WixQuietExec64CmdLine property), so it can still run before
+         InstallValidate — which is where a deferred CA could not go. taskkill's
+         non-zero "process not found" exit on a fresh box is swallowed by
+         Return="ignore" (#944). -->
+    <CustomAction Id="SetKillBreezeCmd" Property="WixQuietExec64CmdLine"
+      Value="&quot;[System64Folder]taskkill.exe&quot; /F /T /IM breeze-agent.exe /IM breeze-user-helper.exe /IM breeze-watchdog.exe /IM breeze-desktop-helper.exe /IM breeze-backup.exe"
+      Execute="immediate" />
     <CustomAction
       Id="KillBreezeProcesses"
-      Property="BREEZE_KILL_CMD"
-      ExeCommand="/c &quot;taskkill /F /T /IM breeze-agent.exe /IM breeze-user-helper.exe /IM breeze-watchdog.exe /IM breeze-desktop-helper.exe /IM breeze-backup.exe &amp; exit /b 0&quot;"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
       Execute="immediate"
       Return="ignore" />
-
-    <SetProperty Id="BREEZE_ACL_CMD" Value="[System64Folder]cmd.exe" Before="HardenProgramDataAcl" Sequence="execute" />
     <!-- MUST be deferred + non-impersonated so it runs as LocalSystem.
          #609/#613 fixed the "folders don't exist yet" facet (added the mkdir
          guards) but left this Execute="immediate". Immediate CAs impersonate
@@ -117,10 +146,13 @@
          secrets.yaml at runtime on first config write (see
          agent/internal/config/permissions_windows.go), so a skipped/blocked
          icacls here self-heals and never leaves tokens world-readable. -->
+    <CustomAction Id="SetHardenProgramDataAclCmd" Property="HardenProgramDataAcl"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;New-Item -ItemType Directory -Force '[ProgramDataBreezeDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBreezeDataDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBreezeLogsDir]' | Out-Null; icacls '[ProgramDataBreezeDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBreezeDataDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBreezeLogsDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'&quot;"
+      Execute="immediate" />
     <CustomAction
       Id="HardenProgramDataAcl"
-      Property="BREEZE_ACL_CMD"
-      ExeCommand="/c (if not exist &quot;[ProgramDataBreezeDir].&quot; mkdir &quot;[ProgramDataBreezeDir].&quot;) &amp;&amp; (if not exist &quot;[ProgramDataBreezeDataDir].&quot; mkdir &quot;[ProgramDataBreezeDataDir].&quot;) &amp;&amp; (if not exist &quot;[ProgramDataBreezeLogsDir].&quot; mkdir &quot;[ProgramDataBreezeLogsDir].&quot;) &amp;&amp; icacls &quot;[ProgramDataBreezeDir].&quot; /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F &amp;&amp; icacls &quot;[ProgramDataBreezeDataDir].&quot; /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F &amp;&amp; icacls &quot;[ProgramDataBreezeLogsDir].&quot; /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
       Execute="deferred"
       Impersonate="no"
       Return="ignore" />
@@ -140,11 +172,13 @@
          (below) is what prevents a transient sc-error from rolling back the
          install — keep both the static ExeCommand and Return="ignore" in
          sync if either is ever edited. -->
-    <SetProperty Id="BREEZE_SC_FAILURE_CMD" Value="[System64Folder]cmd.exe" Before="ConfigureBreezeFailureActions" Sequence="execute" />
+    <CustomAction Id="SetConfigureBreezeFailureActionsCmd" Property="ConfigureBreezeFailureActions"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;sc.exe failure BreezeAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000; sc.exe failure BreezeWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000&quot;"
+      Execute="immediate" />
     <CustomAction
       Id="ConfigureBreezeFailureActions"
-      Property="BREEZE_SC_FAILURE_CMD"
-      ExeCommand="/c &quot;sc failure BreezeAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000 &amp; sc failure BreezeWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000&quot;"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
       Execute="deferred"
       Impersonate="no"
       Return="ignore" />
@@ -264,34 +298,69 @@
       </Directory>
     </StandardDirectory>
 
+    <!-- The user-helper scheduled-task register/rollback/unregister CAs all run
+         a bundled PS script (-File). Converted to WixQuietExec64 too so the
+         uninstall and rollback paths are also console-flash free — the register
+         path is one of the six the request named, and leaving its siblings on
+         the old ExeCommand mechanism would defeat "zero popups" on uninstall. -->
+    <CustomAction Id="SetRegisterUserHelperTaskCmd" Property="RegisterUserHelperTask"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filInstallWindowsPs1]&quot;"
+      Execute="immediate" />
     <CustomAction
       Id="RegisterUserHelperTask"
-      Property="POWERSHELL_EXE"
-      ExeCommand="-NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filInstallWindowsPs1]&quot;"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
       Execute="deferred"
       Impersonate="no"
       Return="check" />
 
+    <CustomAction Id="SetRollbackRegisterUserHelperTaskCmd" Property="RollbackRegisterUserHelperTask"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filRemoveWindowsTaskPs1]&quot;"
+      Execute="immediate" />
     <CustomAction
       Id="RollbackRegisterUserHelperTask"
-      Property="POWERSHELL_EXE"
-      ExeCommand="-NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filRemoveWindowsTaskPs1]&quot;"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
       Execute="rollback"
       Impersonate="no"
       Return="ignore" />
 
+    <CustomAction Id="SetUnregisterUserHelperTaskCmd" Property="UnregisterUserHelperTask"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filRemoveWindowsTaskPs1]&quot;"
+      Execute="immediate" />
     <CustomAction
       Id="UnregisterUserHelperTask"
-      Property="POWERSHELL_EXE"
-      ExeCommand="-NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filRemoveWindowsTaskPs1]&quot;"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
       Execute="deferred"
       Impersonate="no"
       Return="ignore" />
 
+    <!-- Enrollment via WixSilentExec64 (deferred). The command launches
+         powershell.exe (a fixed, space-free System64 path) which in turn runs
+         the installed agent exe. Two historical MSI failures stay avoided:
+           * type 18 (FileRef) -> "2753: The File 'filBreezeAgentExe' is not
+             marked for installation" — never used here; the agent path is a
+             plain formatted string, not a File token.
+           * type 50 (Property holding the exe path) -> "1721: a program
+             required for this install could not be run" — the install path
+             C:\Program Files\Breeze\breeze-agent.exe contains a space; here the
+             exe WixQuietExec launches is powershell.exe (no space), and the
+             agent path rides inside powershell's own single quotes, so the
+             space is handled by PowerShell, not the MSI engine.
+         The SetEnrollAgentCmd SetProperty CA formats [INSTALLFOLDER] and the
+         secret properties at schedule time into the (Hidden) EnrollAgent
+         property, which MSI delivers as this deferred CA's CustomActionData.
+         WixSilentExec64 keeps the secret-bearing command out of the log;
+         HideTarget="yes" masks the CustomActionData line too. Return="check"
+         still rolls the install back on a non-zero agent exit. -->
+    <CustomAction Id="SetEnrollAgentCmd" Property="EnrollAgent"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]breeze-agent.exe' enroll '[ENROLLMENT_KEY]' --server '[SERVER_URL]' --enrollment-secret '[ENROLLMENT_SECRET]' --quiet; exit $LASTEXITCODE&quot;"
+      Execute="immediate" />
     <CustomAction
       Id="EnrollAgent"
-      FileRef="filBreezeAgentExe"
-      ExeCommand="enroll &quot;[ENROLLMENT_KEY]&quot; --server &quot;[SERVER_URL]&quot; --enrollment-secret &quot;[ENROLLMENT_SECRET]&quot; --quiet"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixSilentExec64"
       Execute="deferred"
       Impersonate="no"
       Return="check"
@@ -328,11 +397,25 @@
          <OriginalDatabase>|<BOOTSTRAP_TOKEN>|<SERVER_URL> shape mirrors the
          agent's resolveBootstrapInputs payload (an explicitly-supplied token +
          server take precedence; both are empty on the filename-bootstrap path).
-         HideTarget keeps the token out of the verbose log. -->
+         HideTarget keeps the token out of the verbose log, and WixSilentExec64
+         (vs WixQuietExec64) keeps the command itself unlogged.
+
+         The SetBootstrapEnrollCmd SetProperty CA formats [OriginalDatabase] at
+         SCHEDULE time — it is an immediate CA sequenced right before this
+         deferred CA in the same immediate InstallExecuteSequence pass, exactly
+         when the prior Directory-based (type 34) CA formatted its Target — so
+         OriginalDatabase still names the downloaded (TOKEN@HOST) file, not the
+         tokenless cached copy. The formatted string is delivered as this CA's
+         CustomActionData. (Do NOT reintroduce "[CustomActionData]" inside the
+         command: an EXE/quiet-exec CA reads CustomActionData as its whole
+         command, it is not a substitutable field.) -->
+    <CustomAction Id="SetBootstrapEnrollCmd" Property="BootstrapEnroll"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]breeze-agent.exe' bootstrap --install-data '[OriginalDatabase]|[BOOTSTRAP_TOKEN]|[SERVER_URL]' --quiet; exit $LASTEXITCODE&quot;"
+      Execute="immediate" />
     <CustomAction
       Id="BootstrapEnroll"
-      FileRef="filBreezeAgentExe"
-      ExeCommand="bootstrap --install-data &quot;[OriginalDatabase]|[BOOTSTRAP_TOKEN]|[SERVER_URL]&quot; --quiet"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixSilentExec64"
       Execute="deferred"
       Impersonate="no"
       Return="check"
@@ -343,12 +426,14 @@
            original `WIX_UPGRADE_DETECTED OR Installed` (which skipped fresh
            installs over a pre-existing non-MSI binary) — see comment at the
            CA definition above and issue #944. -->
+      <Custom Action="SetKillBreezeCmd" Before="KillBreezeProcesses" Condition="NOT REMOVE" />
       <Custom Action="KillBreezeProcesses" Before="InstallValidate" Condition="NOT REMOVE" />
-      <Custom Action="SetPowerShellPath" After="InstallInitialize" />
+      <Custom Action="SetHardenProgramDataAclCmd" Before="HardenProgramDataAcl" Condition="NOT REMOVE" />
       <Custom Action="HardenProgramDataAcl" After="CreateFolders" Condition="NOT REMOVE" />
       <!-- Rollback rolls back the FIRST-install case only; on upgrade or
            repair the existing task is valid prior state and shouldn't be
            wiped by a rolled-back inner install. -->
+      <Custom Action="SetRollbackRegisterUserHelperTaskCmd" Before="RollbackRegisterUserHelperTask" Condition="NOT Installed AND NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
       <Custom Action="RollbackRegisterUserHelperTask" Before="RegisterUserHelperTask" Condition="NOT Installed AND NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
       <!-- RegisterUserHelperTask runs on EVERY install path that isn't
            uninstall: first install, major upgrade, and `msiexec /fa` repair.
@@ -358,10 +443,12 @@
            the entire point. The previous `NOT Installed AND NOT REMOVE`
            gate skipped repair, leaving repaired installs with stale task
            pointers. -->
+      <Custom Action="SetRegisterUserHelperTaskCmd" Before="RegisterUserHelperTask" Condition="NOT REMOVE" />
       <Custom Action="RegisterUserHelperTask" After="InstallServices" Condition="NOT REMOVE" />
       <!-- Apply SCM recovery actions immediately after the services are
            registered. Deferred + non-impersonated so it runs as LocalSystem
            (which sc.exe needs for SERVICE_CHANGE_CONFIG). -->
+      <Custom Action="SetConfigureBreezeFailureActionsCmd" Before="ConfigureBreezeFailureActions" Condition="NOT REMOVE" />
       <Custom Action="ConfigureBreezeFailureActions" After="InstallServices" Condition="NOT REMOVE" />
       <!-- Enrollment runs after file copy but before InstallServices.
 
@@ -385,13 +472,16 @@
            by the CA above) is picked up live without a service
            restart. This is the intended flow for imaged/sysprep'd
            deployments. -->
+      <Custom Action="SetEnrollAgentCmd" Before="EnrollAgent" Condition="NOT Installed AND SERVER_URL AND ENROLLMENT_KEY" />
       <Custom Action="EnrollAgent" Before="InstallServices" Condition="NOT Installed AND SERVER_URL AND ENROLLMENT_KEY" />
       <!-- Filename/property bootstrap enrollment: only when explicit
            SERVER_URL+ENROLLMENT_KEY were NOT supplied (those take the
            EnrollAgent path above). The deferred CA references [OriginalDatabase]
            directly (baked at schedule time, here, while it still names the
            downloaded file) — no immediate capture CA is needed. -->
+      <Custom Action="SetBootstrapEnrollCmd" Before="BootstrapEnroll" Condition="NOT Installed AND NOT (SERVER_URL AND ENROLLMENT_KEY)" />
       <Custom Action="BootstrapEnroll" Before="InstallServices" Condition="NOT Installed AND NOT (SERVER_URL AND ENROLLMENT_KEY)" />
+      <Custom Action="SetUnregisterUserHelperTaskCmd" Before="UnregisterUserHelperTask" Condition="REMOVE=&quot;ALL&quot;" />
       <Custom Action="UnregisterUserHelperTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 

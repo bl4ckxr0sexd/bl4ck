@@ -1,7 +1,10 @@
 .PHONY: build build-agent build-desktop-helper build-backup build-all build-all-agent build-all-desktop-helper build-all-backup build-windows-user-helper build-winres build-windows-msi clean test install install-service uninstall-service dev-push dev-push-helper build-watchdog build-watchdog-linux build-watchdog-darwin build-watchdog-windows dev-push-watchdog dev-push-both
 
 VERSION ?= 0.5.0
-LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+# -s strips the symbol table, -w strips DWARF debug info: ~25-30% smaller
+# binaries (and a smaller MSI) with no runtime impact — Go panic stack traces
+# use pclntab, which is retained. Applies to every $(LDFLAGS) build.
+LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 
 # Default build for current platform (agent + backup)
 build: build-agent build-desktop-helper build-backup
@@ -58,7 +61,7 @@ build-windows: build-windows-user-helper
 # a requireAdministrator manifest makes CreateProcessAsUser fail with
 # ERROR_ELEVATION_REQUIRED (#949 regression).
 build-windows-user-helper:
-	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION) -H windowsgui" -o bin/breeze-user-helper-windows-amd64.exe ./cmd/breeze-user-helper
+	GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION) -H windowsgui" -o bin/breeze-user-helper-windows-amd64.exe ./cmd/breeze-user-helper
 
 build-winres:
 	@command -v go-winres >/dev/null 2>&1 || (echo "go-winres not found. Install with: go install github.com/tc-hib/go-winres@v0.3.3" && exit 1)

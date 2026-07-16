@@ -46,6 +46,26 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     throw "wix CLI not found. Install WiX v4 first (e.g. 'dotnet tool install --global wix')."
 }
 
+# The installer's shell custom actions run via the WiX Util extension's
+# WixQuietExec64 / WixSilentExec64 (BinaryRef="Wix4UtilCA_X64") so they launch
+# with CREATE_NO_WINDOW (no console flash). Ensure that extension is registered
+# globally at the version matching the wix CLI — first-party WiX extensions are
+# versioned in lockstep with the toolset. Idempotent: a no-op when already
+# present (so it is fast locally where it was added by hand, and self-heals in
+# CI where only the CLI is installed).
+$wixVersion = ((& wix --version) -replace '\+.*$', '').Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($wixVersion)) {
+    throw "Could not determine wix CLI version via 'wix --version'."
+}
+$utilExtList = (& wix extension list -g 2>$null)
+if (-not ($utilExtList -match "WixToolset\.Util\.wixext\s+$([regex]::Escape($wixVersion))")) {
+    Write-Host "Registering WixToolset.Util.wixext/$wixVersion ..."
+    & wix extension add -g "WixToolset.Util.wixext/$wixVersion"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to add WixToolset.Util.wixext/$wixVersion. Add it manually: wix extension add -g WixToolset.Util.wixext/$wixVersion"
+    }
+}
+
 if (-not (Test-Path $installerPath)) {
     throw "Installer definition not found: $installerPath"
 }
@@ -85,6 +105,7 @@ $wixArgs = @(
     "build",
     "$installerPath",
     "-arch", "x64",
+    "-ext", "WixToolset.Util.wixext",
     "-d", "Version=$msiVersion",
     "-d", "AgentExePath=$AgentExePath",
     "-d", "BackupExePath=$BackupExePath",
