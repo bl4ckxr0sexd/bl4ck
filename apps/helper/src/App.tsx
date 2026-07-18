@@ -44,7 +44,7 @@ function UsernamePrompt({ osUsername }: { osUsername?: string }) {
   return (
     <div className="helper-container helper-center">
       <div className="helper-username-prompt">
-        <p className="helper-username-title">Welcome to Breeze Helper</p>
+        <p className="helper-username-title">Welcome to BL4CK Helper</p>
         <p className="helper-username-subtitle">What's your name?</p>
         <form onSubmit={handleSubmit} className="helper-username-form">
           <input
@@ -438,7 +438,7 @@ export default function App() {
     return (
       <div className="helper-container helper-center">
         <span className="helper-spinner" />
-        <p>Connecting to Breeze…</p>
+        <p>Connecting to BL4CK…</p>
       </div>
     );
   }
@@ -447,7 +447,7 @@ export default function App() {
     return (
       <div className="helper-container helper-center">
         <span className="helper-spinner" />
-        <p>Connecting to the Breeze agent…</p>
+        <p>Connecting to the BL4CK agent…</p>
       </div>
     );
   }
@@ -502,7 +502,7 @@ export default function App() {
         <div className="helper-header-left" data-tauri-drag-region>
           {isMacOS && <div className="helper-traffic-light-spacer" />}
           <span className="helper-status-dot helper-status-connected" />
-          <span className="helper-title">Breeze Helper</span>
+          <span className="helper-title">BL4CK Helper</span>
         </div>
         <div className="helper-header-drag-spacer" data-tauri-drag-region />
         <div className="helper-header-actions">
@@ -577,7 +577,7 @@ export default function App() {
       <div className="helper-messages">
         {messages.length === 0 && (
           <div className="helper-empty">
-            <p>Hi{username ? `, ${username}` : ''}! I'm Breeze Helper.</p>
+            <p>Hi{username ? `, ${username}` : ''}! I'm BL4CK Helper.</p>
             <p>Ask me anything about your computer.</p>
           </div>
         )}

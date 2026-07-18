@@ -573,7 +573,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // to an 'agent-unreachable' / 'error' state instead of 'connected'.
           console.warn(
             '[helper] IPC token not received before timeout; proceeding with file-fallback token (Phase 1).' +
-              ' If requests fail, ensure the Breeze agent is running.',
+              ' If requests fail, ensure the BL4CK agent is running.',
           );
         }
       }

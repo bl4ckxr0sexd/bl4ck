@@ -15,16 +15,16 @@
 pub fn default_socket_path() -> String {
     #[cfg(windows)]
     {
-        r"\\.\pipe\breeze-agent-ipc".to_string()
+        r"\\.\pipe\bl4ck-agent-ipc".to_string()
     }
     #[cfg(target_os = "macos")]
     {
-        "/Library/Application Support/Breeze/agent.sock".to_string()
+        "/Library/Application Support/BL4CK/agent.sock".to_string()
     }
     // Linux and other unix
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        "/var/run/breeze/agent.sock".to_string()
+        "/var/run/bl4ck/agent.sock".to_string()
     }
 }
 

@@ -46,25 +46,25 @@ struct AgentConfigFull {
 fn agent_config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        PathBuf::from("/Library/Application Support/Breeze/agent.yaml")
+        PathBuf::from("/Library/Application Support/BL4CK/agent.yaml")
     }
     #[cfg(target_os = "windows")]
     {
         let program_data =
             std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".into());
         PathBuf::from(program_data)
-            .join("Breeze")
+            .join("BL4CK")
             .join("agent.yaml")
     }
     #[cfg(target_os = "linux")]
     {
-        PathBuf::from("/etc/breeze/agent.yaml")
+        PathBuf::from("/etc/bl4ck/agent.yaml")
     }
 }
 
-/// Log a message to the Breeze helper log file.
+/// Log a message to the BL4CK helper log file.
 /// In SYSTEM service context, stderr is not connected to anything visible,
-/// so we append to a log file in the Breeze data directory instead.
+/// so we append to a log file in the BL4CK data directory instead.
 fn log_helper_error(msg: &str) {
     eprintln!("{}", msg); // still try stderr for non-service contexts
     let log_path = agent_config_path().with_file_name("helper.log");
@@ -97,7 +97,7 @@ fn load_agent_config_full() -> Result<AgentConfigFull, String> {
 
     let contents = std::fs::read_to_string(&path).map_err(|e| {
         log_helper_error(&format!("agent config not found at {}: {}", path.display(), e));
-        "Breeze Assist requires the Breeze agent. Ensure the Breeze agent is installed and running on this device.".to_string()
+        "BL4CK Assist requires the BL4CK agent. Ensure the BL4CK agent is installed and running on this device.".to_string()
     })?;
 
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|e| {
@@ -106,7 +106,7 @@ fn load_agent_config_full() -> Result<AgentConfigFull, String> {
             path.display(),
             e
         ));
-        "Agent configuration is corrupt. Reinstall the Breeze agent or contact your administrator."
+        "Agent configuration is corrupt. Reinstall the BL4CK agent or contact your administrator."
             .to_string()
     })?;
 
@@ -129,7 +129,7 @@ fn load_agent_config_full() -> Result<AgentConfigFull, String> {
 
     let token = helper_token_from_config(&yaml, secrets.as_ref()).ok_or_else(|| {
         log_helper_error("missing helper_auth_token in agent config");
-        "The Breeze agent is still setting up. Wait a moment and retry, or contact your administrator.".to_string()
+        "The BL4CK agent is still setting up. Wait a moment and retry, or contact your administrator.".to_string()
     })?;
 
     let agent_id = yaml
@@ -293,7 +293,7 @@ fn load_agent_server_url() -> Result<String, String> {
             path.display(),
             e
         ));
-        "Breeze agent configuration is unavailable.".to_string()
+        "BL4CK agent configuration is unavailable.".to_string()
     })?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|e| {
         log_helper_error(&format!(
@@ -364,7 +364,7 @@ fn get_http_state_lock() -> &'static Mutex<Option<HttpClientState>> {
     HTTP_STATE.get_or_init(|| Mutex::new(None))
 }
 
-/// Process-global helper auth token delivered over IPC from the Breeze agent.
+/// Process-global helper auth token delivered over IPC from the BL4CK agent.
 /// Distinct from the file-loaded `HttpClientState::config.token` (Phase-1 fallback).
 static HELPER_TOKEN: OnceLock<HelperToken> = OnceLock::new();
 
@@ -679,7 +679,7 @@ fn validate_portal_open_url(portal_url: &str, api_url: Option<&str>) -> Result<S
         }
     }
 
-    Err("Portal URL must target an approved Breeze portal origin".to_string())
+    Err("Portal URL must target an approved BL4CK portal origin".to_string())
 }
 
 #[tauri::command]
@@ -749,7 +749,7 @@ async fn helper_fetch(
 
     let response = req_builder.send().await.map_err(|e| {
         log_helper_error(&format!("HTTP request to {} failed: {}", request.url, e));
-        "Cannot connect to the Breeze server. Check your network connection.".to_string()
+        "Cannot connect to the BL4CK server. Check your network connection.".to_string()
     })?;
 
     let status = response.status().as_u16();
@@ -882,7 +882,7 @@ fn build_tray_menu(
     }
 
     if config.show_open_portal {
-        let item = MenuItemBuilder::with_id("open_portal", "Open Breeze Portal").build(app)?;
+        let item = MenuItemBuilder::with_id("open_portal", "Open BL4CK Portal").build(app)?;
         builder = builder.item(&item);
     }
 
@@ -931,7 +931,7 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("Breeze Helper")
+            .title("BL4CK Helper")
             .inner_size(380.0, 600.0)
             .resizable(true)
             .center();
@@ -953,7 +953,7 @@ pub fn run() {
                 if local.to_lowercase().contains("systemprofile") || local.is_empty() {
                     let pd =
                         std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".into());
-                    let data_dir = PathBuf::from(pd).join("Breeze").join("helper-webview");
+                    let data_dir = PathBuf::from(pd).join("BL4CK").join("helper-webview");
                     if let Err(e) = std::fs::create_dir_all(&data_dir) {
                         let msg = format!(
                             "[helper] Failed to create WebView2 data dir {}: {}",
@@ -996,7 +996,7 @@ pub fn run() {
             if let Some(tray) = app.tray_by_id("main") {
                 // Set tray tooltip with version
                 let _ = tray.set_tooltip(Some(&format!(
-                    "Breeze Helper v{}",
+                    "BL4CK Helper v{}",
                     env!("CARGO_PKG_VERSION")
                 )));
 
@@ -1098,7 +1098,7 @@ pub fn run() {
                 }
             });
 
-            // Deliver the helper auth token over IPC from the Breeze agent.
+            // Deliver the helper auth token over IPC from the BL4CK agent.
             // Keep the stop sender in managed state so the watch channel stays open
             // for the app's lifetime; on app exit the state is dropped, the channel
             // closes, and the client task exits. (The task also exits on a permanent
@@ -1161,11 +1161,11 @@ mod tests {
 
     #[test]
     fn config_path_from_args_parses_equals_form() {
-        let args = vec!["--config=/etc/breeze/sessions/s-2/helper_config.yaml"];
+        let args = vec!["--config=/etc/bl4ck/sessions/s-2/helper_config.yaml"];
         assert_eq!(
             config_path_from_args(args.into_iter()),
             Some(PathBuf::from(
-                "/etc/breeze/sessions/s-2/helper_config.yaml"
+                "/etc/bl4ck/sessions/s-2/helper_config.yaml"
             ))
         );
     }
