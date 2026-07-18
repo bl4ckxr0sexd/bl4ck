@@ -294,7 +294,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
           <div>
             <label className="block text-sm font-medium mb-1.5">Platform</label>
             <div className="flex gap-2">
-              {(['windows', 'macos'] as const).map((p) => (
+              {(['windows'] as const).map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -478,7 +478,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
                   Step 2 — Run the install command
                 </p>
                 <div className="flex gap-1 mb-3">
-                  {(['windows', 'macos', 'linux'] as const).map((os) => (
+                  {(['windows'] as const).map((os) => (
                     <button
                       key={os}
                       type="button"

@@ -510,7 +510,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Platform</label>
                   <div className="flex gap-2">
-                    {(['windows', 'macos'] as const).map((p) => (
+                    {(['windows'] as const).map((p) => (
                       <button
                         key={p}
                         type="button"
