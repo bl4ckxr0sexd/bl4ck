@@ -64,12 +64,8 @@ vi.mock('../services/enrollmentKeySecurity', () => ({
 }));
 
 vi.mock('../services/installerBuilder', () => ({
-  buildMacosInstallerZip: vi.fn(async () => Buffer.from('fake-zip')),
   buildWindowsInstallerZip: vi.fn(async () => Buffer.from('fake-windows-zip')),
   fetchRegularMsi: vi.fn(async () => Buffer.alloc(2048, 0xbb)),
-  assertMacosInstallerPkgsReachable: vi.fn(async () => {}),
-  // Plan C — returns null so macOS tests fall through to the legacy pkg path.
-  fetchMacosInstallerAppZip: vi.fn(async () => null),
   // Windows bootstrap path — serves static MSI with token in the filename.
   serveWindowsBootstrapMsi: vi.fn((c: any, args: { msi: Buffer; token: string; apiHost: string }) => {
     const filename = `Bl4ck Agent (${args.token}@${args.apiHost}).msi`;
@@ -79,12 +75,6 @@ vi.mock('../services/installerBuilder', () => ({
     c.header('Cache-Control', 'no-store');
     return c.body(args.msi);
   }),
-}));
-
-// Plan C imports — mocked so Vitest can resolve them even though neither is
-// called in the legacy (fetchMacosInstallerAppZip → null) code path.
-vi.mock('../services/installerAppZip', () => ({
-  renameAppInZip: vi.fn(),
 }));
 
 vi.mock('../services/installerBootstrapTokenIssuance', () => ({
@@ -199,6 +189,17 @@ describe('enrollment key routes — installer download', () => {
   describe('GET /enrollment-keys/:id/installer/:platform', () => {
     it('returns 400 for invalid platform', async () => {
       const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/linux`, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/invalid platform/i);
+    });
+
+    it('returns 400 for macos platform (macOS installers removed)', async () => {
+      const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/macos`, {
         method: 'GET',
         headers: { Authorization: 'Bearer token' },
       });
@@ -381,47 +382,6 @@ describe('enrollment key routes — installer download', () => {
       expect(res.status).toBe(410);
     });
 
-    it('returns zip for macos platform', async () => {
-      mockSelectFromWhereLimit([makeEnrollmentKey()]);
-      mockInsertValuesReturning([
-        makeEnrollmentKey({ id: 'child-key-id', name: 'Test Key (installer)', maxUsage: 1 }),
-      ]);
-
-      const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/macos`, {
-        method: 'GET',
-        headers: { Authorization: 'Bearer token' },
-      });
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get('Content-Type')).toBe('application/zip');
-      expect(res.headers.get('Content-Disposition')).toContain('bl4ck-agent-macos.zip');
-    });
-
-    it('creates child key with maxUsage=1 by default (macos)', async () => {
-      const parentKey = makeEnrollmentKey();
-      mockSelectFromWhereLimit([parentKey]);
-      mockInsertValuesReturning([
-        makeEnrollmentKey({ id: 'child-key-id', name: 'Test Key (installer)', maxUsage: 1 }),
-      ]);
-
-      await app.request(`/enrollment-keys/${KEY_ID}/installer/macos`, {
-        method: 'GET',
-        headers: { Authorization: 'Bearer token' },
-      });
-
-      expect(db.insert).toHaveBeenCalledTimes(1);
-      const insertMock = vi.mocked(db.insert).mock.results[0]!.value;
-      const valuesFn = insertMock.values;
-      expect(valuesFn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orgId: ORG_ID,
-          siteId: 'site-111',
-          maxUsage: 1,
-          name: 'Test Key (installer)',
-        })
-      );
-    });
-
     it('windows bootstrap passes maxUsage to issueBootstrapTokenForKey (count query param)', async () => {
       mockSelectFromWhereLimit([makeEnrollmentKey()]);
 
@@ -436,32 +396,6 @@ describe('enrollment key routes — installer download', () => {
       );
       // Windows bootstrap does NOT create a child key (no db.insert)
       expect(db.insert).not.toHaveBeenCalled();
-    });
-
-    it('child key honors the ttlMinutes query param (per-link picker) (macos)', async () => {
-      const parentKey = makeEnrollmentKey(); // parent: 1h remaining
-      mockSelectFromWhereLimit([parentKey]);
-      mockInsertValuesReturning([
-        makeEnrollmentKey({ id: 'child-key-id', name: 'Test Key (installer)', maxUsage: 1 }),
-      ]);
-
-      const ttlMinutes = 43200; // 30 days
-      const before = Date.now();
-      const res = await app.request(
-        `/enrollment-keys/${KEY_ID}/installer/macos?ttlMinutes=${ttlMinutes}`,
-        { method: 'GET', headers: { Authorization: 'Bearer token' } },
-      );
-      const after = Date.now();
-
-      expect(res.status).toBe(200);
-      const valuesFn = vi.mocked(db.insert).mock.results[0]!.value.values;
-      const insertedRow = valuesFn.mock.calls[0]![0] as { expiresAt: Date };
-      const childExpiryMs = insertedRow.expiresAt.getTime();
-      const ttlMs = ttlMinutes * 60 * 1000;
-      // Fresh window from mint time = the admin's choice, not the 24h
-      // CHILD_ENROLLMENT_KEY_TTL_MINUTES default, not the parent's 1h.
-      expect(childExpiryMs).toBeGreaterThanOrEqual(before + ttlMs - 50);
-      expect(childExpiryMs).toBeLessThanOrEqual(after + ttlMs + 50);
     });
 
     it('returns 400 for ttlMinutes above the 525_600 cap', async () => {
@@ -538,110 +472,5 @@ describe('enrollment key routes — installer download', () => {
       );
     });
 
-    // ============================================================
-    // Signing-spend cap tests (per-user and per-parent-key limits)
-    // ============================================================
-    describe('signing-spend cap', () => {
-      beforeEach(() => {
-        // clearAllMocks does NOT drain mockResolvedValueOnce queues — reset rateLimiter
-        // and restore the allowed-by-default impl so an unconsumed `Once` value from a
-        // prior cap test cannot bleed into the next one's per-user/per-key sequence.
-        vi.mocked(rateLimiter).mockReset();
-        vi.mocked(rateLimiter).mockResolvedValue({ allowed: true, remaining: 10, resetAt: new Date() });
-      });
-
-      // Signing-spend cap applies to the macOS legacy path (child key creation).
-      // Windows early-returns before the cap — it does not go through signing.
-
-      it('allows macOS installer when both per-user and per-key caps are under limit', async () => {
-        // Default mock: rateLimiter always returns allowed=true
-        mockSelectFromWhereLimit([makeEnrollmentKey()]);
-        mockInsertValuesReturning([
-          makeEnrollmentKey({ id: 'child-key-id', name: 'Test Key (installer)', maxUsage: 1 }),
-        ]);
-
-        const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/macos`, {
-          method: 'GET',
-          headers: { Authorization: 'Bearer token' },
-        });
-
-        expect(res.status).toBe(200);
-        // Child key was created
-        expect(db.insert).toHaveBeenCalledTimes(1);
-      });
-
-      it('returns 429 and does NOT create child key when per-user cap is exceeded (macos)', async () => {
-        // First rateLimiter call (per-user) returns denied; second should never be reached
-        vi.mocked(rateLimiter)
-          .mockResolvedValueOnce({ allowed: false, remaining: 0, resetAt: new Date(Date.now() + 3600_000) })
-          .mockResolvedValueOnce({ allowed: true, remaining: 20, resetAt: new Date() });
-
-        mockSelectFromWhereLimit([makeEnrollmentKey()]);
-        // No insert mock needed — child key must NOT be created
-
-        const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/macos`, {
-          method: 'GET',
-          headers: { Authorization: 'Bearer token' },
-        });
-
-        expect(res.status).toBe(429);
-        const body = await res.json();
-        expect(body.error).toMatch(/rate limit/i);
-        expect(body.retryAfter).toBeDefined();
-        // No child enrollment key created, no signing triggered
-        expect(db.insert).not.toHaveBeenCalled();
-      });
-
-      it('returns 429 and does NOT create child key when per-parent-key cap is exceeded (macos)', async () => {
-        // First rateLimiter call (per-user) passes; second (per-key) is denied
-        vi.mocked(rateLimiter)
-          .mockResolvedValueOnce({ allowed: true, remaining: 5, resetAt: new Date() })
-          .mockResolvedValueOnce({ allowed: false, remaining: 0, resetAt: new Date(Date.now() + 3600_000) });
-
-        mockSelectFromWhereLimit([makeEnrollmentKey()]);
-        // No insert mock needed — child key must NOT be created
-
-        const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/macos`, {
-          method: 'GET',
-          headers: { Authorization: 'Bearer token' },
-        });
-
-        expect(res.status).toBe(429);
-        const body = await res.json();
-        expect(body.error).toMatch(/rate limit/i);
-        expect(body.retryAfter).toBeDefined();
-        // No child enrollment key created, no signing triggered
-        expect(db.insert).not.toHaveBeenCalled();
-      });
-
-      it('returns 503 and does NOT create child key when Redis is unavailable (macos)', async () => {
-        const { getRedis } = await import('../services');
-        vi.mocked(getRedis).mockReturnValueOnce(null as any);
-
-        mockSelectFromWhereLimit([makeEnrollmentKey()]);
-
-        const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/macos`, {
-          method: 'GET',
-          headers: { Authorization: 'Bearer token' },
-        });
-
-        expect(res.status).toBe(503);
-        // No child enrollment key created
-        expect(db.insert).not.toHaveBeenCalled();
-      });
-
-      it('windows download bypasses signing-spend cap entirely', async () => {
-        // Windows early-returns before the rate limiter — rateLimiter should not be called.
-        mockSelectFromWhereLimit([makeEnrollmentKey()]);
-
-        const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/windows`, {
-          method: 'GET',
-          headers: { Authorization: 'Bearer token' },
-        });
-
-        expect(res.status).toBe(200);
-        expect(rateLimiter).not.toHaveBeenCalled();
-      });
-    });
   });
 });

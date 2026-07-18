@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default permissions for Breeze Helper",
+  "description": "Default permissions for BL4CK Helper",
   "windows": ["main", "consent", "session-banner"],
   "permissions": [
     "core:default",

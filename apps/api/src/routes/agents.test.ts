@@ -243,34 +243,6 @@ describe('agent routes', () => {
     vi.unstubAllEnvs();
   });
 
-  describe('GET /agents/install.sh', () => {
-    it('serves public install and uninstall scripts without agent-token auth', async () => {
-      const installRes = await app.request('/agents/install.sh');
-      const uninstallRes = await app.request('/agents/uninstall.sh');
-
-      expect(installRes.status).toBe(200);
-      expect(uninstallRes.status).toBe(200);
-      expect(await uninstallRes.text()).toContain('case "$uname_s"');
-      expect(agentAuthMiddleware).not.toHaveBeenCalled();
-    });
-
-    it('does not apply script auth bypasses to nested paths', async () => {
-      await app.request('/agents/install.sh/heartbeat');
-
-      expect(agentAuthMiddleware).toHaveBeenCalledTimes(1);
-    });
-
-    it('requires Linux agent checksum metadata verification before install', async () => {
-      const res = await app.request('/agents/install.sh');
-
-      expect(res.status).toBe(200);
-      const script = await res.text();
-      expect(script).toContain('/api/v1/agent-versions/latest?platform=${OS}&arch=${ARCH}&component=agent');
-      expect(script).toContain('verify_sha256 "$TMPFILE" "$EXPECTED_SHA256"');
-      expect(script).toContain('Refusing to install without a trusted checksum');
-    });
-  });
-
   describe('POST /agents/enroll', () => {
     it('blocks enrollment in production when no enrollment secret is configured', async () => {
       vi.stubEnv('NODE_ENV', 'production');

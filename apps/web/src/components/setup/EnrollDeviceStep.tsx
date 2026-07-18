@@ -53,7 +53,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState<string>();
   const [tokenCopied, setTokenCopied] = useState(false);
-  const [selectedOS, setSelectedOS] = useState<Platform>(userPlatform);
+  const [selectedOS, setSelectedOS] = useState<Platform>('windows');
 
   const [finishing, setFinishing] = useState(false);
 
@@ -294,7 +294,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
           <div>
             <label className="block text-sm font-medium mb-1.5">Platform</label>
             <div className="flex gap-2">
-              {(['windows', 'macos'] as const).map((p) => (
+              {(['windows'] as const).map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -463,7 +463,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
 
           {/* Commands */}
           {(() => {
-            const commands: Record<Platform, string> = buildInstallCommands({
+            const commands = buildInstallCommands({
               apiUrl: import.meta.env.PUBLIC_API_URL || window.location.origin,
               ghBase:
                 import.meta.env.PUBLIC_AGENT_DOWNLOAD_URL ||
@@ -478,7 +478,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
                   Step 2 — Run the install command
                 </p>
                 <div className="flex gap-1 mb-3">
-                  {(['windows', 'macos', 'linux'] as const).map((os) => (
+                  {(['windows'] as const).map((os) => (
                     <button
                       key={os}
                       type="button"
@@ -496,11 +496,11 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
                 <div className="rounded-lg border bg-muted/30 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <code className="text-xs font-mono text-muted-foreground break-all">
-                      {commands[selectedOS]}
+                      {commands.windows}
                     </code>
                     <button
                       type="button"
-                      onClick={() => handleCopyCommand(commands[selectedOS])}
+                      onClick={() => handleCopyCommand(commands.windows)}
                       className="shrink-0 p-1 hover:bg-muted rounded"
                     >
                       <Copy className="h-4 w-4" />

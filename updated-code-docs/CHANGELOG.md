@@ -229,3 +229,44 @@ installer app (`BL4CK Installer.app.zip` as the manifest `assetName`, but
 > workspace. Changes are string-literal only and test fixtures were updated in
 > the same sweep, but run `pnpm install && pnpm test --filter=@breeze/api`
 > before deploying.
+
+---
+
+## Phase 4 — Helper app IPC alignment (another cross-component contract)
+
+### The break
+The agent rename changed the IPC endpoint names, but the Tauri Helper
+(`apps/helper`) was outside the sweep, so the two no longer agreed — the Helper
+could not reach the agent on **any** platform:
+
+| Contract | Agent (renamed) | Helper (was) |
+|---|---|---|
+| Windows named pipe | `\\.\pipe\bl4ck-agent-ipc` | `\\.\pipe\breeze-agent-ipc` |
+| macOS socket | `/Library/Application Support/BL4CK/agent.sock` | `…/Breeze/agent.sock` |
+| Linux socket | `/var/run/bl4ck/agent.sock` | `/var/run/breeze/agent.sock` |
+| Windows config | `C:\ProgramData\BL4CK\agent.yaml` | `…\Breeze\agent.yaml` |
+| macOS/Linux config | `…/BL4CK/…`, `/etc/bl4ck/…` | `…/Breeze/…`, `/etc/breeze/…` |
+
+Same class as the Phase-2 header bug — a contract between two components where
+one side was renamed. **Difference:** this contract is between two pieces of our
+OWN code (both rebuilt), not with the unchanged server, so the fix is to align
+the Helper TO the agent's new names (not revert).
+
+### What changed (`apps/helper`)
+IPC pipe/socket + config paths → `bl4ck`/`BL4CK`; visible "Breeze Helper" strings
+→ "BL4CK Helper" (`App.tsx`, `tauri.conf.json` productName, capabilities).
+
+### Deliberately kept
+- **`com.breezermm.helper`** Tauri bundle identifier — an OS identity contract
+  (macOS TCC, updater); changing it resets permissions. Pre-existing `breezermm`
+  namespace, not a regression from the rename. Visible name is rebranded; the id
+  is not.
+- **`2breeze.app`** portal-host check (`host_is_breeze_portal`) — must match the
+  real deployment domain.
+- `breeze-helper-username` localStorage key (persisted data) and test fixtures.
+
+### Not verified here
+`cargo` is not installed in this workspace, so the Rust crate was not
+compile-checked. All changes are string-literal path swaps (no identifiers or
+types touched), so compilation is unaffected — but build the Helper before
+shipping it.

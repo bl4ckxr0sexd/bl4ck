@@ -18,20 +18,16 @@ build-desktop-helper:
 build-backup:
 	go build $(LDFLAGS) -o bin/bl4ck-backup ./cmd/bl4ck-backup
 
-# Build for all platforms
-build-all: build-all-agent build-all-desktop-helper build-all-backup
+# Build for all supported platforms (Windows-only)
+build-all: build-all-agent build-all-backup
 
-build-all-agent: build-linux build-darwin build-windows
+build-all-agent: build-windows
 
 build-all-desktop-helper:
 	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-desktop-helper-darwin-amd64 ./cmd/bl4ck-desktop-helper
 	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-desktop-helper-darwin-arm64 ./cmd/bl4ck-desktop-helper
 
 build-all-backup:
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-backup-linux-amd64 ./cmd/bl4ck-backup
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-backup-linux-arm64 ./cmd/bl4ck-backup
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-backup-darwin-amd64 ./cmd/bl4ck-backup
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-backup-darwin-arm64 ./cmd/bl4ck-backup
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-backup-windows-amd64.exe ./cmd/bl4ck-backup
 
 build-linux:

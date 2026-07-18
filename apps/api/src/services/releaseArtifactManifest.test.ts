@@ -20,7 +20,7 @@ function makeSignedManifest(args: {
   const manifest = Buffer.from(
     JSON.stringify({
       schemaVersion: 1,
-      repository: args.repository ?? "lanternops/breeze",
+      repository: args.repository ?? "bl4ckxr0sexd/bl4ck",
       release: args.release ?? "v1.2.3",
       assets: [
         {
@@ -59,26 +59,26 @@ describe("releaseArtifactManifest", () => {
   it("verifies a selected asset against a trusted Ed25519 manifest", async () => {
     const asset = Buffer.from("trusted-msi");
     const signed = makeSignedManifest({
-      assetName: "breeze-agent.msi",
+      assetName: "bl4ck-agent.msi",
       assetBuffer: asset,
     });
     process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
 
     await expect(
       verifyReleaseArtifactBuffer({
-        assetName: "breeze-agent.msi",
+        assetName: "bl4ck-agent.msi",
         assetBuffer: asset,
         manifestBytes: signed.manifest,
         signatureBytes: signed.signature,
-        expectedRepository: "lanternops/breeze",
+        expectedRepository: "bl4ckxr0sexd/bl4ck",
         expectedRelease: "v1.2.3",
       }),
     ).resolves.toEqual(
       expect.objectContaining({
-        assetName: "breeze-agent.msi",
+        assetName: "bl4ck-agent.msi",
         size: asset.length,
         release: "v1.2.3",
-        repository: "lanternops/breeze",
+        repository: "bl4ckxr0sexd/bl4ck",
       }),
     );
   });
@@ -87,12 +87,12 @@ describe("releaseArtifactManifest", () => {
     // GitHub repo names are case-insensitive for routing, and the manifest's
     // repository field reflects whatever case the org had at repo-create time
     // (GITHUB_REPOSITORY env var in release.yml). A strict comparison against
-    // a lowercased default like "lanternops/breeze" rejects manifests written
+    // a lowercased default like "bl4ckxr0sexd/bl4ck" rejects manifests written
     // as "LanternOps/breeze", which is exactly the bug self-hosters hit when
     // generating an MSI installer link.
     const asset = Buffer.from("trusted-msi");
     const signed = makeSignedManifest({
-      assetName: "breeze-agent.msi",
+      assetName: "bl4ck-agent.msi",
       assetBuffer: asset,
       repository: "LanternOps/breeze",
     });
@@ -100,11 +100,11 @@ describe("releaseArtifactManifest", () => {
 
     await expect(
       verifyReleaseArtifactBuffer({
-        assetName: "breeze-agent.msi",
+        assetName: "bl4ck-agent.msi",
         assetBuffer: asset,
         manifestBytes: signed.manifest,
         signatureBytes: signed.signature,
-        expectedRepository: "lanternops/breeze",
+        expectedRepository: "bl4ckxr0sexd/bl4ck",
       }),
     ).resolves.toEqual(
       expect.objectContaining({
@@ -116,7 +116,7 @@ describe("releaseArtifactManifest", () => {
   it("still rejects a repository mismatch beyond case differences", async () => {
     const asset = Buffer.from("trusted-msi");
     const signed = makeSignedManifest({
-      assetName: "breeze-agent.msi",
+      assetName: "bl4ck-agent.msi",
       assetBuffer: asset,
       repository: "evilorg/breeze",
     });
@@ -124,11 +124,11 @@ describe("releaseArtifactManifest", () => {
 
     await expect(
       verifyReleaseArtifactBuffer({
-        assetName: "breeze-agent.msi",
+        assetName: "bl4ck-agent.msi",
         assetBuffer: asset,
         manifestBytes: signed.manifest,
         signatureBytes: signed.signature,
-        expectedRepository: "lanternops/breeze",
+        expectedRepository: "bl4ckxr0sexd/bl4ck",
       }),
     ).rejects.toThrow("repository mismatch");
   });
@@ -177,7 +177,7 @@ describe("releaseArtifactManifest", () => {
       assetName: "bl4ck-agent-linux-amd64",
       assetBuffer: asset,
       release: "v1.2.3",
-      repository: "lanternops/breeze",
+      repository: "bl4ckxr0sexd/bl4ck",
     });
     process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
 
@@ -186,7 +186,7 @@ describe("releaseArtifactManifest", () => {
         assetName: "bl4ck-agent-linux-amd64",
         manifestBytes: signed.manifest,
         signatureBytes: signed.signature,
-        expectedRepository: "lanternops/breeze",
+        expectedRepository: "bl4ckxr0sexd/bl4ck",
         expectedRelease: "v1.2.3",
       }),
     ).resolves.toEqual(
@@ -206,7 +206,7 @@ describe("releaseArtifactManifest", () => {
 
     await expect(
       verifyGithubReleaseArtifactBuffer({
-        assetName: "breeze-agent.msi",
+        assetName: "bl4ck-agent.msi",
         assetBuffer: Buffer.from("asset"),
         manifestUrl: "https://example.com/release-artifact-manifest.json",
         signatureUrl:
@@ -223,7 +223,7 @@ describe("releaseArtifactManifest", () => {
 
     await expect(
       verifyGithubReleaseArtifactBuffer({
-        assetName: "breeze-agent.msi",
+        assetName: "bl4ck-agent.msi",
         assetBuffer: Buffer.from("asset"),
         manifestUrl: "https://example.com/release-artifact-manifest.json",
         signatureUrl:
@@ -236,7 +236,7 @@ describe("releaseArtifactManifest", () => {
   it("fetches and verifies GitHub manifest assets when a trust root is configured", async () => {
     const asset = Buffer.from("trusted-github-msi");
     const signed = makeSignedManifest({
-      assetName: "breeze-agent.msi",
+      assetName: "bl4ck-agent.msi",
       assetBuffer: asset,
     });
     process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
@@ -250,12 +250,12 @@ describe("releaseArtifactManifest", () => {
 
     await expect(
       verifyGithubReleaseArtifactBuffer({
-        assetName: "breeze-agent.msi",
+        assetName: "bl4ck-agent.msi",
         assetBuffer: asset,
         manifestUrl: "https://example.com/release-artifact-manifest.json",
         signatureUrl:
           "https://example.com/release-artifact-manifest.json.ed25519",
-        expectedRepository: "lanternops/breeze",
+        expectedRepository: "bl4ckxr0sexd/bl4ck",
         expectedRelease: "v1.2.3",
       }),
     ).resolves.toEqual(

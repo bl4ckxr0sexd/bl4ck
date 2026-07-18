@@ -1191,7 +1191,7 @@ describe('validateConfig', () => {
     it('refuses to boot when MSI_SIGNING_URL is set but MSI_SIGNING_CF_ACCESS_SECRET is missing', () => {
       withEnv({
         ...prodBase,
-        MSI_SIGNING_URL: 'https://sign.2breeze.app/sign-breeze-agent',
+        MSI_SIGNING_URL: 'https://sign.2breeze.app/sign-bl4ck-agent',
         MSI_SIGNING_CF_ACCESS_ID: 'cf-access-id',
         MSI_SIGNING_CF_ACCESS_SECRET: '',
       }, () => {
