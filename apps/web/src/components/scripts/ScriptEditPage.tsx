@@ -58,6 +58,7 @@ export default function ScriptEditPage({ scriptId }: ScriptEditPageProps) {
         parameters: scriptData.parameters || [],
         timeoutSeconds: scriptData.timeoutSeconds || 300,
         runAs: scriptData.runAs || 'system',
+        runOnConnect: scriptData.runOnConnect ?? false,
         exitCodeSeverityMapping: mappingToRows(scriptData.exitCodeSeverityMapping),
         // Seed the "Available to" re-scope picker from the current scope
         // (issue #1734): org_id NULL = partner-wide ("All Orgs"), else a

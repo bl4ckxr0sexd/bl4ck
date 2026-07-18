@@ -153,6 +153,7 @@ export default function ScriptForm({
       parameters: [],
       timeoutSeconds: 300,
       runAs: 'system',
+      runOnConnect: false,
       exitCodeSeverityMapping: [],
       availability: 'partner',
       ...defaultValues
@@ -177,6 +178,7 @@ export default function ScriptForm({
     if (defaultValues?.parameters && defaultValues.parameters.length > 0) setParamsOpen(true);
     if (defaultValues?.timeoutSeconds !== undefined && defaultValues.timeoutSeconds !== 300) setSettingsOpen(true);
     if (defaultValues?.runAs !== undefined && defaultValues.runAs !== 'system') setSettingsOpen(true);
+    if (defaultValues?.runOnConnect) setSettingsOpen(true);
     if (defaultValues?.exitCodeSeverityMapping && defaultValues.exitCodeSeverityMapping.length > 0) setSeverityOpen(true);
   }, [defaultValues]);
 
@@ -612,6 +614,22 @@ export default function ScriptForm({
               {runAsOptions.find(o => o.value === watch('runAs'))?.description}.
               {watch('runAs') === 'elevated' && ' Uses sudo on macOS/Linux, runas on Windows.'}
             </p>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <label className="flex items-start gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-border"
+                {...register('runOnConnect')}
+              />
+              <span>
+                Run automatically when a device connects
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                  Runs once per device — the first time each device in this script&apos;s scope comes
+                  online. Reconnects and reboots won&apos;t re-run it. Respects maintenance windows.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
       </CollapsibleSection>

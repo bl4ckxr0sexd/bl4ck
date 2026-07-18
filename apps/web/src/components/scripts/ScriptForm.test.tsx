@@ -1,4 +1,4 @@
-import { render, waitFor, act } from '@testing-library/react';
+import { render, waitFor, act, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Raw source of the component under test, for the build-mechanism guard below.
 import scriptFormSource from './ScriptForm.tsx?raw';
@@ -216,5 +216,58 @@ describe('ScriptForm availability picker — partner-scope gate', () => {
     const { queryByText } = render(<ScriptForm isSystemScript />);
     await waitFor(() => expect(editorInstances.length).toBeGreaterThan(0));
     expect(queryByText('Available to')).toBeNull();
+  });
+});
+
+describe('ScriptForm runOnConnect (auto-run on device connect)', () => {
+  beforeEach(() => {
+    editorInstances.length = 0;
+    getJwtClaimsMock.mockReturnValue({ scope: 'organization', partnerId: null, orgId: 'o-1' });
+    orgStoreMock.mockReturnValue({ organizations: [], partners: [], sites: [] });
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The checkbox sits inside a wrapping <label> that also holds the long
+  // helper-text span, so its accessible name isn't a clean match — resolve it
+  // by walking up from the visible label text to the nested <input>.
+  const findRunOnConnectCheckbox = (getByText: (t: RegExp) => HTMLElement): HTMLInputElement => {
+    const label = getByText(/Run automatically when a device connects/).closest('label');
+    const checkbox = label?.querySelector('input[type="checkbox"]');
+    if (!(checkbox instanceof HTMLInputElement)) throw new Error('runOnConnect checkbox not found');
+    return checkbox;
+  };
+
+  it('renders the "Run automatically when a device connects" checkbox, unchecked by default', async () => {
+    const { getByText } = render(<ScriptForm />);
+    await waitFor(() => expect(editorInstances.length).toBeGreaterThan(0));
+    const checkbox = findRunOnConnectCheckbox(getByText);
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it('reflects defaultValues.runOnConnect: true (checkbox pre-checked when editing an enabled script)', async () => {
+    const { getByText } = render(<ScriptForm defaultValues={{ runOnConnect: true }} />);
+    await waitFor(() => expect(editorInstances.length).toBeGreaterThan(0));
+    const checkbox = findRunOnConnectCheckbox(getByText);
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it('includes runOnConnect: true in the submitted values after toggling it on', async () => {
+    const onSubmit = vi.fn();
+    const { getByText, getByRole } = render(
+      <ScriptForm defaultValues={{ name: 'Test Script', content: 'echo hi' }} onSubmit={onSubmit} />
+    );
+    await waitFor(() => expect(editorInstances.length).toBeGreaterThan(0));
+
+    const checkbox = findRunOnConnectCheckbox(getByText);
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    fireEvent.submit(getByRole('button', { name: /Save script/ }).closest('form')!);
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ runOnConnect: true });
   });
 });

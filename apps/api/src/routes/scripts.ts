@@ -169,6 +169,7 @@ const createScriptSchema = z.object({
   parameters: z.any().optional(),
   timeoutSeconds: z.number().int().min(1).max(86400).default(300),
   runAs: z.enum(['system', 'user', 'elevated']).default('system'),
+  runOnConnect: z.boolean().optional(),
   isSystem: z.boolean().optional(),
   exitCodeSeverityMapping: exitCodeSeverityMappingSchema.nullable().optional(),
   availability: z.enum(['org', 'partner']).optional()
@@ -184,6 +185,7 @@ const updateScriptSchema = z.object({
   parameters: z.any().optional(),
   timeoutSeconds: z.number().int().min(1).max(86400).optional(),
   runAs: z.enum(['system', 'user', 'elevated']).optional(),
+  runOnConnect: z.boolean().optional(),
   exitCodeSeverityMapping: exitCodeSeverityMappingSchema.nullable().optional(),
   // Re-scope on edit (issue #1734). Mirrors the create-time "Available to"
   // control: 'org' = a single specific org, 'partner' = partner-wide ("All
@@ -520,6 +522,7 @@ scriptRoutes.post(
         parameters: data.parameters,
         timeoutSeconds: data.timeoutSeconds,
         runAs: data.runAs,
+        runOnConnect: data.runOnConnect ?? false,
         isSystem,
         version: 1,
         exitCodeSeverityMapping: data.exitCodeSeverityMapping ?? null,
@@ -669,6 +672,7 @@ scriptRoutes.put(
     if (data.parameters !== undefined) updates.parameters = data.parameters;
     if (data.timeoutSeconds !== undefined) updates.timeoutSeconds = data.timeoutSeconds;
     if (data.runAs !== undefined) updates.runAs = data.runAs;
+    if (data.runOnConnect !== undefined) updates.runOnConnect = data.runOnConnect;
     if (data.exitCodeSeverityMapping !== undefined) updates.exitCodeSeverityMapping = data.exitCodeSeverityMapping;
 
     // Increment version if content changes

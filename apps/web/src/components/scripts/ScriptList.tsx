@@ -14,6 +14,7 @@ export type Script = {
   category: string;
   osTypes: OSType[];
   runAs?: ScriptRunAs;
+  runOnConnect?: boolean;
   lastRun?: string;
   status?: ScriptStatus;
   createdAt: string;
