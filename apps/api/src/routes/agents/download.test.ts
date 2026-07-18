@@ -95,13 +95,13 @@ describe('public agent binary downloads', () => {
     vi.mocked(getBinarySource).mockReturnValue('github');
     vi.mocked(getGithubWatchdogUrl).mockImplementation(
       (os: string, arch: string) =>
-        `https://github.test/${os}-${arch}/breeze-watchdog`,
+        `https://github.test/${os}-${arch}/bl4ck-watchdog`,
     );
 
     try {
       const lin = await downloadRoutes.request('/download/watchdog/linux/amd64');
       expect(lin.status).toBe(302);
-      expect(lin.headers.get('location')).toBe('https://github.test/linux-amd64/breeze-watchdog');
+      expect(lin.headers.get('location')).toBe('https://github.test/linux-amd64/bl4ck-watchdog');
       expect(getGithubWatchdogUrl).toHaveBeenCalledWith('linux', 'amd64');
 
       const win = await downloadRoutes.request('/download/watchdog/windows/amd64');
@@ -121,7 +121,7 @@ describe('public agent binary downloads', () => {
     expect(badArch.status).toBe(400);
   });
 
-  // #1878: user-helper (breeze-user-helper.exe) is a distinct Go binary from the
+  // #1878: user-helper (bl4ck-user-helper.exe) is a distinct Go binary from the
   // Tauri "helper" app, and its server-relative route must exist so the agent's
   // verified updater is not handed a github.com URL its host check rejects.
   it('does not disclose AGENT_BINARY_DIR in public user-helper 404 responses', async () => {
@@ -140,13 +140,13 @@ describe('public agent binary downloads', () => {
     vi.mocked(getBinarySource).mockReturnValue('github');
     vi.mocked(getGithubUserHelperUrl).mockImplementation(
       (os: string, arch: string) =>
-        `https://github.test/${os}-${arch}/breeze-user-helper`,
+        `https://github.test/${os}-${arch}/bl4ck-user-helper`,
     );
 
     try {
       const win = await downloadRoutes.request('/download/user-helper/windows/amd64');
       expect(win.status).toBe(302);
-      expect(win.headers.get('location')).toBe('https://github.test/windows-amd64/breeze-user-helper');
+      expect(win.headers.get('location')).toBe('https://github.test/windows-amd64/bl4ck-user-helper');
       expect(getGithubUserHelperUrl).toHaveBeenCalledWith('windows', 'amd64');
     } finally {
       vi.mocked(getBinarySource).mockReturnValue('local');
@@ -519,7 +519,7 @@ describe('GET /uninstall.sh — generated uninstaller script', () => {
     expect(script).toContain('Darwin*) uninstall_macos');
     expect(script).toContain('Linux*) uninstall_linux');
     expect(script).toContain('launchctl bootout system/com.breeze.agent');
-    expect(script).toContain('systemctl stop breeze-agent');
+    expect(script).toContain('systemctl stop bl4ck-agent');
   });
 
   it('matches the checked-in web and agent script copies', async () => {

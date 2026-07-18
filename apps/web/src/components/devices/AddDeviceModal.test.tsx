@@ -152,16 +152,14 @@ describe('AddDeviceModal', () => {
     expect(screen.getByText('sha256sum uninstall.sh')).toBeDefined();
   });
 
-  it('switches platform when platform buttons are clicked', () => {
+  it('shows only the Windows installer option (Windows-only build)', () => {
     render(<AddDeviceModal isOpen onClose={vi.fn()} />);
 
-    const macosButton = screen.getByText('macOS (.zip)');
-    fireEvent.click(macosButton);
-
-    expect(macosButton.className).toContain('bg-primary');
-
     const windowsButton = screen.getByText('Windows (.msi)');
-    expect(windowsButton.className).not.toContain('bg-primary');
+    expect(windowsButton.className).toContain('bg-primary');
+
+    // macOS/Linux installers were removed — the option must not render.
+    expect(screen.queryByText('macOS (.zip)')).toBeNull();
   });
 
   it('clamps device count between 1 and 1000', () => {

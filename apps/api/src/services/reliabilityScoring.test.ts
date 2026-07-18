@@ -434,7 +434,7 @@ describe('mergeRowsIntoDailyBuckets event dedup (#1904)', () => {
       makeHistoryRow({
         serviceFailures: [
           { serviceName: 'Breeze Agent', timestamp: '2026-02-20T10:00:00.000Z', errorCode: '7031:1', recovered: false },
-          { serviceName: 'breeze-watchdog', timestamp: '2026-02-20T10:01:00.000Z', errorCode: '7034:2', recovered: false },
+          { serviceName: 'bl4ck-watchdog', timestamp: '2026-02-20T10:01:00.000Z', errorCode: '7034:2', recovered: false },
           { serviceName: 'Print Spooler', timestamp: '2026-02-20T10:02:00.000Z', errorCode: '7000:3', recovered: false },
         ],
       }),
@@ -451,7 +451,7 @@ describe('mergeRowsIntoDailyBuckets event dedup (#1904)', () => {
   it('isBreezeSelfServiceFailure matches our services across platforms, not customer services', () => {
     const { isBreezeSelfServiceFailure } = reliabilityScoringInternals;
     expect(isBreezeSelfServiceFailure('Breeze Agent')).toBe(true);
-    expect(isBreezeSelfServiceFailure('breeze-agent')).toBe(true);
+    expect(isBreezeSelfServiceFailure('bl4ck-agent')).toBe(true);
     expect(isBreezeSelfServiceFailure('Breeze Watchdog')).toBe(true);
     expect(isBreezeSelfServiceFailure('breeze-helper')).toBe(true);
     expect(isBreezeSelfServiceFailure('Print Spooler')).toBe(false);

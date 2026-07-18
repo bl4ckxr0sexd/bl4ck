@@ -439,11 +439,11 @@ describe('bmr routes', () => {
         configId: '99999999-9999-4999-8999-999999999999',
         snapshotId: 'snap-ext-001',
         label: 'Backup 2026-03-29',
-        location: 's3://breeze-backups/org-001/dev-001/2026-03-29',
+        location: 's3://bl4ck-backups/org-001/dev-001/2026-03-29',
         timestamp: new Date('2026-03-29T12:34:56.000Z'),
         size: 1234,
         fileCount: 12,
-        metadata: { providerType: 's3', storagePrefix: 's3://breeze-backups/org-001/dev-001/2026-03-29' },
+        metadata: { providerType: 's3', storagePrefix: 's3://bl4ck-backups/org-001/dev-001/2026-03-29' },
         backupType: 'file',
         isIncremental: false,
         hardwareProfile: { cpuCores: 4 },
@@ -455,7 +455,7 @@ describe('bmr routes', () => {
         name: 'Primary S3',
         provider: 's3',
         providerConfig: {
-          bucket: 'breeze-backups',
+          bucket: 'bl4ck-backups',
           region: 'us-east-1',
           accessKey: 'abc',
           secretKey: 'def',
@@ -487,7 +487,7 @@ describe('bmr routes', () => {
     expect(body.device.hostname).toBe('srv-01');
     expect(body.bootstrap.version).toBe(1);
     expect(body.bootstrap.minHelperVersion).toBeTruthy();
-    expect(body.bootstrap.commandTemplate).toContain('breeze-backup bmr-recover');
+    expect(body.bootstrap.commandTemplate).toContain('bl4ck-backup bmr-recover');
     expect(body.bootstrap.download).toMatchObject({
       type: 'breeze_proxy',
       pathPrefix: 'snapshots/snap-ext-001',
@@ -530,11 +530,11 @@ describe('bmr routes', () => {
         configId: null,
         snapshotId: 'snap-ext-001',
         label: 'Backup 2026-03-29',
-        location: 's3://breeze-backups/org-001/dev-001/2026-03-29',
+        location: 's3://bl4ck-backups/org-001/dev-001/2026-03-29',
         timestamp: new Date('2026-03-29T12:34:56.000Z'),
         size: 1234,
         fileCount: 12,
-        metadata: { providerType: 's3', storagePrefix: 's3://breeze-backups/org-001/dev-001/2026-03-29' },
+        metadata: { providerType: 's3', storagePrefix: 's3://bl4ck-backups/org-001/dev-001/2026-03-29' },
         backupType: 'file',
         isIncremental: false,
         hardwareProfile: { cpuCores: 4 },
@@ -549,7 +549,7 @@ describe('bmr routes', () => {
         name: 'Primary S3',
         provider: 's3',
         providerConfig: {
-          bucket: 'breeze-backups',
+          bucket: 'bl4ck-backups',
           region: 'us-east-1',
           accessKey: 'abc',
           secretKey: 'def',
@@ -597,7 +597,7 @@ describe('bmr routes', () => {
       snapshotId: 'snap-ext-001',
       metadata: {
         providerType: 's3',
-        storagePrefix: 's3://breeze-backups/org-001/dev-001/2026-03-29',
+        storagePrefix: 's3://bl4ck-backups/org-001/dev-001/2026-03-29',
       },
     });
     expect(body.authenticatedAt).toBeTruthy();
@@ -718,11 +718,11 @@ describe('bmr routes', () => {
         configId: null,
         snapshotId: 'snap-ext-001',
         label: 'Backup 2026-03-29',
-        location: 's3://breeze-backups/org-001/dev-001/2026-03-29',
+        location: 's3://bl4ck-backups/org-001/dev-001/2026-03-29',
         timestamp: new Date('2026-03-29T12:34:56.000Z'),
         size: 1234,
         fileCount: 12,
-        metadata: { providerType: 's3', storagePrefix: 's3://breeze-backups/org-001/dev-001/2026-03-29' },
+        metadata: { providerType: 's3', storagePrefix: 's3://bl4ck-backups/org-001/dev-001/2026-03-29' },
         backupType: 'file',
         isIncremental: false,
         hardwareProfile: null,

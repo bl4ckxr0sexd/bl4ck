@@ -26,7 +26,7 @@ function signedReleaseManifest(assetName: string, assetBuffer: Buffer) {
   const rawPublicKey = publicDer.subarray(publicDer.length - 32).toString('base64');
   const manifest = Buffer.from(JSON.stringify({
     schemaVersion: 1,
-    repository: 'lanternops/breeze',
+    repository: 'bl4ckxr0sexd/bl4ck',
     release: 'v1.2.3',
     assets: [
       {
@@ -59,13 +59,13 @@ describe('fetchRegularMsi', () => {
 
   it('verifies GitHub release MSI bytes against the signed release artifact manifest', async () => {
     const asset = Buffer.from('signed-msi');
-    const signed = signedReleaseManifest('breeze-agent.msi', asset);
+    const signed = signedReleaseManifest('bl4ck-agent.msi', asset);
     process.env.BINARY_SOURCE = 'github';
     process.env.BINARY_VERSION = '1.2.3';
     process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
 
     const fetchMock = vi.fn(async (url: string) => {
-      if (url.endsWith('/breeze-agent.msi')) return new Response(asset);
+      if (url.endsWith('/bl4ck-agent.msi')) return new Response(asset);
       if (url.endsWith('/release-artifact-manifest.json')) return new Response(signed.manifest);
       if (url.endsWith('/release-artifact-manifest.json.ed25519')) return new Response(signed.signature);
       return new Response('not found', { status: 404 });
@@ -74,7 +74,7 @@ describe('fetchRegularMsi', () => {
 
     await expect(fetchRegularMsi()).resolves.toEqual(asset);
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://github.com/lanternops/breeze/releases/download/v1.2.3/release-artifact-manifest.json.ed25519',
+      'https://github.com/bl4ckxr0sexd/bl4ck/releases/download/v1.2.3/release-artifact-manifest.json.ed25519',
       { redirect: 'follow' },
     );
   });
@@ -98,7 +98,7 @@ describe('buildMacosInstallerZip', () => {
     expect(entries).toContain('install.sh');
     // The pkg is downloaded per-architecture at install time, not bundled —
     // this is what lets one zip work on both Intel and Apple Silicon.
-    expect(entries).not.toContain('breeze-agent.pkg');
+    expect(entries).not.toContain('bl4ck-agent.pkg');
 
     const jsonStr = await zip.files['enrollment.json']!.async('string');
     const config = JSON.parse(jsonStr);
@@ -145,7 +145,7 @@ describe('buildMacosInstallerZip — install.sh content', () => {
     const zip = await JSZip.loadAsync(zipBuffer);
     const script = await zip.files['install.sh']!.async('string');
     expect(script).toContain('#!/bin/bash');
-    expect(script).toContain('breeze-agent enroll');
+    expect(script).toContain('bl4ck-agent enroll');
     expect(script).toContain('enrollment.json');
   });
 

@@ -432,7 +432,7 @@ describe("binarySync", () => {
   });
 
   // Issue #816 / PR #845: syncFromGitHub gained a USER_HELPER_TARGETS loop
-  // that registers the windows/amd64 breeze-user-helper.exe asset as its own
+  // that registers the windows/amd64 bl4ck-user-helper.exe asset as its own
   // component=user-helper row. heartbeat.doUpgrade's prefetch then fetches
   // it via GET /agent-versions/:v/download. The three tests below cover the
   // load-bearing behaviors of that loop.
@@ -636,7 +636,7 @@ describe("binarySync", () => {
     });
   });
 
-  // The watchdog sync loop registers breeze-watchdog as its own
+  // The watchdog sync loop registers bl4ck-watchdog as its own
   // component=watchdog row so the server can drive watchdog upgrades and the
   // agent's reconcile path can fetch the matching binary. Without this, the
   // watchdog could never auto-update on the hosted (BINARY_SOURCE=github) path.

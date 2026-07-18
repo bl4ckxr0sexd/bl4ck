@@ -52,13 +52,13 @@ describe('MsiSigningService', () => {
     });
 
     it('returns instance when MSI_SIGNING_URL is set', () => {
-      process.env.MSI_SIGNING_URL = 'https://sign.2breeze.app/sign-breeze-agent';
+      process.env.MSI_SIGNING_URL = 'https://sign.2breeze.app/sign-bl4ck-agent';
       const service = MsiSigningService.fromEnv();
       expect(service).toBeInstanceOf(MsiSigningService);
     });
 
     it('returns cached singleton on repeated calls', () => {
-      process.env.MSI_SIGNING_URL = 'https://sign.2breeze.app/sign-breeze-agent';
+      process.env.MSI_SIGNING_URL = 'https://sign.2breeze.app/sign-bl4ck-agent';
       const first = MsiSigningService.fromEnv();
       const second = MsiSigningService.fromEnv();
       expect(first).toBe(second);
@@ -75,7 +75,7 @@ describe('MsiSigningService', () => {
       mockSignedResponse();
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -85,7 +85,7 @@ describe('MsiSigningService', () => {
       expect(result.length).toBe(2048);
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [url, init] = mockFetch.mock.calls[0]!;
-      expect(url).toBe('https://sign.example.com/sign-breeze-agent');
+      expect(url).toBe('https://sign.example.com/sign-bl4ck-agent');
       expect(init.method).toBe('POST');
       expect(init.headers['Content-Type']).toBe('application/json');
       expect(JSON.parse(init.body)).toEqual(SAMPLE_REQUEST);
@@ -95,7 +95,7 @@ describe('MsiSigningService', () => {
       mockSignedResponse();
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         'cf-access-id-123',
         'cf-access-secret-456',
         undefined,
@@ -111,7 +111,7 @@ describe('MsiSigningService', () => {
       mockSignedResponse();
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         'bsk_test_key_123',
@@ -126,7 +126,7 @@ describe('MsiSigningService', () => {
       mockSignedResponse();
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -143,7 +143,7 @@ describe('MsiSigningService', () => {
       mockSignedResponse();
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -158,7 +158,7 @@ describe('MsiSigningService', () => {
       mockSignedResponse();
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -183,7 +183,7 @@ describe('MsiSigningService', () => {
       });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -202,7 +202,7 @@ describe('MsiSigningService', () => {
       });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -224,7 +224,7 @@ describe('MsiSigningService', () => {
       });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -236,7 +236,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -247,7 +247,7 @@ describe('MsiSigningService', () => {
 
   describe('buildAndSignMsi — input validation (Zod)', () => {
     const service = new MsiSigningService(
-      'https://sign.example.com/sign-breeze-agent',
+      'https://sign.example.com/sign-bl4ck-agent',
       undefined,
       undefined,
       undefined,
@@ -344,7 +344,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -360,7 +360,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -372,7 +372,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockResolvedValueOnce({ ok: false, status: 401 });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -384,7 +384,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND sign.example.com'));
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -398,7 +398,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockRejectedValueOnce(timeoutErr);
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         undefined,
@@ -410,7 +410,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         'cf-id',
         'cf-secret',
         undefined,
@@ -426,7 +426,7 @@ describe('MsiSigningService', () => {
       mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
 
       const service = new MsiSigningService(
-        'https://sign.example.com/sign-breeze-agent',
+        'https://sign.example.com/sign-bl4ck-agent',
         undefined,
         undefined,
         'bsk_test_key_456',
