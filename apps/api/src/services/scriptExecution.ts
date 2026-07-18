@@ -30,6 +30,10 @@ type ExecuteScriptOnDevicesInput = {
   runAs?: 'system' | 'user';
   auth: ScriptExecutionAuth;
   permissions?: UserPermissions;
+  // Actor recorded on the execution/batch/command rows. Defaults to
+  // auth.user.id (the manual-run path). Background/system triggers (e.g.
+  // run-on-connect) pass null — both triggeredBy and createdBy are nullable.
+  triggeredByUserId?: string | null;
 };
 
 type ExecuteScriptOnDevicesFailure = {
@@ -151,6 +155,8 @@ export async function executeScriptOnDevices(input: ExecuteScriptOnDevicesInput)
   const triggerType = input.triggerType ?? 'manual';
   const parameters = input.parameters ?? {};
   const runAs = input.runAs ?? script.runAs;
+  const actorUserId =
+    input.triggeredByUserId !== undefined ? input.triggeredByUserId : input.auth.user.id;
 
   let batchId: string | null = null;
   if (executableDevices.length > 1) {
@@ -160,7 +166,7 @@ export async function executeScriptOnDevices(input: ExecuteScriptOnDevicesInput)
       .values({
         scriptId: input.scriptId,
         orgId: batchOrgId,
-        triggeredBy: input.auth.user.id,
+        triggeredBy: actorUserId,
         triggerType,
         parameters,
         devicesTargeted: executableDevices.length,
@@ -181,7 +187,7 @@ export async function executeScriptOnDevices(input: ExecuteScriptOnDevicesInput)
         scriptId: input.scriptId,
         deviceId: device.id,
         orgId: device.orgId,
-        triggeredBy: input.auth.user.id,
+        triggeredBy: actorUserId,
         triggerType,
         parameters,
         status: 'pending',
@@ -208,7 +214,7 @@ export async function executeScriptOnDevices(input: ExecuteScriptOnDevicesInput)
           runAs,
         },
         status: 'pending',
-        createdBy: input.auth.user.id,
+        createdBy: actorUserId,
       })
       .returning();
 

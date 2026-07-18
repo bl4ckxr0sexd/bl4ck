@@ -199,6 +199,7 @@ import { initializeProcessSampleRetention, shutdownProcessSampleRetention } from
 import { initializePlaybookRetention, shutdownPlaybookRetention } from './jobs/playbookRetention';
 import { initializePolicyEvaluationWorker, shutdownPolicyEvaluationWorker } from './jobs/policyEvaluationWorker';
 import { initializeAutomationWorker, shutdownAutomationWorker } from './jobs/automationWorker';
+import { initializeScriptConnectTrigger, shutdownScriptConnectTrigger } from './jobs/scriptConnectTrigger';
 import { initializeSecurityPostureWorker, shutdownSecurityPostureWorker } from './jobs/securityPostureWorker';
 import { initializeReliabilityWorker, shutdownReliabilityWorker } from './jobs/reliabilityWorker';
 import { initializeUserRiskJobs, shutdownUserRiskJobs } from './jobs/userRiskJobs';
@@ -1145,6 +1146,7 @@ async function initializeWorkers(): Promise<void> {
     ['auditBaselineJobs', initializeAuditBaselineJobs],
     ['cisJobs', initializeCisJobs],
     ['automationWorker', initializeAutomationWorker],
+    ['scriptConnectTrigger', initializeScriptConnectTrigger],
     ['securityPostureWorker', initializeSecurityPostureWorker],
     ['reliabilityWorker', initializeReliabilityWorker],
     ['userRiskWorker', initializeUserRiskJobs],
@@ -1362,6 +1364,7 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownUserRiskJobs,
     shutdownUserRiskRetention,
     shutdownAutomationWorker,
+    shutdownScriptConnectTrigger,
     shutdownSoftwareRemediationWorker,
     shutdownSoftwareComplianceWorker,
     shutdownAuditBaselineJobs,

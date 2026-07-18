@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean, jsonb, pgEnum, integer, numeric, index, primaryKey, type AnyPgColumn } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, boolean, jsonb, pgEnum, integer, numeric, index, uniqueIndex, primaryKey, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { organizations, partners } from './orgs';
 import { devices } from './devices';
 import { users } from './users';
@@ -27,6 +27,9 @@ export const scripts = pgTable('scripts', {
   parameters: jsonb('parameters'),
   timeoutSeconds: integer('timeout_seconds').notNull().default(300),
   runAs: scriptRunAsEnum('run_as').notNull().default('system'),
+  // Opt-in: run this script automatically the first time each in-org device
+  // comes online (device.online). Dedup is enforced by script_connect_runs.
+  runOnConnect: boolean('run_on_connect').notNull().default(false),
   isSystem: boolean('is_system').notNull().default(false),
   version: integer('version').notNull().default(1),
   // NULL = legacy behavior (non-zero exit = error). When set, see
@@ -126,6 +129,23 @@ export const scriptExecutions = pgTable('script_executions', {
   errorMessage: text('error_message'),
   createdAt: timestamp('created_at').defaultNow().notNull()
 });
+
+// Ledger enforcing "run on connect, first connect only". One row per
+// (script, device) once the auto-run has fired; the unique index (see the
+// 2026-07-19 migration) makes concurrent device.online events race-safe.
+// org_id is denormalized to the DEVICE's org (Shape 1 RLS, auto-discovered).
+export const scriptConnectRuns = pgTable('script_connect_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  scriptId: uuid('script_id').notNull().references(() => scripts.id, { onDelete: 'cascade' }),
+  deviceId: uuid('device_id').notNull().references(() => devices.id, { onDelete: 'cascade' }),
+  executionId: uuid('execution_id').references(() => scriptExecutions.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull()
+}, (table) => ({
+  scriptDeviceUnique: uniqueIndex('script_connect_runs_script_device_unique').on(table.scriptId, table.deviceId),
+  deviceIdIdx: index('script_connect_runs_device_id_idx').on(table.deviceId),
+  orgIdIdx: index('script_connect_runs_org_id_idx').on(table.orgId)
+}));
 
 export const scriptExecutionBatches = pgTable('script_execution_batches', {
   id: uuid('id').primaryKey().defaultRandom(),

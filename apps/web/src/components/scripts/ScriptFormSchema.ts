@@ -41,6 +41,8 @@ export const scriptSchema = z.object({
     .min(1, 'Timeout must be at least 1 second')
     .max(86400, 'Timeout cannot exceed 24 hours'),
   runAs: z.enum(['system', 'user', 'elevated']),
+  // Auto-run this script the first time each in-org device connects.
+  runOnConnect: z.boolean().optional().default(false),
   exitCodeSeverityMapping: z
     .array(exitCodeSeverityRowSchema)
     .optional()
