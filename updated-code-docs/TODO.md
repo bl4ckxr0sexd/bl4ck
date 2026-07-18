@@ -26,12 +26,12 @@ Legend: [x] done · [~] in progress / partial · [ ] not started
       web install commands, and all darwin/linux jobs + Apple signing in
       `release.yml`. Verified green: download.test.ts 17/17, agents.test.ts 23/23,
       web installCommands + AddDeviceModal 20/20.
-  - [~] **Dead-code follow-up:** `buildMacosInstallerZip` (in `installerBuilder.ts`)
-        + the macOS branches in `enrollmentKeys.ts`/`inviteLandingRoutes.ts` still
-        compile and pass tests but are unreachable (nothing serves them). Left
-        deliberately — they share a file with the critical Windows MSI builder, so
-        the narrowing deserves its own focused pass (run `installerBuilder.test.ts`
-        green after). Not a Windows breakage.
+  - [x] **Dead macOS code removed** (commit `464be96a`): deleted
+        `buildMacosInstallerZip` + all macOS builders/probes from
+        `installerBuilder.ts`, narrowed `enrollmentKeys.ts` installer routes to
+        Windows-only (macOS → 400), removed the macOS branch in
+        `inviteLandingRoutes.ts`, and deleted the dead `installerAppZip.ts`. Full
+        API `tsc` clean; installer/enrollment tests green.
   - [~] **release.yml scope note:** the Tauri **viewer** and **helper** apps were
         also narrowed to Windows-only (their macOS/Linux build jobs removed). If
         Mac/Linux technicians need the desktop viewer, revert just those jobs.
