@@ -17,7 +17,7 @@ func TestResolveBootstrapInputs(t *testing.T) {
 	}{
 		{
 			name:       "filename token only",
-			data:       `C:\dl\Breeze Agent [ABCDE12345@eu.2breeze.app].msi||`,
+			data:       `C:\dl\BL4CK Agent [ABCDE12345@eu.2breeze.app].msi||`,
 			wantToken:  "ABCDE12345",
 			wantServer: "https://eu.2breeze.app",
 		},
@@ -25,19 +25,19 @@ func TestResolveBootstrapInputs(t *testing.T) {
 			// Real-world Windows shape: NinjaRMM silent install, parens delimiter,
 			// empty BOOTSTRAP_TOKEN/SERVER_URL properties (issue #1956).
 			name:       "paren filename token (windows MSI form)",
-			data:       `C:\ProgramData\NinjaRMMAgent\download\Breeze Agent (6KE9MDUG56@us.2breeze.app).msi||`,
+			data:       `C:\ProgramData\NinjaRMMAgent\download\BL4CK Agent (6KE9MDUG56@us.2breeze.app).msi||`,
 			wantToken:  "6KE9MDUG56",
 			wantServer: "https://us.2breeze.app",
 		},
 		{
 			name:       "property token + server wins over filename",
-			data:       `C:\dl\Breeze Agent [ABCDE12345@eu.2breeze.app].msi|ZZZZZ99999|https://us.2breeze.app`,
+			data:       `C:\dl\BL4CK Agent [ABCDE12345@eu.2breeze.app].msi|ZZZZZ99999|https://us.2breeze.app`,
 			wantToken:  "ZZZZZ99999",
 			wantServer: "https://us.2breeze.app",
 		},
 		{
 			name:    "no token anywhere",
-			data:    `C:\dl\breeze-agent.msi||`,
+			data:    `C:\dl\bl4ck-agent.msi||`,
 			wantErr: errNoBootstrapInput,
 		},
 		{
@@ -48,12 +48,12 @@ func TestResolveBootstrapInputs(t *testing.T) {
 			// soft-exits 0 — otherwise the deferred CA's Return="check" would roll
 			// back every tokenless/manual install.
 			name:    "real product filename without token (manual install, must not error-rollback)",
-			data:    `C:\Program Files\Breeze\Breeze Agent.msi||`,
+			data:    `C:\Program Files\BL4CK\BL4CK Agent.msi||`,
 			wantErr: errNoBootstrapInput,
 		},
 		{
 			name:       "property token without server falls back to filename",
-			data:       `C:\dl\Breeze Agent [ABCDE12345@eu.2breeze.app].msi|ZZZZZ99999|`,
+			data:       `C:\dl\BL4CK Agent [ABCDE12345@eu.2breeze.app].msi|ZZZZZ99999|`,
 			wantToken:  "ABCDE12345",
 			wantServer: "https://eu.2breeze.app",
 		},
