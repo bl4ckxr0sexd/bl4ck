@@ -5,7 +5,7 @@ import { showToast } from '../shared/Toast';
 import { fetchWithAuth } from '../../stores/auth';
 import { useOrgStore } from '../../stores/orgStore';
 import { formatDateTime } from '@/lib/dateTimeFormat';
-import { fallbackInstallerFilename, filenameFromContentDisposition } from '@/lib/downloadFilename';
+import { filenameFromContentDisposition } from '@/lib/downloadFilename';
 import { buildInstallCommands } from '@/lib/installCommands';
 import { navigateTo } from '@/lib/navigation';
 
@@ -89,16 +89,10 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
     userOS === 'macos' ? 'macos' : 'windows',
   );
   const [selectedSiteId, setSelectedSiteId] = useState('');
-  const [deviceCount, setDeviceCount] = useState(1);
-  // Lifetime of the installer / shared link the admin distributes. Sent to
-  // the child-key mint routes (installer download + installer-link), where
-  // the server resolves it to a fresh absolute expiry measured from mint
-  // time — not the transient parent key. 24h is the product default (it
-  // happens to coincide with the server's CHILD_ENROLLMENT_KEY_TTL_MINUTES
-  // fallback, but is set explicitly here, not inherited). "Never expires"
-  // is intentionally omitted until the partner-level cap
-  // (maxEnrollmentLinkTtlMinutes) lands in a sibling PR.
-  const [ttlMinutes, setTtlMinutes] = useState<number>(1440);
+  // Installer package format. Device count and validity are fixed server-side
+  // (1000 devices / 1 year) and no longer user-editable; the only remaining
+  // choice is the download format.
+  const [selectedFormat, setSelectedFormat] = useState<'msi' | 'exe'>('msi');
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string>();
   const [downloadSuccess, setDownloadSuccess] = useState(false);
@@ -139,8 +133,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
     if (isOpen) {
       setDownloadError(undefined);
       setDownloadSuccess(false);
-      setDeviceCount(1);
-      setTtlMinutes(1440);
+      setSelectedFormat('msi');
       setCliInitialized(false);
       setOnboardingToken('');
       setTokenError(undefined);
@@ -306,7 +299,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
       let dlRes: Response;
       try {
         dlRes = await fetchWithAuth(
-          `/enrollment-keys/${parentKeyId}/installer/${selectedPlatform}?count=${deviceCount}&ttlMinutes=${ttlMinutes}`,
+          `/enrollment-keys/${parentKeyId}/installer/${selectedPlatform}?format=${selectedFormat}`,
           { signal: dlController.signal },
         );
       } finally {
@@ -322,7 +315,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
       const blob = await dlRes.blob();
       const filename =
         filenameFromContentDisposition(dlRes.headers.get('Content-Disposition'))
-        ?? fallbackInstallerFilename(selectedPlatform);
+        ?? (selectedFormat === 'exe' ? 'Bl4ck Setup.exe' : 'Bl4ck Agent.msi');
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -381,7 +374,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
       const linkRes = await fetchWithAuth(`/enrollment-keys/${keyData.id}/installer-link`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: selectedPlatform, count: deviceCount, ttlMinutes }),
+        body: JSON.stringify({ platform: selectedPlatform, format: selectedFormat }),
       });
 
       if (!linkRes.ok) {
@@ -512,49 +505,36 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                   </p>
                 </div>
 
-                {/* Device count */}
+                {/* Installer format */}
                 <div>
-                  <label htmlFor="device-count" className="block text-sm font-medium mb-1.5">
-                    Number of devices
-                  </label>
-                  <input
-                    id="device-count"
-                    type="number"
-                    value={deviceCount}
-                    onChange={(e) => setDeviceCount(Math.min(1000, Math.max(1, Number(e.target.value) || 1)))}
-                    min={1}
-                    max={1000}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    How many devices will use this installer.
-                  </p>
-                </div>
-
-                {/* Link expiry */}
-                <div>
-                  <label htmlFor="link-ttl" className="block text-sm font-medium mb-1.5">
-                    Link expires in
-                  </label>
-                  <select
-                    id="link-ttl"
-                    value={ttlMinutes}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (Number.isFinite(n)) setTtlMinutes(n);
-                    }}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
-                    data-testid="link-ttl"
-                  >
-                    <option value={60}>1 hour</option>
-                    <option value={1440}>24 hours</option>
-                    <option value={10080}>7 days</option>
-                    <option value={43200}>30 days</option>
-                    <option value={129600}>90 days</option>
-                    <option value={525600}>1 year</option>
-                  </select>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    After this window, the downloaded installer and shared link stop accepting new enrollments. Devices already enrolled stay connected.
+                  <label className="block text-sm font-medium mb-1.5">Installer format</label>
+                  <div className="flex gap-2" role="radiogroup" aria-label="Installer format">
+                    {([
+                      { value: 'msi', label: 'MSI (recommended)' },
+                      { value: 'exe', label: 'EXE (silent installer)' },
+                    ] as const).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selectedFormat === value}
+                        data-testid={`installer-format-${value}`}
+                        onClick={() => setSelectedFormat(value)}
+                        className={`flex-1 rounded-md px-4 py-2.5 text-sm font-medium transition border ${
+                          selectedFormat === value
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground border-border'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Each installer enrolls up to 1000 devices and is valid for 1 year.
+                    {selectedFormat === 'exe'
+                      ? ' Silent installer — double-click to install and enroll, no options.'
+                      : ''}
                   </p>
                 </div>
 
@@ -627,8 +607,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                       </button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Valid for {deviceCount > 1 ? `${deviceCount} downloads` : '1 download'}.
-                      No login required.
+                      Enrolls up to 1000 devices, valid for 1 year. No login required.
                     </p>
                   </div>
                 )}
@@ -691,11 +670,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                 {/* Success message */}
                 {downloadSuccess && (
                   <div className="rounded-md border border-green-500/40 bg-green-500/10 p-3 text-sm text-green-700">
-                    Installer downloaded. Run it on{' '}
-                    {deviceCount > 1
-                      ? `up to ${deviceCount} devices`
-                      : 'the target device'}{' '}
-                    to enroll.
+                    Installer downloaded. Run it on any device (up to 1000) to enroll.
                   </div>
                 )}
               </>

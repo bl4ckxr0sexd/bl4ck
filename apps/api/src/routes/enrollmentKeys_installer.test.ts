@@ -75,6 +75,15 @@ vi.mock('../services/installerBuilder', () => ({
     c.header('Cache-Control', 'no-store');
     return c.body(args.msi);
   }),
+  fetchSetupExe: vi.fn(async () => Buffer.alloc(4096, 0xcc)),
+  serveWindowsBootstrapExe: vi.fn((c: any, args: { exe: Buffer; token: string; apiHost: string }) => {
+    const filename = `Bl4ck Setup (${args.token}@${args.apiHost}).exe`;
+    c.header('Content-Type', 'application/octet-stream');
+    c.header('Content-Disposition', `attachment; filename="${filename}"`);
+    c.header('Content-Length', String(args.exe.length));
+    c.header('Cache-Control', 'no-store');
+    return c.body(args.exe);
+  }),
 }));
 
 vi.mock('../services/installerBootstrapTokenIssuance', () => ({
@@ -382,7 +391,7 @@ describe('enrollment key routes — installer download', () => {
       expect(res.status).toBe(410);
     });
 
-    it('windows bootstrap passes maxUsage to issueBootstrapTokenForKey (count query param)', async () => {
+    it('windows bootstrap uses the FIXED 1000-device / 1-year limits (ignores count query param)', async () => {
       mockSelectFromWhereLimit([makeEnrollmentKey()]);
 
       const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/windows?count=5`, {
@@ -391,10 +400,30 @@ describe('enrollment key routes — installer download', () => {
       });
 
       expect(res.status).toBe(200);
+      // Device count + validity are fixed server-side; the count query param is
+      // ignored (1000 devices, 525600 min = 1 year).
       expect(issueBootstrapTokenForKey).toHaveBeenCalledWith(
-        expect.objectContaining({ maxUsage: 5 }),
+        expect.objectContaining({ maxUsage: 1000, ttlMinutes: 525600 }),
       );
       // Windows bootstrap does NOT create a child key (no db.insert)
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('serves the silent EXE installer when format=exe', async () => {
+      mockSelectFromWhereLimit([makeEnrollmentKey()]);
+
+      const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/windows?format=exe`, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-disposition')).toContain('.exe');
+      expect(res.headers.get('content-disposition')).toMatch(/Bl4ck Setup \(.*@.*\)\.exe/);
+      // Still the fixed limits, and no child key.
+      expect(issueBootstrapTokenForKey).toHaveBeenCalledWith(
+        expect.objectContaining({ maxUsage: 1000, ttlMinutes: 525600 }),
+      );
       expect(db.insert).not.toHaveBeenCalled();
     });
 
@@ -456,7 +485,7 @@ describe('enrollment key routes — installer download', () => {
       expect(res.status).toBe(400);
     });
 
-    it('emits audit log with count for windows bootstrap installer download', async () => {
+    it('emits audit log with the fixed device count for windows bootstrap installer download', async () => {
       mockSelectFromWhereLimit([makeEnrollmentKey()]);
 
       await app.request(`/enrollment-keys/${KEY_ID}/installer/windows?count=3`, {
@@ -467,7 +496,8 @@ describe('enrollment key routes — installer download', () => {
       expect(createAuditLogAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'enrollment_key.installer_download',
-          details: expect.objectContaining({ count: 3, mode: 'bootstrap-msi' }),
+          // count is fixed at 1000 regardless of the (ignored) query param.
+          details: expect.objectContaining({ count: 1000, mode: 'bootstrap-msi' }),
         })
       );
     });

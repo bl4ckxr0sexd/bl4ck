@@ -19,6 +19,10 @@ export interface IssueBootstrapTokenInput {
   createdByUserId: string | null;
   maxUsage?: number;
   installerPlatform?: "windows" | "macos";
+  // Requested token lifetime in minutes. Still capped by the parent key's
+  // remaining lifetime below. Absent → the deployment default
+  // (bootstrapTokenExpiresAt).
+  ttlMinutes?: number;
 }
 
 export interface IssuedBootstrapToken {
@@ -72,7 +76,10 @@ export async function issueBootstrapTokenForKey(
   // 30s later — recipients would click an "active" link and get 404
   // (parent_already_expired). Bound conservatively so consume reflects the
   // real usable window.
-  const baseTokenExpiry = bootstrapTokenExpiresAt();
+  const baseTokenExpiry =
+    input.ttlMinutes !== undefined
+      ? new Date(Date.now() + input.ttlMinutes * 60 * 1000)
+      : bootstrapTokenExpiresAt();
   const expiresAt = parent.expiresAt && new Date(parent.expiresAt) < baseTokenExpiry
     ? new Date(parent.expiresAt)
     : baseTokenExpiry;

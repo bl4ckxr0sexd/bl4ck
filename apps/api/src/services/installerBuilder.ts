@@ -6,6 +6,7 @@ import {
   getBinarySource,
   getGithubExpectedReleaseTag,
   getGithubRegularMsiUrl,
+  getGithubSetupExeUrl,
   getGithubReleaseArtifactManifestSignatureUrl,
   getGithubReleaseArtifactManifestUrl,
   getGithubReleaseRepository,
@@ -160,6 +161,34 @@ export async function fetchRegularMsi(): Promise<Buffer> {
 }
 
 /**
+ * Fetches the static, CI-signed silent EXE installer (bl4ck-setup.exe). Mirrors
+ * fetchRegularMsi: verified against the signed release manifest in github mode,
+ * read from AGENT_BINARY_DIR in local mode. The EXE embeds the MSI and enrolls
+ * by parsing the (TOKEN@HOST) group from its own download filename, so — like
+ * the MSI — the bytes are never modified and every customer shares one hash.
+ */
+export async function fetchSetupExe(): Promise<Buffer> {
+  if (getBinarySource() === 'github') {
+    const url = getGithubSetupExeUrl();
+    const resp = await fetch(url, { redirect: 'follow' });
+    if (!resp.ok) throw new Error(`Failed to fetch setup EXE: ${resp.status}`);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    await verifyGithubReleaseArtifactBuffer({
+      assetName: 'bl4ck-setup.exe',
+      assetBuffer: buffer,
+      manifestUrl: getGithubReleaseArtifactManifestUrl(),
+      signatureUrl: getGithubReleaseArtifactManifestSignatureUrl(),
+      expectedRepository: getGithubReleaseRepository(),
+      expectedRelease: getGithubExpectedReleaseTag(),
+      expectedPlatformTrust: 'windows-authenticode-required',
+    });
+    return buffer;
+  }
+  const binaryDir = resolve(process.env.AGENT_BINARY_DIR || './agent/bin');
+  return readFile(join(binaryDir, 'bl4ck-setup.exe'));
+}
+
+/**
  * Serves the static, CI-signed MSI with the bootstrap token embedded in the
  * download filename — the Windows analogue of the macOS renamed-app zip. The
  * MSI bytes are never modified, so the Authenticode signature stays intact and
@@ -184,4 +213,23 @@ export function serveWindowsBootstrapMsi(
   c.header('Content-Length', String(args.msi.length));
   c.header('Cache-Control', 'no-store');
   return c.body(args.msi as unknown as ArrayBuffer);
+}
+
+/**
+ * Serves the static, CI-signed silent EXE installer with the bootstrap token in
+ * the download filename — the double-click sibling of serveWindowsBootstrapMsi.
+ * bl4ck-setup.exe parses the (TOKEN@HOST) group from its own filename (parens,
+ * not brackets — same #1956 rationale as the MSI), so the signed bytes are never
+ * modified and one file hash is shared across customers.
+ */
+export function serveWindowsBootstrapExe(
+  c: Context,
+  args: { exe: Buffer; token: string; apiHost: string },
+): Response {
+  const filename = `Bl4ck Setup (${args.token}@${args.apiHost}).exe`;
+  c.header('Content-Type', 'application/octet-stream');
+  c.header('Content-Disposition', `attachment; filename="${filename}"`);
+  c.header('Content-Length', String(args.exe.length));
+  c.header('Cache-Control', 'no-store');
+  return c.body(args.exe as unknown as ArrayBuffer);
 }

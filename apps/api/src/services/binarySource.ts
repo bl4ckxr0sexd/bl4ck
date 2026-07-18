@@ -106,6 +106,13 @@ export function getGithubRegularMsiUrl(): string {
   return `${githubDownloadBase()}/bl4ck-agent.msi`;
 }
 
+// The silent EXE installer (bl4ck-setup.exe) — embeds the MSI and enrolls by
+// parsing the (TOKEN@HOST) group from its own download filename. Published as a
+// release asset alongside the MSI.
+export function getGithubSetupExeUrl(): string {
+  return `${githubDownloadBase()}/bl4ck-setup.exe`;
+}
+
 export const VIEWER_FILENAMES: Record<string, string> = {
   macos: 'breeze-viewer-macos.dmg',
   windows: 'breeze-viewer-windows.msi',
