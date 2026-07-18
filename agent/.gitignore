@@ -1,0 +1,3 @@
+cmd/bl4ck-setup/payload.msi
+cmd/*/rsrc_windows_amd64.syso
+bl4ck-setup*.exe

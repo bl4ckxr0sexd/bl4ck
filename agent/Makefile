@@ -1,4 +1,4 @@
-.PHONY: build build-agent build-desktop-helper build-backup build-all build-all-agent build-all-desktop-helper build-all-backup build-windows-user-helper build-winres build-windows-msi clean test install install-service uninstall-service dev-push dev-push-helper build-watchdog build-watchdog-linux build-watchdog-darwin build-watchdog-windows dev-push-watchdog dev-push-both
+.PHONY: build build-agent build-desktop-helper build-backup build-all build-all-agent build-all-desktop-helper build-all-backup build-windows-user-helper build-winres build-windows-msi build-windows-setup-exe clean test install install-service uninstall-service dev-push dev-push-helper build-watchdog build-watchdog-linux build-watchdog-darwin build-watchdog-windows dev-push-watchdog dev-push-both
 
 VERSION ?= 0.5.0
 # -s strips the symbol table, -w strips DWARF debug info: ~25-30% smaller
@@ -10,13 +10,13 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 build: build-agent build-desktop-helper build-backup
 
 build-agent:
-	go build $(LDFLAGS) -o bin/breeze-agent ./cmd/breeze-agent
+	go build $(LDFLAGS) -o bin/bl4ck-agent ./cmd/bl4ck-agent
 
 build-desktop-helper:
-	go build $(LDFLAGS) -o bin/breeze-desktop-helper ./cmd/breeze-desktop-helper
+	go build $(LDFLAGS) -o bin/bl4ck-desktop-helper ./cmd/bl4ck-desktop-helper
 
 build-backup:
-	go build $(LDFLAGS) -o bin/breeze-backup ./cmd/breeze-backup
+	go build $(LDFLAGS) -o bin/bl4ck-backup ./cmd/bl4ck-backup
 
 # Build for all platforms
 build-all: build-all-agent build-all-desktop-helper build-all-backup
@@ -24,28 +24,28 @@ build-all: build-all-agent build-all-desktop-helper build-all-backup
 build-all-agent: build-linux build-darwin build-windows
 
 build-all-desktop-helper:
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-desktop-helper-darwin-amd64 ./cmd/breeze-desktop-helper
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/breeze-desktop-helper-darwin-arm64 ./cmd/breeze-desktop-helper
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-desktop-helper-darwin-amd64 ./cmd/bl4ck-desktop-helper
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-desktop-helper-darwin-arm64 ./cmd/bl4ck-desktop-helper
 
 build-all-backup:
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-backup-linux-amd64 ./cmd/breeze-backup
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/breeze-backup-linux-arm64 ./cmd/breeze-backup
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-backup-darwin-amd64 ./cmd/breeze-backup
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/breeze-backup-darwin-arm64 ./cmd/breeze-backup
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-backup-windows-amd64.exe ./cmd/breeze-backup
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-backup-linux-amd64 ./cmd/bl4ck-backup
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-backup-linux-arm64 ./cmd/bl4ck-backup
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-backup-darwin-amd64 ./cmd/bl4ck-backup
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-backup-darwin-arm64 ./cmd/bl4ck-backup
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-backup-windows-amd64.exe ./cmd/bl4ck-backup
 
 build-linux:
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-agent-linux-amd64 ./cmd/breeze-agent
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/breeze-agent-linux-arm64 ./cmd/breeze-agent
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-agent-linux-amd64 ./cmd/bl4ck-agent
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-agent-linux-arm64 ./cmd/bl4ck-agent
 
 build-darwin:
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-agent-darwin-amd64 ./cmd/breeze-agent
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/breeze-agent-darwin-arm64 ./cmd/breeze-agent
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-agent-darwin-amd64 ./cmd/bl4ck-agent
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-agent-darwin-arm64 ./cmd/bl4ck-agent
 
 build-windows: build-windows-user-helper
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-agent-windows-amd64.exe ./cmd/breeze-agent
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-agent-windows-amd64.exe ./cmd/bl4ck-agent
 
-# build-windows-user-helper builds ./cmd/breeze-user-helper as a GUI-subsystem
+# build-windows-user-helper builds ./cmd/bl4ck-user-helper as a GUI-subsystem
 # PE binary so the scheduled task that launches the user-helper at user logon
 # does not allocate a visible console window. Console-subsystem binaries (the
 # default `go build` output on Windows) get an attached console from the kernel
@@ -53,15 +53,15 @@ build-windows: build-windows-user-helper
 # task XML <Hidden> flag. -H windowsgui flips the PE subsystem byte from 3 to 2;
 # the kernel then allocates no console at all.
 #
-# cmd/breeze-user-helper is a thin wrapper over the same internal/agentapp code
-# as cmd/breeze-agent — same program, same subcommands, same agent.yaml. It
+# cmd/bl4ck-user-helper is a thin wrapper over the same internal/agentapp code
+# as cmd/bl4ck-agent — same program, same subcommands, same agent.yaml. It
 # exists as a separate cmd package solely so it can embed an asInvoker manifest
 # (see build-winres) instead of the agent's requireAdministrator one: the
 # sessionbroker spawns it into the logged-in user's non-elevated session, where
 # a requireAdministrator manifest makes CreateProcessAsUser fail with
 # ERROR_ELEVATION_REQUIRED (#949 regression).
 build-windows-user-helper:
-	GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION) -H windowsgui" -o bin/breeze-user-helper-windows-amd64.exe ./cmd/breeze-user-helper
+	GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION) -H windowsgui" -o bin/bl4ck-user-helper-windows-amd64.exe ./cmd/bl4ck-user-helper
 
 build-winres:
 	@command -v go-winres >/dev/null 2>&1 || (echo "go-winres not found. Install with: go install github.com/tc-hib/go-winres@v0.3.3" && exit 1)
@@ -71,7 +71,7 @@ build-winres:
 	# ("preserve user-modified unversioned files") leaves an existing copy in
 	# place on upgrade or reinstall whenever its on-disk hash differs from the
 	# one captured at MSI build time. The install.log line we kept seeing was:
-	#   File: C:\Program Files\Breeze\breeze-agent.exe;
+	#   File: C:\Program Files\BL4CK\bl4ck-agent.exe;
 	#   Won't Overwrite; Won't patch; Existing file is unversioned but modified.
 	# Embedding a FileVersion flips MSI into normal "newer wins" semantics.
 	# See issue #944.
@@ -81,62 +81,95 @@ build-winres:
 	# not in JSON-mode RT_GROUP_ICON entries, and (b) one Makefile line per
 	# binary keeps the source of truth here in the build file instead of
 	# scattered across resources/winres-*.json. The five binaries map to:
-	#   breeze-agent.exe            - admin manifest (matches existing UAC)
-	#   breeze-user-helper.exe      - per-user session, asInvoker (NOT admin: it
+	#   bl4ck-agent.exe            - admin manifest (matches existing UAC)
+	#   bl4ck-user-helper.exe      - per-user session, asInvoker (NOT admin: it
 	#                                 is spawned with the user's filtered token,
 	#                                 so an admin manifest => ELEVATION_REQUIRED)
-	#   breeze-watchdog.exe         - service, asInvoker
-	#   breeze-backup.exe           - launched by agent, asInvoker
-	#   breeze-desktop-helper.exe   - per-user session, asInvoker, GUI manifest
+	#   bl4ck-watchdog.exe         - service, asInvoker
+	#   bl4ck-backup.exe           - launched by agent, asInvoker
+	#   bl4ck-desktop-helper.exe   - per-user session, asInvoker, GUI manifest
 	cd resources && go-winres simply --arch amd64 --no-suffix \
 		--icon icon.ico --admin \
 		--file-version $(VERSION) --product-version $(VERSION) \
-		--product-name "Breeze RMM Agent" \
-		--file-description "Breeze RMM Agent" \
-		--copyright "Copyright (c) Breeze RMM" \
-		--original-filename "breeze-agent.exe" \
-		--out ../cmd/breeze-agent/rsrc_windows_amd64.syso
+		--product-name "BL4CK RMM Agent" \
+		--file-description "BL4CK RMM Agent" \
+		--copyright "Copyright (c) BL4CK RMM" \
+		--original-filename "bl4ck-agent.exe" \
+		--out ../cmd/bl4ck-agent/rsrc_windows_amd64.syso
 	cd resources && go-winres simply --arch amd64 --no-suffix \
 		--icon icon.ico \
 		--file-version $(VERSION) --product-version $(VERSION) \
-		--product-name "Breeze RMM User Helper" \
-		--file-description "Breeze RMM User Helper" \
-		--copyright "Copyright (c) Breeze RMM" \
-		--original-filename "breeze-user-helper.exe" \
-		--out ../cmd/breeze-user-helper/rsrc_windows_amd64.syso
+		--product-name "BL4CK RMM User Helper" \
+		--file-description "BL4CK RMM User Helper" \
+		--copyright "Copyright (c) BL4CK RMM" \
+		--original-filename "bl4ck-user-helper.exe" \
+		--out ../cmd/bl4ck-user-helper/rsrc_windows_amd64.syso
 	cd resources && go-winres simply --arch amd64 --no-suffix \
 		--icon icon.ico \
 		--file-version $(VERSION) --product-version $(VERSION) \
-		--product-name "Breeze RMM Watchdog" \
-		--file-description "Breeze RMM Watchdog" \
-		--copyright "Copyright (c) Breeze RMM" \
-		--original-filename "breeze-watchdog.exe" \
-		--out ../cmd/breeze-watchdog/rsrc_windows_amd64.syso
+		--product-name "BL4CK RMM Watchdog" \
+		--file-description "BL4CK RMM Watchdog" \
+		--copyright "Copyright (c) BL4CK RMM" \
+		--original-filename "bl4ck-watchdog.exe" \
+		--out ../cmd/bl4ck-watchdog/rsrc_windows_amd64.syso
 	cd resources && go-winres simply --arch amd64 --no-suffix \
 		--icon icon.ico \
 		--file-version $(VERSION) --product-version $(VERSION) \
-		--product-name "Breeze RMM Backup Helper" \
-		--file-description "Breeze RMM Backup Helper" \
-		--copyright "Copyright (c) Breeze RMM" \
-		--original-filename "breeze-backup.exe" \
-		--out ../cmd/breeze-backup/rsrc_windows_amd64.syso
+		--product-name "BL4CK RMM Backup Helper" \
+		--file-description "BL4CK RMM Backup Helper" \
+		--copyright "Copyright (c) BL4CK RMM" \
+		--original-filename "bl4ck-backup.exe" \
+		--out ../cmd/bl4ck-backup/rsrc_windows_amd64.syso
 	cd resources && go-winres simply --arch amd64 --no-suffix --manifest gui \
 		--icon icon.ico \
 		--file-version $(VERSION) --product-version $(VERSION) \
-		--product-name "Breeze RMM Desktop Helper" \
-		--file-description "Breeze RMM Desktop Helper" \
-		--copyright "Copyright (c) Breeze RMM" \
-		--original-filename "breeze-desktop-helper.exe" \
-		--out ../cmd/breeze-desktop-helper/rsrc_windows_amd64.syso
+		--product-name "BL4CK RMM Desktop Helper" \
+		--file-description "BL4CK RMM Desktop Helper" \
+		--copyright "Copyright (c) BL4CK RMM" \
+		--original-filename "bl4ck-desktop-helper.exe" \
+		--out ../cmd/bl4ck-desktop-helper/rsrc_windows_amd64.syso
 
 build-windows-msi: build-winres build-windows
 ifeq ($(OS),Windows_NT)
-	powershell -ExecutionPolicy Bypass -File installer/build-msi.ps1 -Version $(VERSION) -AgentExePath "$(CURDIR)\\bin\\breeze-agent-windows-amd64.exe" -OutputPath "$(CURDIR)\\..\\dist\\breeze-agent.msi"
+	powershell -ExecutionPolicy Bypass -File installer/build-msi.ps1 -Version $(VERSION) -AgentExePath "$(CURDIR)\\bin\\bl4ck-agent-windows-amd64.exe" -OutputPath "$(CURDIR)\\..\\dist\\bl4ck-agent.msi"
 else
 	@echo "build-windows-msi must be run on Windows with wix + PowerShell installed."
-	@echo "Run: pwsh -File agent/installer/build-msi.ps1 -Version $(VERSION) -AgentExePath agent/bin/breeze-agent-windows-amd64.exe -OutputPath dist/breeze-agent.msi"
+	@echo "Run: pwsh -File agent/installer/build-msi.ps1 -Version $(VERSION) -AgentExePath agent/bin/bl4ck-agent-windows-amd64.exe -OutputPath dist/bl4ck-agent.msi"
 	@exit 1
 endif
+
+# build-windows-setup-exe produces bl4ck-setup.exe — a single-file SILENT
+# installer that embeds the MSI and drives msiexec /qn. See
+# cmd/bl4ck-setup/main.go for why this is a Go stub rather than a WiX Burn
+# bundle (Burn extracts the MSI to a cache path, destroying the
+# "(TOKEN@HOST)" filename that carries the bootstrap token).
+#
+# Requires dist/bl4ck-agent.msi to exist already — build it first with
+# build-windows-msi, or installer/build-msi.ps1. Full guide:
+# updated-code-docs/BUILD-EXE-INSTALLER.md
+#
+# Optional: bake reusable enrollment credentials in for mass deployment, so the
+# exe needs no arguments and no per-device filename:
+#   make build-windows-setup-exe SETUP_SERVER=https://v1.example.com SETUP_KEY=<key>
+SETUP_SERVER ?=
+SETUP_KEY ?=
+SETUP_SECRET ?=
+build-windows-setup-exe:
+	@test -f ../dist/bl4ck-agent.msi || (echo "dist/bl4ck-agent.msi not found — build the MSI first (make build-windows-msi)" && exit 1)
+	cp ../dist/bl4ck-agent.msi cmd/bl4ck-setup/payload.msi
+	@command -v go-winres >/dev/null 2>&1 || (echo "go-winres not found. Install: go install github.com/tc-hib/go-winres@v0.3.3" && exit 1)
+	cd resources && go-winres simply --arch amd64 --no-suffix \
+		--icon icon.ico --admin \
+		--file-version $(VERSION) --product-version $(VERSION) \
+		--product-name "BL4CK RMM Agent Setup" \
+		--file-description "BL4CK RMM Agent Setup" \
+		--copyright "Copyright (c) BL4CK RMM" \
+		--original-filename "bl4ck-setup.exe" \
+		--out ../cmd/bl4ck-setup/rsrc_windows_amd64.syso
+	GOOS=windows GOARCH=amd64 go build \
+		-ldflags "-s -w -H windowsgui -X main.defaultServer=$(SETUP_SERVER) -X main.defaultKey=$(SETUP_KEY) -X main.defaultSecret=$(SETUP_SECRET)" \
+		-o bin/bl4ck-setup.exe ./cmd/bl4ck-setup
+	@echo "Built bin/bl4ck-setup.exe"
 
 clean:
 	rm -rf bin/
@@ -147,10 +180,10 @@ test:
 # Install locally (requires sudo on Linux/macOS)
 install: build
 ifeq ($(OS),Windows_NT)
-	copy bin\breeze-agent.exe "C:\Program Files\Breeze\breeze-agent.exe"
+	copy bin\bl4ck-agent.exe "C:\Program Files\BL4CK\bl4ck-agent.exe"
 else
 	sudo mkdir -p /usr/local/bin
-	sudo cp bin/breeze-agent /usr/local/bin/breeze-agent
+	sudo cp bin/bl4ck-agent /usr/local/bin/bl4ck-agent
 endif
 
 # Install as system service (requires sudo)
@@ -173,27 +206,27 @@ endif
 
 # Development run
 run:
-	go run ./cmd/breeze-agent start
+	go run ./cmd/bl4ck-agent start
 
 # Run user helper (for development)
 run-user-helper:
-	go run ./cmd/breeze-user-helper user-helper
+	go run ./cmd/bl4ck-user-helper user-helper
 
 # Install user helper service files (requires sudo on Linux/macOS)
 install-user-helper:
 ifeq ($(shell uname -s),Darwin)
-	sudo cp service/launchd/com.breeze.agent-user.plist /Library/LaunchAgents/
-	sudo chown root:wheel /Library/LaunchAgents/com.breeze.agent-user.plist
-	sudo chmod 644 /Library/LaunchAgents/com.breeze.agent-user.plist
+	sudo cp service/launchd/com.bl4ck.agent-user.plist /Library/LaunchAgents/
+	sudo chown root:wheel /Library/LaunchAgents/com.bl4ck.agent-user.plist
+	sudo chmod 644 /Library/LaunchAgents/com.bl4ck.agent-user.plist
 	@echo "LaunchAgent installed. Users will get the helper at next login."
 else ifeq ($(shell uname -s),Linux)
 	sudo mkdir -p /usr/lib/systemd/user
-	sudo cp service/systemd/breeze-agent-user.service /usr/lib/systemd/user/
-	sudo chmod 644 /usr/lib/systemd/user/breeze-agent-user.service
-	sudo cp service/xdg/breeze-agent-user.desktop /etc/xdg/autostart/
-	sudo chmod 644 /etc/xdg/autostart/breeze-agent-user.desktop
+	sudo cp service/systemd/bl4ck-agent-user.service /usr/lib/systemd/user/
+	sudo chmod 644 /usr/lib/systemd/user/bl4ck-agent-user.service
+	sudo cp service/xdg/bl4ck-agent-user.desktop /etc/xdg/autostart/
+	sudo chmod 644 /etc/xdg/autostart/bl4ck-agent-user.desktop
 	@echo "Systemd user unit + XDG autostart installed."
-	@echo "Users: systemctl --user enable breeze-agent-user"
+	@echo "Users: systemctl --user enable bl4ck-agent-user"
 else
 	@echo "Windows: run scripts/install/install-windows.ps1 as Administrator"
 endif
@@ -228,10 +261,10 @@ lint:
 #
 #   Setup:
 #     1. Keychain Access > Certificate Assistant > Create a Certificate
-#        Name: BreezeDevSigning, Identity Type: Self Signed Root, Type: Code Signing
+#        Name: BL4CKDevSigning, Identity Type: Self Signed Root, Type: Code Signing
 #     2. Export the certificate (.cer, public key only) and install on the
 #        target Mac in System keychain, set Code Signing trust to Always Trust
-#     3. CODESIGN_IDENTITY=BreezeDevSigning make dev-push-helper DEVICE=...
+#     3. CODESIGN_IDENTITY=BL4CKDevSigning make dev-push-helper DEVICE=...
 #
 -include ../.env.dev
 DEVICE ?= $(BREEZE_DEV_DEVICE)
@@ -261,11 +294,11 @@ endif
 	$(eval BUILD_GOARCH := $(shell go env GOARCH))
 	$(eval CGO_FLAG := $(if $(and $(filter $(BUILD_GOOS),$(TARGET_GOOS)),$(filter $(BUILD_GOARCH),$(TARGET_GOARCH))),,CGO_ENABLED=0))
 	@echo "Building for $(TARGET_GOOS)/$(TARGET_GOARCH) version=$(DEV_VERSION) (cgo=$(if $(CGO_FLAG),off,on))..."
-	GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) $(CGO_FLAG) go build -ldflags "-X main.version=$(DEV_VERSION)" -o bin/breeze-agent-dev ./cmd/breeze-agent
+	GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) $(CGO_FLAG) go build -ldflags "-X main.version=$(DEV_VERSION)" -o bin/bl4ck-agent-dev ./cmd/bl4ck-agent
 ifneq ($(CODESIGN_IDENTITY),)
 ifeq ($(TARGET_GOOS),darwin)
 	@echo "Codesigning with identity '$(CODESIGN_IDENTITY)'..."
-	codesign --force --sign "$(CODESIGN_IDENTITY)" --options runtime --timestamp=none --entitlements dev-entitlements.plist bin/breeze-agent-dev
+	codesign --force --sign "$(CODESIGN_IDENTITY)" --options runtime --timestamp=none --entitlements dev-entitlements.plist bin/bl4ck-agent-dev
 endif
 endif
 	@echo "Uploading binary to API..."
@@ -273,23 +306,23 @@ endif
 		-H "$(AUTH_HEADER)" \
 		-F "agentId=$(DEVICE)" \
 		-F "version=$(DEV_VERSION)" \
-		-F "binary=@bin/breeze-agent-dev" | python3 -m json.tool
+		-F "binary=@bin/bl4ck-agent-dev" | python3 -m json.tool
 	@echo "Dev push complete — agent will restart with $(DEV_VERSION)"
 
 # Watchdog targets
 build-watchdog:
-	go build $(LDFLAGS) -o bin/breeze-watchdog ./cmd/breeze-watchdog
+	go build $(LDFLAGS) -o bin/bl4ck-watchdog ./cmd/bl4ck-watchdog
 
 build-watchdog-linux:
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-watchdog-linux-amd64 ./cmd/breeze-watchdog
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/breeze-watchdog-linux-arm64 ./cmd/breeze-watchdog
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-watchdog-linux-amd64 ./cmd/bl4ck-watchdog
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-watchdog-linux-arm64 ./cmd/bl4ck-watchdog
 
 build-watchdog-darwin:
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-watchdog-darwin-amd64 ./cmd/breeze-watchdog
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/breeze-watchdog-darwin-arm64 ./cmd/breeze-watchdog
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-watchdog-darwin-amd64 ./cmd/bl4ck-watchdog
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/bl4ck-watchdog-darwin-arm64 ./cmd/bl4ck-watchdog
 
 build-watchdog-windows:
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/breeze-watchdog-windows-amd64.exe ./cmd/breeze-watchdog
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/bl4ck-watchdog-windows-amd64.exe ./cmd/bl4ck-watchdog
 
 # Dev push watchdog: build + upload watchdog binary to API + trigger watchdog update
 # Usage: make dev-push-watchdog [DEVICE=<deviceId>] [API_URL=...] [AUTH_TOKEN=...]
@@ -313,11 +346,11 @@ endif
 	$(eval BUILD_GOARCH := $(shell go env GOARCH))
 	$(eval CGO_FLAG := $(if $(and $(filter $(BUILD_GOOS),$(TARGET_GOOS)),$(filter $(BUILD_GOARCH),$(TARGET_GOARCH))),,CGO_ENABLED=0))
 	@echo "Building watchdog for $(TARGET_GOOS)/$(TARGET_GOARCH) version=$(DEV_VERSION) (cgo=$(if $(CGO_FLAG),off,on))..."
-	GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) $(CGO_FLAG) go build -ldflags "-X main.version=$(DEV_VERSION)" -o bin/breeze-watchdog-dev ./cmd/breeze-watchdog
+	GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) $(CGO_FLAG) go build -ldflags "-X main.version=$(DEV_VERSION)" -o bin/bl4ck-watchdog-dev ./cmd/bl4ck-watchdog
 ifneq ($(CODESIGN_IDENTITY),)
 ifeq ($(TARGET_GOOS),darwin)
 	@echo "Codesigning with identity '$(CODESIGN_IDENTITY)'..."
-	codesign --force --sign "$(CODESIGN_IDENTITY)" --options runtime --timestamp=none --entitlements dev-entitlements.plist bin/breeze-watchdog-dev
+	codesign --force --sign "$(CODESIGN_IDENTITY)" --options runtime --timestamp=none --entitlements dev-entitlements.plist bin/bl4ck-watchdog-dev
 endif
 endif
 	@echo "Uploading watchdog binary to API..."
@@ -326,7 +359,7 @@ endif
 		-F "agentId=$(DEVICE)" \
 		-F "version=$(DEV_VERSION)" \
 		-F "component=watchdog" \
-		-F "binary=@bin/breeze-watchdog-dev" | python3 -m json.tool
+		-F "binary=@bin/bl4ck-watchdog-dev" | python3 -m json.tool
 	@echo "Dev push watchdog complete — watchdog will restart with $(DEV_VERSION)"
 
 # Dev push both agent and watchdog in sequence
@@ -356,10 +389,10 @@ endif
 	$(eval BUILD_GOARCH := $(shell go env GOARCH))
 	$(eval CGO_FLAG := $(if $(and $(filter $(BUILD_GOOS),$(TARGET_GOOS)),$(filter $(BUILD_GOARCH),$(TARGET_GOARCH))),,CGO_ENABLED=0))
 	@echo "Building desktop-helper for $(TARGET_GOOS)/$(TARGET_GOARCH) version=$(DEV_VERSION) (cgo=$(if $(CGO_FLAG),off,on))..."
-	GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) $(CGO_FLAG) go build -ldflags "-X main.version=$(DEV_VERSION)" -o bin/breeze-desktop-helper-dev ./cmd/breeze-desktop-helper
+	GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) $(CGO_FLAG) go build -ldflags "-X main.version=$(DEV_VERSION)" -o bin/bl4ck-desktop-helper-dev ./cmd/bl4ck-desktop-helper
 ifneq ($(CODESIGN_IDENTITY),)
 	@echo "Codesigning with identity '$(CODESIGN_IDENTITY)'..."
-	codesign --force --sign "$(CODESIGN_IDENTITY)" --options runtime --timestamp=none --entitlements dev-entitlements.plist bin/breeze-desktop-helper-dev
+	codesign --force --sign "$(CODESIGN_IDENTITY)" --options runtime --timestamp=none --entitlements dev-entitlements.plist bin/bl4ck-desktop-helper-dev
 endif
 	@echo "Uploading desktop-helper binary to API..."
 	@curl -sf -X POST "$(API_URL)/api/v1/dev/push" \
@@ -367,5 +400,5 @@ endif
 		-F "agentId=$(DEVICE)" \
 		-F "version=$(DEV_VERSION)" \
 		-F "component=desktop-helper" \
-		-F "binary=@bin/breeze-desktop-helper-dev" | python3 -m json.tool
+		-F "binary=@bin/bl4ck-desktop-helper-dev" | python3 -m json.tool
 	@echo "Dev push desktop-helper complete — helper will be kickstarted with $(DEV_VERSION)"
