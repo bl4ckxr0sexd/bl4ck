@@ -7,7 +7,6 @@ import {
   redeemShortCode,
 } from '../../routes/enrollmentKeys';
 import {
-  buildMacosInstallerZip,
   buildWindowsInstallerZip,
   fetchRegularMsi,
 } from '../../services/installerBuilder';
@@ -178,18 +177,10 @@ export function mountInviteLandingRoutes(app: Hono): void {
     const shortCode = c.req.param('shortCode');
     const osParam = c.req.param('os') as string;
 
-    if (osParam !== 'win' && osParam !== 'mac' && osParam !== 'linux') {
-      return c.text('Unsupported operating system.', 400);
-    }
-
-    if (osParam === 'linux') {
-      // Linux installer isn't pre-built today. Point the recipient at
-      // manual-install docs rather than 500ing or silently failing.
-      return c.text(
-        'Linux installers are not yet available via invite links. '
-          + 'Contact your administrator for manual install instructions.',
-        501,
-      );
+    if (osParam !== 'win') {
+      // Windows is the only supported platform. macOS/Linux installers were
+      // removed — reject anything else rather than 500ing downstream.
+      return c.text('Only Windows installers are available.', 400);
     }
 
     const redeemed = await redeemShortCode(shortCode);
@@ -204,28 +195,14 @@ export function mountInviteLandingRoutes(app: Hono): void {
     const enrollmentSecret = process.env.AGENT_ENROLLMENT_SECRET || '';
 
     try {
-      let buf: Buffer;
-      let filename: string;
-      if (osParam === 'win') {
-        const msi = await fetchRegularMsi();
-        buf = await buildWindowsInstallerZip(msi, {
-          serverUrl,
-          enrollmentKey: redeemed.rawKey,
-          enrollmentSecret,
-          siteId: redeemed.siteId,
-        });
-        filename = 'bl4ck-agent-windows.zip';
-      } else {
-        // macOS: install.sh downloads the arch-matched pkg at install time, so
-        // no binary is bundled here (one zip serves Intel + Apple Silicon).
-        buf = await buildMacosInstallerZip({
-          serverUrl,
-          enrollmentKey: redeemed.rawKey,
-          enrollmentSecret,
-          siteId: redeemed.siteId,
-        });
-        filename = 'bl4ck-agent-macos.zip';
-      }
+      const msi = await fetchRegularMsi();
+      const buf = await buildWindowsInstallerZip(msi, {
+        serverUrl,
+        enrollmentKey: redeemed.rawKey,
+        enrollmentSecret,
+        siteId: redeemed.siteId,
+      });
+      const filename = 'bl4ck-agent-windows.zip';
 
       c.header('Content-Type', 'application/zip');
       c.header('Content-Disposition', `attachment; filename="${filename}"`);

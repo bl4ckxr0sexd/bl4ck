@@ -24,46 +24,13 @@ import {
   getTrustedClientIpOrUndefined,
 } from "../services/clientIp";
 import {
-  buildMacosInstallerZip,
   fetchRegularMsi,
-  assertMacosInstallerPkgsReachable,
-  fetchMacosInstallerAppZip,
   serveWindowsBootstrapMsi,
 } from "../services/installerBuilder";
-import { renameAppInZip } from "../services/installerAppZip";
 import {
   issueBootstrapTokenForKey,
   BootstrapTokenIssuanceError,
 } from "../services/installerBootstrapTokenIssuance";
-import { captureException } from "../services/sentry";
-
-// ============================================================
-// Signing-spend caps for the authenticated installer endpoint.
-// These bound how many costly MSI-sign / child-key operations
-// a single user or a single parent enrollment key can trigger.
-// ============================================================
-
-/** Max authenticated installer-signing requests per user per hour. */
-const INSTALLER_SIGN_USER_LIMIT = 10;
-/** Max authenticated installer-signing requests per parent enrollment key per hour. */
-const INSTALLER_SIGN_KEY_LIMIT = 30;
-/** Sliding window (seconds) for both authenticated signing-spend caps. */
-const INSTALLER_SIGN_WINDOW_SECONDS = 60 * 60; // 1 hour
-
-/**
- * Narrow `Buffer | null` to `Buffer`, throwing an actionable error when
- * null. Replaces non-null assertions so a future code change that adds a
- * new platform without updating the fetch site produces a clear error
- * instead of an opaque `Cannot read property of null` deep inside the
- * installer-builder functions.
- */
-function ensureBuffer(buf: Buffer | null, context: string): Buffer {
-  if (!buf) {
-    throw new Error(`Internal error: binary buffer not fetched (${context})`);
-  }
-  return buf;
-}
-
 export const enrollmentKeyRoutes = new Hono();
 
 // ============================================
@@ -142,12 +109,6 @@ function parentKeyTooCloseToExpiry(expiresAt: Date | null): boolean {
   if (!expiresAt) return false;
   const remainingMs = expiresAt.getTime() - Date.now();
   return remainingMs < INSTALLER_PARENT_MIN_REMAINING_SECONDS * 1000;
-}
-
-function allowLegacyMacosInstallerFilenameToken(): boolean {
-  const value =
-    process.env.MACOS_INSTALLER_FILENAME_TOKEN_COMPAT?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 function getPagination(query: { page?: string; limit?: string }) {
@@ -519,7 +480,7 @@ const installerQuerySchema = z.object({
 });
 
 const installerLinkSchema = z.object({
-  platform: z.enum(["windows", "macos"]),
+  platform: z.enum(["windows"]),
   count: z.number().int().min(1).max(100000).optional(),
   ttlMinutes: z.number().int().min(1).max(MAX_TTL_MINUTES).optional(),
 }).strict();
@@ -992,9 +953,9 @@ enrollmentKeyRoutes.get(
     const bootstrapTokenMaxUsage =
       childMaxUsage ?? BOOTSTRAP_TOKEN_UNLIMITED_MAX_USAGE;
 
-    if (platform !== "windows" && platform !== "macos") {
+    if (platform !== "windows") {
       return c.json(
-        { error: 'Invalid platform. Must be "windows" or "macos".' },
+        { error: 'Invalid platform. Must be "windows".' },
         400,
       );
     }
@@ -1053,117 +1014,6 @@ enrollmentKeyRoutes.get(
       );
     }
 
-    // Global enrollment secret (per-key secrets can't be recovered from hash)
-    const globalSecret = process.env.AGENT_ENROLLMENT_SECRET || "";
-    if (!globalSecret && parentKey.keySecretHash) {
-      console.warn(
-        "[installer] AGENT_ENROLLMENT_SECRET not configured but parent key has a secret hash — agents may fail to enroll",
-      );
-    }
-
-    // ----------------------------------------------------------------
-    // macOS — new app-bundle path (bootstrap token + renamed app zip)
-    // Runs before the legacy binary fetch and child key creation.
-    // Falls through to the legacy path when:
-    //   (a) caller passed ?legacy=1, OR
-    //   (b) the installer-app asset is not yet published on GitHub.
-    // ----------------------------------------------------------------
-    if (platform === "macos") {
-      const wantLegacy = c.req.query("legacy") === "1";
-      const appZip = wantLegacy ? null : await fetchMacosInstallerAppZip();
-
-      if (appZip) {
-        // New path — bootstrap token + renamed app zip. No child enrollment key
-        // is created here; the bootstrap endpoint creates it lazily on consume.
-        let issued;
-        try {
-          issued = await issueBootstrapTokenForKey({
-            parentEnrollmentKeyId: parentKey.id,
-            createdByUserId: auth.user.id,
-            maxUsage: bootstrapTokenMaxUsage,
-          });
-        } catch (err) {
-          if (err instanceof BootstrapTokenIssuanceError) {
-            if (err.code === "parent_not_found")
-              return c.json({ error: err.message }, 404);
-            return c.json({ error: err.message }, 410);
-          }
-          throw err;
-        }
-
-        const apiHost = new URL(serverUrl).host;
-        const useLegacyFilenameToken = allowLegacyMacosInstallerFilenameToken();
-        // User-visible bundle name — safe to rebrand. The signed installer reads
-        // the token from the sibling bootstrap.json by a HARDCODED name and, in
-        // legacy mode, parses only the [TOKEN@HOST] group from its own bundle name
-        // (prefix-agnostic) — neither depends on the "Bl4ck Installer" prefix.
-        // oldAppName and bootstrapPayloadName below MUST stay "Breeze Installer*"
-        // to match the CI-signed source bundle and the installer's hardcoded lookup
-        // (FilenameTokenParser.swift: payloadFileName = "Breeze Installer.bootstrap.json").
-        const newAppName = useLegacyFilenameToken
-          ? `Bl4ck Installer [${issued.token}@${apiHost}].app`
-          : "Bl4ck Installer.app";
-        const bootstrapPayloadName = "Breeze Installer.bootstrap.json";
-
-        let renamedZip: Buffer | undefined;
-        try {
-          renamedZip = await renameAppInZip(appZip, {
-            oldAppName: "Breeze Installer.app",
-            newAppName,
-            ...(useLegacyFilenameToken
-              ? {}
-              : {
-                  extraFiles: [
-                    {
-                      path: bootstrapPayloadName,
-                      data: JSON.stringify({ token: issued.token, apiHost }),
-                      mode: 0o600,
-                    },
-                  ],
-                }),
-          });
-        } catch (err) {
-          console.error(
-            "[installer] renameAppInZip failed, falling back to legacy zip",
-            {
-              parentKeyId: parentKey.id,
-              tokenId: issued.id, // orphaned bootstrap token — will expire normally
-              error: err instanceof Error ? err.message : String(err),
-            },
-          );
-          // Fall through to legacy path — do NOT return.
-        }
-
-        if (renamedZip) {
-          writeEnrollmentKeyAudit(c, auth, {
-            orgId: parentKey.orgId,
-            action: "enrollment_key.installer_download",
-            keyId: parentKey.id,
-            keyName: parentKey.name,
-            details: {
-              platform,
-              mode: "app-bundle",
-              tokenId: issued.id,
-              count: childMaxUsage,
-            },
-          });
-
-          c.header("Content-Type", "application/zip");
-          const downloadFilename = useLegacyFilenameToken
-            ? `${newAppName}.zip`
-            : "bl4ck-agent-macos-installer.zip";
-          c.header(
-            "Content-Disposition",
-            `attachment; filename="${downloadFilename}"`,
-          );
-          c.header("Content-Length", String(renamedZip.length));
-          c.header("Cache-Control", "no-store");
-          return c.body(renamedZip as unknown as ArrayBuffer);
-        }
-      }
-
-      // Falls through to legacy path below.
-    }
 
     // ----------------------------------------------------------------
     // Windows — static signed MSI + bootstrap token in the filename.
@@ -1214,163 +1064,8 @@ enrollmentKeyRoutes.get(
       return serveWindowsBootstrapMsi(c, { msi, token: issued.token, apiHost });
     }
 
-    // Signing-spend cap — enforce BEFORE child key creation or any signing
-    // operation so an authenticated user cannot drive unbounded (costly,
-    // rate-limited-upstream) signing calls. Two overlapping caps:
-    //   1. Per-user:       INSTALLER_SIGN_USER_LIMIT / INSTALLER_SIGN_WINDOW_SECONDS
-    //   2. Per-parent-key: INSTALLER_SIGN_KEY_LIMIT  / INSTALLER_SIGN_WINDOW_SECONDS
-    // Both fail closed on Redis errors to prevent a Redis outage from
-    // disabling the cap.
-    {
-      const { getRedis } = await import("../services");
-      const { rateLimiter } = await import("../services/rate-limit");
-      const redis = getRedis();
-      if (!redis) {
-        console.error(
-          "[installer] sign-spend rate-limit unavailable: redis client missing",
-        );
-        return c.json({ error: "Service temporarily unavailable" }, 503);
-      }
-
-      // Per-user cap
-      const userResult = await rateLimiter(
-        redis,
-        `rl:installer-sign:user:${auth.user.id}`,
-        INSTALLER_SIGN_USER_LIMIT,
-        INSTALLER_SIGN_WINDOW_SECONDS,
-      );
-      if (!userResult.allowed) {
-        return c.json(
-          {
-            error:
-              "Installer signing rate limit reached. Try again later.",
-            retryAfter: userResult.resetAt.toISOString(),
-          },
-          429,
-        );
-      }
-
-      // Per-parent-key cap (reuses the same bucket as the public route so
-      // combined public + authenticated spend is bounded together).
-      const keyResult = await rateLimiter(
-        redis,
-        `install-sign:${parentKey.id}`,
-        INSTALLER_SIGN_KEY_LIMIT,
-        INSTALLER_SIGN_WINDOW_SECONDS,
-      );
-      if (!keyResult.allowed) {
-        return c.json(
-          {
-            error:
-              "Installer signing rate limit reached for this enrollment key. Try again later.",
-            retryAfter: keyResult.resetAt.toISOString(),
-          },
-          429,
-        );
-      }
-    }
-
-    // Generate a child enrollment key. Child gets a FRESH TTL independent
-    // of the parent's remaining lifetime — otherwise late-in-life parents
-    // produce dead-on-arrival installers (see CHILD_ENROLLMENT_KEY_TTL_MINUTES).
-    const rawChildKey = generateEnrollmentKey();
-    const childKeyHash = hashEnrollmentKey(rawChildKey);
-    const shortCode = await allocateShortCode();
-
-    const [childKey] = await db
-      .insert(enrollmentKeys)
-      .values({
-        orgId: parentKey.orgId,
-        siteId: parentKey.siteId,
-        name: `${parentKey.name} (installer${childMaxUsage !== null && childMaxUsage > 1 ? ` x${childMaxUsage}` : ""})`,
-        key: childKeyHash,
-        keySecretHash: parentKey.keySecretHash,
-        maxUsage: childMaxUsage,
-        expiresAt: freshChildExpiresAt(childTtlMinutes),
-        createdBy: auth.user.id,
-        shortCode,
-        installerPlatform: platform,
-      })
-      .returning();
-
-    if (!childKey) {
-      return c.json({ error: "Failed to generate installer key" }, 500);
-    }
-
-    // Build the macOS installer — wrap in try/catch to clean up orphaned child key on failure.
-    // Windows early-returns above; this block is macOS-only.
-    try {
-      // macOS — install.sh downloads the architecture-matched pkg at install
-      // time, so no binary is bundled here (one zip serves Intel + Apple Silicon).
-      const zipBuffer = await buildMacosInstallerZip({
-        serverUrl,
-        enrollmentKey: rawChildKey,
-        enrollmentSecret: globalSecret,
-        siteId: parentKey.siteId,
-      });
-
-      writeEnrollmentKeyAudit(c, auth, {
-        orgId: parentKey.orgId,
-        action: "enrollment_key.installer_download",
-        keyId: parentKey.id,
-        keyName: parentKey.name,
-        details: {
-          platform,
-          childKeyId: childKey.id,
-          shortCode,
-          count: childMaxUsage,
-        },
-      });
-
-      c.header("Content-Type", "application/zip");
-      c.header(
-        "Content-Disposition",
-        'attachment; filename="bl4ck-agent-macos.zip"',
-      );
-      c.header("Content-Length", String(zipBuffer.length));
-      c.header("Cache-Control", "no-store");
-      return c.body(zipBuffer as unknown as ArrayBuffer);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error("[installer] Build failed:", detail);
-      captureException(err, c);
-
-      // Audit the failure so it's traceable
-      createAuditLogAsync({
-        orgId: parentKey.orgId,
-        actorId: auth.user.id,
-        actorEmail: auth.user.email,
-        action: "enrollment_key.installer_build_failed",
-        resourceType: "enrollment_key",
-        resourceId: parentKey.id,
-        resourceName: parentKey.name,
-        details: {
-          platform,
-          childKeyId: childKey.id,
-          count: childMaxUsage,
-          error: detail,
-        },
-        ipAddress: getTrustedClientIpOrUndefined(c),
-        userAgent: c.req.header("user-agent"),
-        result: "failure",
-      });
-
-      await db
-        .delete(enrollmentKeys)
-        .where(eq(enrollmentKeys.id, childKey.id))
-        .catch((cleanupErr) => {
-          console.error(
-            "[installer] Failed to clean up orphaned child key:",
-            childKey.id,
-            cleanupErr instanceof Error ? cleanupErr.message : cleanupErr,
-          );
-        });
-
-      // Route is MFA-gated + org-write permission — safe to surface the
-      // underlying error so admins debugging a misconfigured signing
-      // service get actionable signal instead of an opaque 500.
-      return c.json({ error: "Failed to build installer", detail }, 500);
-    }
+    // Only Windows is supported; macOS/Linux installers were removed.
+    return c.json({ error: "Invalid platform" }, 400);
   },
 );
 
@@ -1513,25 +1208,6 @@ enrollmentKeyRoutes.post(
         },
         400,
       );
-    }
-
-    // For macOS, validate that both architecture PKGs are reachable before
-    // creating a child key — prevents links that 500 on every click.
-    // Windows uses the bootstrap path (no signing dependency), so no probe needed.
-    if (platform === "macos") {
-      try {
-        await assertMacosInstallerPkgsReachable();
-      } catch (err) {
-        console.error(
-          `[installer-link] pre-flight check failed for ${platform}:`,
-          err,
-        );
-        captureException(err, c);
-        return c.json(
-          { error: "macOS PKG not reachable" },
-          503,
-        );
-      }
     }
 
     // Generate a child enrollment key with a fresh TTL independent of parent
@@ -1781,8 +1457,6 @@ async function serveInstaller(
     return c.json({ error: "Server URL not configured" }, 500);
   }
 
-  const globalSecret = process.env.AGENT_ENROLLMENT_SECRET || "";
-
   // ----------------------------------------------------------------
   // Windows — bootstrap path: issue a single-use bootstrap token,
   // fetch the static signed MSI, and embed the token in the filename.
@@ -1835,71 +1509,8 @@ async function serveInstaller(
     return serveWindowsBootstrapMsi(c, { msi, token: issued.token, apiHost });
   }
 
-  // ----------------------------------------------------------------
-  // macOS — build zip BEFORE incrementing usage (don't burn usage on
-  // build failure). install.sh downloads the arch-matched pkg at
-  // install time; nothing is bundled (one zip serves Intel + Apple Silicon).
-  // ----------------------------------------------------------------
-  try {
-    const resultBuffer = await buildMacosInstallerZip({
-      serverUrl,
-      enrollmentKey: rawToken,
-      enrollmentSecret: globalSecret,
-      siteId: keyRow.siteId,
-    });
-
-    // NOTE: we DO NOT bump keyRow.usageCount here. The child key's
-    // max_usage semantic is "max successful enrollments," not "max
-    // downloads" — bumping on download burns the slot before the agent
-    // has even tried to enroll, and the subsequent /agents/enroll call
-    // then sees usage_count >= max_usage and returns an opaque 401.
-    // The enroll endpoint at routes/agents/enrollment.ts owns the
-    // increment via a TOCTOU-safe UPDATE ... WHERE usage_count < max_usage
-    // so the slot is only consumed when enrollment actually succeeds.
-    // Downloads are still tracked, but via the audit log below.
-
-    createAuditLogAsync({
-      orgId: keyRow.orgId,
-      actorId: "public",
-      action: "enrollment_key.public_download",
-      resourceType: "enrollment_key",
-      resourceId: keyRow.id,
-      resourceName: keyRow.name,
-      details: { platform, ip, signed: false },
-      ipAddress: ip,
-      userAgent: c.req.header("user-agent"),
-      result: "success",
-    });
-
-    c.header("Content-Type", "application/zip");
-    c.header("Content-Disposition", `attachment; filename="bl4ck-agent-macos.zip"`);
-    c.header("Content-Length", String(resultBuffer.length));
-    c.header("Cache-Control", "no-store");
-    return c.body(resultBuffer as unknown as ArrayBuffer);
-  } catch (err) {
-    console.error(
-      "[public-download] Build failed:",
-      err instanceof Error ? err.message : err,
-    );
-    // Public endpoint — do NOT leak err.message in the response body, but
-    // fire Sentry so operators can still see the underlying cause.
-    captureException(err, c);
-
-    if (cleanupOnFailure) {
-      await db
-        .delete(enrollmentKeys)
-        .where(eq(enrollmentKeys.id, keyRow.id))
-        .catch((cleanupErr) => {
-          console.error(
-            "[public-download] Failed to clean up orphaned child key:",
-            keyRow.id,
-            cleanupErr instanceof Error ? cleanupErr.message : cleanupErr,
-          );
-        });
-    }
-
-    return c.json({ error: "Failed to build installer" }, 500);
-  }
+  // Only Windows installers are supported.
+  return c.json({ error: "Invalid platform" }, 400);
 }
 
 export const publicEnrollmentRoutes = new Hono();
@@ -1920,9 +1531,9 @@ publicEnrollmentRoutes.get(
     const platform = c.req.param("platform");
     const { h } = c.req.valid("query");
 
-    if (platform !== "windows" && platform !== "macos") {
+    if (platform !== "windows") {
       return c.json(
-        { error: 'Invalid platform. Must be "windows" or "macos".' },
+        { error: 'Invalid platform. Must be "windows".' },
         400,
       );
     }

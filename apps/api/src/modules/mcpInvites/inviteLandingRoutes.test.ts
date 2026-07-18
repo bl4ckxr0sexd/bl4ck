@@ -37,12 +37,10 @@ vi.mock('../../db/schema', () => ({
 }));
 
 const buildWindowsInstallerZipMock = vi.fn(async (..._args: unknown[]) => Buffer.from('windows-zip'));
-const buildMacosInstallerZipMock = vi.fn(async (..._args: unknown[]) => Buffer.from('macos-zip'));
 const fetchRegularMsiMock = vi.fn(async () => Buffer.from('fake-msi'));
 
 vi.mock('../../services/installerBuilder', () => ({
   buildWindowsInstallerZip: (...args: unknown[]) => buildWindowsInstallerZipMock(...args),
-  buildMacosInstallerZip: (...args: unknown[]) => buildMacosInstallerZipMock(...args),
   fetchRegularMsi: () => fetchRegularMsiMock(),
 }));
 
@@ -157,9 +155,15 @@ describe('GET /i/:shortCode/download/:os', () => {
     expect(redeemShortCodeMock).not.toHaveBeenCalled();
   });
 
-  it('returns 501 for Linux (no pre-built installer)', async () => {
+  it('rejects Linux with 400 (only Windows installers available)', async () => {
     const res = await buildApp().request('/i/abc1234567/download/linux');
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(400);
+    expect(redeemShortCodeMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects macOS with 400 (only Windows installers available)', async () => {
+    const res = await buildApp().request('/i/abc1234567/download/mac');
+    expect(res.status).toBe(400);
     expect(redeemShortCodeMock).not.toHaveBeenCalled();
   });
 
@@ -190,23 +194,6 @@ describe('GET /i/:shortCode/download/:os', () => {
       enrollmentKey: 'raw-token-xyz',
       siteId: 'site-1',
     });
-  });
-
-  it('serves a macOS zip', async () => {
-    redeemShortCodeMock.mockResolvedValue({
-      id: 'child-1',
-      parentId: 'parent-1',
-      orgId: 'org-1',
-      siteId: 'site-1',
-      rawKey: 'raw-token-xyz',
-      keySecretHash: null,
-    });
-    const res = await buildApp().request('/i/abc1234567/download/mac');
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-disposition')).toContain('bl4ck-agent-macos.zip');
-    // macOS no longer fetches a pkg server-side — install.sh downloads the
-    // arch-matched pkg at install time; only the zip is built here.
-    expect(buildMacosInstallerZipMock).toHaveBeenCalledTimes(1);
   });
 
   it('returns 500 if PUBLIC_API_URL is not set', async () => {

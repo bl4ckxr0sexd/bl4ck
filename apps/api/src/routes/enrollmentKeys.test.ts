@@ -79,10 +79,7 @@ vi.mock("../services/msiSigning", () => ({
 
 vi.mock("../services/installerBuilder", () => ({
   buildWindowsInstallerZip: vi.fn(async () => Buffer.from("windows-zip")),
-  buildMacosInstallerZip: vi.fn(async () => Buffer.from("macos-zip")),
   fetchRegularMsi: vi.fn(async () => Buffer.from("regular-msi")),
-  assertMacosInstallerPkgsReachable: vi.fn(async () => {}),
-  fetchMacosInstallerAppZip: vi.fn(async () => null),
   serveWindowsBootstrapMsi: vi.fn((c: any, args: { msi: Buffer; token: string; apiHost: string }) => {
     const filename = `Bl4ck Agent (${args.token}@${args.apiHost}).msi`;
     c.header("Content-Type", "application/octet-stream");
@@ -91,10 +88,6 @@ vi.mock("../services/installerBuilder", () => ({
     c.header("Cache-Control", "no-store");
     return c.body(args.msi);
   }),
-}));
-
-vi.mock("../services/installerAppZip", () => ({
-  renameAppInZip: vi.fn(async (buf: Buffer) => buf),
 }));
 
 vi.mock("../services/rate-limit", () => ({
@@ -131,8 +124,6 @@ import {
 } from "./enrollmentKeys";
 import { db, withSystemDbAccessContext } from "../db";
 import { MsiSigningService } from "../services/msiSigning";
-import { fetchMacosInstallerAppZip } from "../services/installerBuilder";
-import { renameAppInZip } from "../services/installerAppZip";
 import * as installerBootstrapTokenIssuance from "../services/installerBootstrapTokenIssuance";
 
 // ============================================================
@@ -1267,216 +1258,6 @@ describe("POST /:id/bootstrap-token", () => {
     );
 
     expect(res.status).toBe(410);
-  });
-});
-
-// ============================================================
-// GET /:id/installer/macos — app-bundle path
-// ============================================================
-
-describe("GET /:id/installer/macos — app-bundle path", () => {
-  let app: Hono;
-  let issueSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(MsiSigningService.fromEnv).mockReturnValue(null);
-    process.env.PUBLIC_API_URL = "https://api.example.com";
-    app = new Hono();
-    app.route("/enrollment-keys", enrollmentKeyRoutes);
-
-    // Default: issueBootstrapTokenForKey succeeds with a fixed token
-    issueSpy = vi
-      .spyOn(installerBootstrapTokenIssuance, "issueBootstrapTokenForKey")
-      .mockResolvedValue({
-        id: "token-row-uuid-1",
-        token: "ABC1234567",
-        expiresAt: new Date("2026-04-20T00:00:00.000Z"),
-        parentKeyName: "Test Key",
-      });
-  });
-
-  afterEach(() => {
-    issueSpy.mockRestore();
-  });
-
-  it("returns a renamed app zip when installer app is available", async () => {
-    const parentRow = makeKeyRow();
-
-    vi.mocked(db.select).mockReturnValueOnce({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([parentRow]),
-        }),
-      }),
-    } as any);
-
-    // fetchMacosInstallerAppZip returns a fixture buffer
-    vi.mocked(fetchMacosInstallerAppZip).mockResolvedValueOnce(
-      Buffer.from("fixture-app-zip"),
-    );
-
-    // renameAppInZip returns a renamed buffer
-    vi.mocked(renameAppInZip).mockResolvedValueOnce(
-      Buffer.from("renamed-app-zip"),
-    );
-
-    const res = await app.request(
-      `/enrollment-keys/${KEY_ID}/installer/macos?count=1`,
-      { headers: { authorization: "Bearer jwt" } },
-    );
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toBe("application/zip");
-    const cd = res.headers.get("Content-Disposition") ?? "";
-    expect(cd).toBe('attachment; filename="bl4ck-agent-macos-installer.zip"');
-    expect(cd).not.toContain("ABC1234567");
-    expect(res.headers.get("Cache-Control")).toBe("no-store");
-
-    // renameAppInZip was called with correct args. oldAppName stays "Breeze
-    // Installer.app" (matches the CI-signed source bundle); the bootstrap payload
-    // name stays hardcoded to match the installer's lookup; only the user-visible
-    // newAppName is rebranded.
-    expect(vi.mocked(renameAppInZip)).toHaveBeenCalledWith(
-      Buffer.from("fixture-app-zip"),
-      expect.objectContaining({
-        oldAppName: "Breeze Installer.app",
-        newAppName: "Bl4ck Installer.app",
-        extraFiles: [
-          {
-            path: "Breeze Installer.bootstrap.json",
-            data: JSON.stringify({
-              token: "ABC1234567",
-              apiHost: "api.example.com",
-            }),
-            mode: 0o600,
-          },
-        ],
-      }),
-    );
-  });
-
-  it("uses the legacy tokenized app filename only behind the compatibility flag", async () => {
-    process.env.MACOS_INSTALLER_FILENAME_TOKEN_COMPAT = "true";
-    const parentRow = makeKeyRow();
-
-    vi.mocked(db.select).mockReturnValueOnce({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([parentRow]),
-        }),
-      }),
-    } as any);
-    vi.mocked(fetchMacosInstallerAppZip).mockResolvedValueOnce(
-      Buffer.from("fixture-app-zip"),
-    );
-    vi.mocked(renameAppInZip).mockResolvedValueOnce(
-      Buffer.from("renamed-app-zip"),
-    );
-
-    const res = await app.request(
-      `/enrollment-keys/${KEY_ID}/installer/macos?count=1`,
-      { headers: { authorization: "Bearer jwt" } },
-    );
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Disposition") ?? "").toContain(
-      "Bl4ck Installer [ABC1234567@api.example.com].app.zip",
-    );
-    expect(vi.mocked(renameAppInZip)).toHaveBeenCalledWith(
-      Buffer.from("fixture-app-zip"),
-      expect.objectContaining({
-        newAppName: "Bl4ck Installer [ABC1234567@api.example.com].app",
-      }),
-    );
-    expect(vi.mocked(renameAppInZip).mock.calls[0]?.[1]).not.toHaveProperty(
-      "extraFiles",
-    );
-  });
-
-  it("falls back to legacy zip when ?legacy=1 is passed", async () => {
-    const parentRow = makeKeyRow();
-    const childRow = makeChildKeyRow({ installerPlatform: "macos" });
-
-    // select: parent key lookup + allocateShortCode dedup check
-    vi.mocked(db.select)
-      .mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([parentRow]),
-          }),
-        }),
-      } as any)
-      .mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([]), // no existing short code → unique
-          }),
-        }),
-      } as any);
-
-    vi.mocked(db.insert).mockReturnValueOnce({
-      values: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([childRow]),
-      }),
-    } as any);
-
-    // fetchMacosInstallerAppZip is NOT called when ?legacy=1 is passed
-    // (wantLegacy=true → appZip=null without calling the function)
-
-    const res = await app.request(
-      `/enrollment-keys/${KEY_ID}/installer/macos?count=1&legacy=1`,
-      { headers: { authorization: "Bearer jwt" } },
-    );
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Disposition")).toContain(
-      "bl4ck-agent-macos.zip",
-    );
-    // The app-bundle path must NOT have been called
-    expect(vi.mocked(renameAppInZip)).not.toHaveBeenCalled();
-    expect(issueSpy).not.toHaveBeenCalled();
-  });
-
-  it("falls back to legacy zip when installer app asset is missing (returns null)", async () => {
-    const parentRow = makeKeyRow();
-    const childRow = makeChildKeyRow({ installerPlatform: "macos" });
-
-    vi.mocked(db.select)
-      .mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([parentRow]),
-          }),
-        }),
-      } as any)
-      .mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      } as any);
-
-    vi.mocked(db.insert).mockReturnValueOnce({
-      values: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([childRow]),
-      }),
-    } as any);
-
-    // fetchMacosInstallerAppZip default mock returns null → falls back to legacy path
-
-    const res = await app.request(
-      `/enrollment-keys/${KEY_ID}/installer/macos?count=1`,
-      { headers: { authorization: "Bearer jwt" } },
-    );
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Disposition")).toContain(
-      "bl4ck-agent-macos.zip",
-    );
-    expect(vi.mocked(renameAppInZip)).not.toHaveBeenCalled();
-    expect(issueSpy).not.toHaveBeenCalled();
   });
 });
 
