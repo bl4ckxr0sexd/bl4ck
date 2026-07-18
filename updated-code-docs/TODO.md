@@ -20,7 +20,22 @@ Legend: [x] done · [~] in progress / partial · [ ] not started
 
 ## ✅ Done (on branch `installer-silent-quietexec`, NOT yet on main)
 - [x] Helper IPC alignment — pipe/socket/config paths → `bl4ck` (commit `2fec3afb`)
-  - [ ] **Open a PR + merge this to `main`** ← next housekeeping step
+- [x] Windows-only installer UI + build aggregates (commits `ca2a910a`, `9daa4cc3`)
+- [x] **macOS/Linux installer surface removed** (commit `ccb5dabe`): API `.pkg` +
+      `install.sh`/`uninstall.sh` routes, orphaned static scripts, Windows-only
+      web install commands, and all darwin/linux jobs + Apple signing in
+      `release.yml`. Verified green: download.test.ts 17/17, agents.test.ts 23/23,
+      web installCommands + AddDeviceModal 20/20.
+  - [~] **Dead-code follow-up:** `buildMacosInstallerZip` (in `installerBuilder.ts`)
+        + the macOS branches in `enrollmentKeys.ts`/`inviteLandingRoutes.ts` still
+        compile and pass tests but are unreachable (nothing serves them). Left
+        deliberately — they share a file with the critical Windows MSI builder, so
+        the narrowing deserves its own focused pass (run `installerBuilder.test.ts`
+        green after). Not a Windows breakage.
+  - [~] **release.yml scope note:** the Tauri **viewer** and **helper** apps were
+        also narrowed to Windows-only (their macOS/Linux build jobs removed). If
+        Mac/Linux technicians need the desktop viewer, revert just those jobs.
+  - [ ] **Open a PR + merge this branch to `main`** ← next housekeeping step
 
 ---
 
