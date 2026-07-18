@@ -4,6 +4,24 @@ Goal: a clean VPS running the rebranded BL4CK stack, with a working agent
 installer download — **without** depending on GitHub releases, the release
 manifest, or code signing.
 
+> ## ⚡ Quick path — use the script
+> A one-shot installer now exists; prefer it over the manual steps below:
+> ```bash
+> # on the VPS (domain A-record already pointing at it, ports 80/443 open):
+> git clone https://github.com/bl4ckxr0sexd/bl4ck /opt/bl4ck && cd /opt/bl4ck
+> ./deploy/install.sh --domain rmm.example.com --admin-email you@example.com
+> # then, after building the installers on a Windows box and copying them over:
+> ./deploy/stage-binaries.sh /path/to/bl4ck-installers
+> ```
+> `deploy/install.sh` generates `.env` (all required secrets + boot vars),
+> builds from source, and brings the stack up with Caddy auto-HTTPS.
+> **The manual `.env` template further down has known gaps the script fixes** —
+> it needs `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS` even in local mode, the
+> `*_IMAGE_REF`/`BREEZE_VERSION` pins, `TRUST_PROXY_HEADERS`, `DOCKER_PLATFORM=`
+> `linux/amd64`, and the bootstrap-admin vars; and `AGENT_BINARY_DIR` is fixed
+> at `/data/binaries/agent` (read-only) so binaries go in via `stage-binaries.sh`,
+> not `docker compose cp`. Use the script; treat the rest of this doc as reference.
+
 > **Read this first:** `deploy/docker-compose.prod.yml` pulls digest-pinned
 > images from `ghcr.io/lanternops/breeze/*` — the *original* org's registry.
 > Using it would run someone else's build, not your rebrand. This guide builds

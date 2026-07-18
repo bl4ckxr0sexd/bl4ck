@@ -9,7 +9,7 @@ services:
 
   api:
     image: breeze-api:local
-    platform: linux/arm64
+    platform: ${DOCKER_PLATFORM:-linux/arm64}
     build:
       context: .
       dockerfile: docker/Dockerfile.api
@@ -27,7 +27,7 @@ services:
 
   web:
     image: breeze-web:local
-    platform: linux/arm64
+    platform: ${DOCKER_PLATFORM:-linux/arm64}
     build:
       context: .
       dockerfile: docker/Dockerfile.web
@@ -43,7 +43,7 @@ services:
 
   portal:
     image: breeze-portal:local
-    platform: linux/arm64
+    platform: ${DOCKER_PLATFORM:-linux/arm64}
     build:
       context: .
       dockerfile: apps/portal/Dockerfile
