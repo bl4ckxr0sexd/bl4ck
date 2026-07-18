@@ -101,26 +101,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - goos: linux
-            goarch: amd64
-            suffix: ''
-            cgo: '0'
-            runner: ubuntu-latest
-          - goos: linux
-            goarch: arm64
-            suffix: ''
-            cgo: '0'
-            runner: ubuntu-latest
-          - goos: darwin
-            goarch: amd64
-            suffix: ''
-            cgo: '1'
-            runner: macos-latest
-          - goos: darwin
-            goarch: arm64
-            suffix: ''
-            cgo: '1'
-            runner: macos-latest
           - goos: windows
             goarch: amd64
             suffix: '.exe'
@@ -154,9 +134,6 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: ${{ matrix.cgo }}
           BUILD_VERSION: ${{ steps.version.outputs.version }}
-          # Allow weak-linking ScreenCaptureKit so the binary runs on macOS 12+
-          # where SCK doesn't exist (prevents dyld Symbol not found crash)
-          CGO_LDFLAGS_ALLOW: '-weak_framework|ScreenCaptureKit'
         run: |
           go build -ldflags="-s -w -X main.version=${BUILD_VERSION}" \
             -o "bl4ck-agent-${GOOS}-${GOARCH}${{ matrix.suffix }}" \
@@ -176,7 +153,6 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: ${{ matrix.cgo }}
           BUILD_VERSION: ${{ steps.version.outputs.version }}
-          CGO_LDFLAGS_ALLOW: '-weak_framework|ScreenCaptureKit'
         run: |
           go build -ldflags="-s -w -X main.version=${BUILD_VERSION}" \
             -o "bl4ck-backup-${GOOS}-${GOARCH}${{ matrix.suffix }}" \
@@ -206,28 +182,6 @@ jobs:
         with:
           name: bl4ck-watchdog-${{ matrix.goos }}-${{ matrix.goarch }}
           path: agent/bl4ck-watchdog-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
-          retention-days: 30
-
-      - name: Build bl4ck-desktop-helper
-        if: matrix.goos == 'darwin'
-        working-directory: agent
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo }}
-          BUILD_VERSION: ${{ steps.version.outputs.version }}
-          CGO_LDFLAGS_ALLOW: '-weak_framework|ScreenCaptureKit'
-        run: |
-          go build -ldflags="-s -w -X main.version=${BUILD_VERSION}" \
-            -o "bl4ck-desktop-helper-${GOOS}-${GOARCH}" \
-            ./cmd/bl4ck-desktop-helper
-
-      - name: Upload bl4ck-desktop-helper artifact
-        if: matrix.goos == 'darwin'
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-desktop-helper-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: agent/bl4ck-desktop-helper-${{ matrix.goos }}-${{ matrix.goarch }}
           retention-days: 30
 
   build-windows-msi:
@@ -336,12 +290,6 @@ jobs:
             --copyright "Copyright (c) BL4CK RMM" --original-filename "bl4ck-backup.exe" `
             --out ..\cmd\bl4ck-backup\rsrc_windows_amd64.syso
           if ($LASTEXITCODE -ne 0) { throw "go-winres simply bl4ck-backup failed with exit code $LASTEXITCODE" }
-          & $winres simply --arch amd64 --no-suffix --manifest gui --icon icon.ico `
-            --file-version $env:BUILD_VERSION --product-version $env:BUILD_VERSION `
-            --product-name "BL4CK RMM Desktop Helper" --file-description "BL4CK RMM Desktop Helper" `
-            --copyright "Copyright (c) BL4CK RMM" --original-filename "bl4ck-desktop-helper.exe" `
-            --out ..\cmd\bl4ck-desktop-helper\rsrc_windows_amd64.syso
-          if ($LASTEXITCODE -ne 0) { throw "go-winres simply bl4ck-desktop-helper failed with exit code $LASTEXITCODE" }
           Pop-Location
           Push-Location agent
           $env:GOOS = "windows"
@@ -633,393 +581,6 @@ jobs:
           overwrite: true
           retention-days: 30
 
-  build-macos-agent:
-    name: Sign macOS Agent Binary
-    runs-on: macos-latest
-    needs: [build-agent]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Download darwin/amd64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-agent-darwin-amd64
-          path: staging/
-
-      - name: Download darwin/arm64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-agent-darwin-arm64
-          path: staging/
-
-      - name: Download backup darwin/amd64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-backup-darwin-amd64
-          path: staging/
-
-      - name: Download backup darwin/arm64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-backup-darwin-arm64
-          path: staging/
-
-      - name: Download desktop-helper darwin/amd64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-desktop-helper-darwin-amd64
-          path: staging/
-
-      - name: Download desktop-helper darwin/arm64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-desktop-helper-darwin-arm64
-          path: staging/
-
-      - name: Download watchdog darwin/amd64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-watchdog-darwin-amd64
-          path: staging/
-
-      - name: Download watchdog darwin/arm64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-watchdog-darwin-arm64
-          path: staging/
-
-      - name: Import certificate into keychain
-        if: vars.ENABLE_MACOS_SIGNING == 'true'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          CERT_PATH="$RUNNER_TEMP/cert.p12"
-          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
-
-          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH" \
-            $(security list-keychains -d user | tr -d '"')
-
-          rm -f "$CERT_PATH"
-
-      - name: Sign binaries
-        if: vars.ENABLE_MACOS_SIGNING == 'true'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          for bin in staging/bl4ck-agent-darwin-* staging/bl4ck-backup-darwin-* staging/bl4ck-desktop-helper-darwin-* staging/bl4ck-watchdog-darwin-*; do
-            [ -f "$bin" ] || continue
-            codesign --force --options runtime \
-              --entitlements agent/entitlements/agent-macos.entitlements.plist \
-              --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$bin"
-            codesign --verify --verbose "$bin"
-            echo "Signed: $bin"
-          done
-
-      - name: Notarize binaries
-        if: vars.ENABLE_MACOS_SIGNING == 'true'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          for bin in staging/bl4ck-agent-darwin-* staging/bl4ck-backup-darwin-* staging/bl4ck-desktop-helper-darwin-* staging/bl4ck-watchdog-darwin-*; do
-            [ -f "$bin" ] || continue
-            case "$bin" in *.pkg|*.zip) continue ;; esac
-            ZIP_PATH="${bin}.zip"
-            ditto -c -k --keepParent "$bin" "$ZIP_PATH"
-
-            scripts/release/notarize-submit.sh "$ZIP_PATH"
-
-            rm -f "$ZIP_PATH"
-          done
-
-      - name: Upload signed darwin/amd64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-agent-darwin-amd64
-          path: staging/bl4ck-agent-darwin-amd64
-          overwrite: true
-          retention-days: 30
-
-      - name: Upload signed darwin/arm64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-agent-darwin-arm64
-          path: staging/bl4ck-agent-darwin-arm64
-          overwrite: true
-          retention-days: 30
-
-      - name: Upload signed backup darwin/amd64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-backup-darwin-amd64
-          path: staging/bl4ck-backup-darwin-amd64
-          overwrite: true
-          retention-days: 30
-
-      - name: Upload signed backup darwin/arm64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-backup-darwin-arm64
-          path: staging/bl4ck-backup-darwin-arm64
-          overwrite: true
-          retention-days: 30
-
-      - name: Upload signed desktop-helper darwin/amd64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-desktop-helper-darwin-amd64
-          path: staging/bl4ck-desktop-helper-darwin-amd64
-          overwrite: true
-          retention-days: 30
-
-      - name: Upload signed desktop-helper darwin/arm64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-desktop-helper-darwin-arm64
-          path: staging/bl4ck-desktop-helper-darwin-arm64
-          overwrite: true
-          retention-days: 30
-
-      - name: Upload signed watchdog darwin/amd64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-watchdog-darwin-amd64
-          path: staging/bl4ck-watchdog-darwin-amd64
-          overwrite: true
-          retention-days: 30
-
-      - name: Upload signed watchdog darwin/arm64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-watchdog-darwin-arm64
-          path: staging/bl4ck-watchdog-darwin-arm64
-          overwrite: true
-          retention-days: 30
-
-      - name: Build macOS .pkg installers
-        env:
-          BUILD_VERSION: ${{ github.ref_name }}
-        run: |
-          VERSION="${BUILD_VERSION#v}"
-          chmod +x agent/installer/macos/build-pkg.sh
-          for arch in amd64 arm64; do
-            agent/installer/macos/build-pkg.sh \
-              "staging/bl4ck-agent-darwin-${arch}" \
-              "staging/bl4ck-desktop-helper-darwin-${arch}" \
-              "staging/bl4ck-backup-darwin-${arch}" \
-              "staging/bl4ck-watchdog-darwin-${arch}" \
-              "$VERSION" \
-              "$arch" \
-              "staging/bl4ck-agent-darwin-${arch}.pkg"
-          done
-
-      - name: Sign .pkg installers
-        if: vars.ENABLE_MACOS_SIGNING == 'true'
-        env:
-          APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
-        run: |
-          if [ -z "$APPLE_INSTALLER_IDENTITY" ]; then
-            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-              echo "::error::APPLE_INSTALLER_IDENTITY required for tag releases (productsign would silently skip, shipping unsigned .pkgs that fail downstream Installer.app notarization)"
-              exit 1
-            fi
-            echo "APPLE_INSTALLER_IDENTITY not set, skipping .pkg signing (non-tag build)"
-            exit 0
-          fi
-          for pkg in staging/*.pkg; do
-            SIGNED="${pkg%.pkg}-signed.pkg"
-            productsign --sign "$APPLE_INSTALLER_IDENTITY" "$pkg" "$SIGNED"
-            mv "$SIGNED" "$pkg"
-            echo "Signed: $(basename "$pkg")"
-          done
-
-      - name: Notarize and staple .pkg installers
-        if: vars.ENABLE_MACOS_SIGNING == 'true'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
-        run: |
-          if [ -z "$APPLE_INSTALLER_IDENTITY" ]; then
-            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-              echo "::error::APPLE_INSTALLER_IDENTITY required for tag releases (.pkgs would skip notarization and fail downstream Installer.app notarization)"
-              exit 1
-            fi
-            echo "APPLE_INSTALLER_IDENTITY not set, skipping .pkg notarization (non-tag build)"
-            exit 0
-          fi
-          for pkg in staging/*.pkg; do
-            scripts/release/notarize-submit.sh "$pkg"
-            xcrun stapler staple "$pkg"
-            xcrun stapler validate "$pkg"
-            echo "Notarized and stapled: $(basename "$pkg")"
-          done
-
-      - name: Verify macOS signatures and notarization
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          if [ "${{ vars.ENABLE_MACOS_SIGNING }}" != "true" ]; then
-            echo "::error::ENABLE_MACOS_SIGNING must be true for tag releases."
-            exit 1
-          fi
-
-          # Raw Mach-O binaries: verify signature + hardened runtime + Developer ID.
-          # Do NOT run `spctl -a -t exec` against raw command-line binaries — Gatekeeper's
-          # exec assessment is bundle-aware and rejects raw Mach-O with "the code is valid
-          # but does not seem to be an app", even when signing/notarization are correct.
-          # The user-facing assessment happens at the .pkg layer below (binaries are
-          # delivered to end users only inside notarized .pkgs).
-          for bin in staging/bl4ck-agent-darwin-* staging/bl4ck-backup-darwin-* staging/bl4ck-desktop-helper-darwin-* staging/bl4ck-watchdog-darwin-*; do
-            [ -f "$bin" ] || continue
-            # The prefix glob also matches .pkg / .zip files in staging at this
-            # point in the workflow — skip them (.pkg uses productsign, .zip is
-            # the notarytool upload artifact). The .pkg loop below verifies them.
-            case "$bin" in *.pkg|*.zip) continue ;; esac
-            codesign --verify --strict --verbose=2 "$bin"
-            DETAILS=$(codesign -dvvv "$bin" 2>&1)
-            if ! grep -q 'flags=.*runtime' <<<"$DETAILS"; then
-              echo "::error::$bin missing hardened runtime flag"
-              echo "$DETAILS"
-              exit 1
-            fi
-            if ! grep -q 'Authority=Developer ID Application' <<<"$DETAILS"; then
-              echo "::error::$bin not signed by Developer ID Application"
-              echo "$DETAILS"
-              exit 1
-            fi
-          done
-
-          for pkg in staging/*.pkg; do
-            [ -f "$pkg" ] || continue
-            pkgutil --check-signature "$pkg"
-            xcrun stapler validate "$pkg"
-            spctl -a -vv -t install "$pkg"
-          done
-
-      - name: Upload .pkg darwin/amd64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-agent-darwin-amd64-pkg
-          path: staging/bl4ck-agent-darwin-amd64.pkg
-          retention-days: 30
-
-      - name: Upload .pkg darwin/arm64
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-agent-darwin-arm64-pkg
-          path: staging/bl4ck-agent-darwin-arm64.pkg
-          retention-days: 30
-
-      - name: Cleanup keychain
-        if: always() && vars.ENABLE_MACOS_SIGNING == 'true'
-        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-
-  build-macos-installer-app:
-    name: Build macOS Installer App
-    needs: [build-macos-agent]
-    runs-on: macos-latest
-    if: vars.ENABLE_MACOS_SIGNING == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Download .pkg darwin/amd64
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-agent-darwin-amd64-pkg
-          path: installer-pkgs/
-
-      - name: Download .pkg darwin/arm64
-        uses: actions/download-artifact@v8
-        with:
-          name: bl4ck-agent-darwin-arm64-pkg
-          path: installer-pkgs/
-
-      - name: Import certificate into keychain
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          CERT_PATH="$RUNNER_TEMP/cert.p12"
-          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
-
-          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH" \
-            $(security list-keychains -d user | tr -d '"')
-
-          rm -f "$CERT_PATH"
-
-      - name: Build .app bundle
-        run: |
-          chmod +x agent/installer/macos-app/build-app-bundle.sh
-          agent/installer/macos-app/build-app-bundle.sh \
-            --pkg-amd64 installer-pkgs/bl4ck-agent-darwin-amd64.pkg \
-            --pkg-arm64 installer-pkgs/bl4ck-agent-darwin-arm64.pkg \
-            --output "build/BL4CK Installer.app"
-
-      - name: Sign .app
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          codesign --force --options runtime \
-            --entitlements agent/installer/macos-app/entitlements.plist \
-            --sign "$APPLE_SIGNING_IDENTITY" --timestamp \
-            --deep "build/BL4CK Installer.app"
-          codesign --verify --verbose=2 "build/BL4CK Installer.app"
-
-      - name: Notarize + staple
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          ditto -c -k --keepParent "build/BL4CK Installer.app" build/installer-notarize.zip
-          scripts/release/notarize-submit.sh build/installer-notarize.zip
-          xcrun stapler staple "build/BL4CK Installer.app"
-          xcrun stapler validate "build/BL4CK Installer.app"
-          spctl -a -t exec -vv "build/BL4CK Installer.app"
-
-      - name: Package for release
-        run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            "build/BL4CK Installer.app" \
-            "build/BL4CK Installer.app.zip"
-          ls -lh build/
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: breeze-installer-app
-          path: build/BL4CK Installer.app.zip
-          retention-days: 30
-
-      - name: Cleanup keychain
-        if: always()
-        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-
   build-viewer:
     name: Build Viewer
     strategy:
@@ -1030,40 +591,10 @@ jobs:
             target: x86_64-pc-windows-msvc
             asset_name: breeze-viewer-windows.msi
             asset_glob: 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi'
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            asset_name: breeze-viewer-linux.AppImage
-            asset_glob: 'src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage'
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Install Linux dependencies
-        if: contains(matrix.platform, 'ubuntu')
-        run: |
-          # Harden against a degraded Azure apt mirror (same flake as #1605):
-          # rewrite to the canonical mirror and retry update+install with
-          # backoff so a transient hiccup doesn't fail the release build.
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
-            /etc/apt/sources.list \
-            /etc/apt/sources.list.d/*.list \
-            /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-          install_deps() {
-            sudo apt-get update && \
-            sudo apt-get install -y --no-install-recommends \
-              libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-          }
-          for attempt in 1 2 3; do
-            if install_deps; then
-              echo "Linux dependencies installed (attempt ${attempt})."
-              exit 0
-            fi
-            echo "::warning::apt install failed (attempt ${attempt}/3); retrying in $((attempt * 15))s"
-            sleep $((attempt * 15))
-          done
-          echo "::error::Failed to install Linux dependencies after 3 attempts."
-          exit 1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -1126,12 +657,6 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm tauri build --target ${{ matrix.target }}
 
       - name: Find and rename artifact
@@ -1148,38 +673,11 @@ jobs:
           cp "$asset" "${{ matrix.asset_name }}"
           echo "path=${{ matrix.asset_name }}" >> "$GITHUB_OUTPUT"
 
-      - name: Package updater bundle (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        shell: bash
-        working-directory: apps/viewer
-        run: |
-          bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle/appimage"
-          appimage=$(ls "$bundle_dir"/*.AppImage 2>/dev/null | grep -v '\.sig$' | grep -v '\.tar\.gz' | head -1)
-          sig_file=$(ls "$bundle_dir"/*.AppImage.sig 2>/dev/null | head -1)
-          if [ -z "$appimage" ] || [ -z "$sig_file" ]; then
-            echo "ERROR: Updater bundle not found in $bundle_dir"
-            ls -la "$bundle_dir" || true
-            ls -R src-tauri/target/*/release/bundle/ || true
-            exit 1
-          fi
-          cp "$appimage" breeze-viewer-linux.AppImage
-          cp "$sig_file" breeze-viewer-linux.AppImage.sig
-
       - name: Upload Viewer artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset_name }}
           path: apps/viewer/${{ matrix.asset_name }}
-          retention-days: 30
-
-      - name: Upload Viewer Linux updater bundle
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v7
-        with:
-          name: breeze-viewer-linux-updater
-          path: |
-            apps/viewer/breeze-viewer-linux.AppImage
-            apps/viewer/breeze-viewer-linux.AppImage.sig
           retention-days: 30
 
   build-helper:
@@ -1192,40 +690,10 @@ jobs:
             target: x86_64-pc-windows-msvc
             asset_name: bl4ck-helper-windows.msi
             asset_glob: 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi'
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            asset_name: bl4ck-helper-linux.AppImage
-            asset_glob: 'src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage'
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Install Linux dependencies
-        if: contains(matrix.platform, 'ubuntu')
-        run: |
-          # Harden against a degraded Azure apt mirror (same flake as #1605):
-          # rewrite to the canonical mirror and retry update+install with
-          # backoff so a transient hiccup doesn't fail the release build.
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
-            /etc/apt/sources.list \
-            /etc/apt/sources.list.d/*.list \
-            /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-          install_deps() {
-            sudo apt-get update && \
-            sudo apt-get install -y --no-install-recommends \
-              libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-          }
-          for attempt in 1 2 3; do
-            if install_deps; then
-              echo "Linux dependencies installed (attempt ${attempt})."
-              exit 0
-            fi
-            echo "::warning::apt install failed (attempt ${attempt}/3); retrying in $((attempt * 15))s"
-            sleep $((attempt * 15))
-          done
-          echo "::error::Failed to install Linux dependencies after 3 attempts."
-          exit 1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -1277,12 +745,6 @@ jobs:
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ''
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm tauri build --target ${{ matrix.target }}
 
       - name: Find and rename artifact
@@ -1304,234 +766,6 @@ jobs:
         with:
           name: ${{ matrix.asset_name }}
           path: apps/helper/${{ matrix.asset_name }}
-          retention-days: 30
-
-  build-viewer-macos:
-    name: Build Viewer (macOS)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: apps/viewer/src-tauri -> target
-
-      - name: Add macOS universal target
-        run: |
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Get version from tag
-        id: version
-        shell: bash
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Inject version into viewer config
-        shell: bash
-        working-directory: apps/viewer
-        env:
-          BUILD_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          # Strip prerelease suffix for WiX/Tauri/Cargo compatibility (e.g. 0.11.3-rc.1 → 0.11.3)
-          MSI_VERSION="${BUILD_VERSION%%-*}"
-          sed -i.bak 's/"version": "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"/"version": "'"$MSI_VERSION"'"/' src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak
-          sed -i.bak 's/^version = "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"/version = "'"$MSI_VERSION"'"/' src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak
-          sed -i.bak 's/"version": "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"/"version": "'"$MSI_VERSION"'"/' package.json && rm package.json.bak
-          echo "Injected version $MSI_VERSION into viewer config files (from $BUILD_VERSION)"
-
-      - name: Validate signing key
-        shell: bash
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is not set — update signing will fail"
-            exit 1
-          fi
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-
-      - name: Build Tauri app
-        working-directory: apps/viewer
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm tauri build --target universal-apple-darwin
-
-      - name: Find and rename artifact
-        shell: bash
-        working-directory: apps/viewer
-        run: |
-          asset=$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg 2>/dev/null | head -1)
-          if [ -z "$asset" ]; then
-            echo "ERROR: No DMG found"
-            ls -R src-tauri/target/*/release/bundle/ || true
-            exit 1
-          fi
-          cp "$asset" breeze-viewer-macos.dmg
-
-      - name: Notarize and staple DMG
-        shell: bash
-        working-directory: apps/viewer
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          "$GITHUB_WORKSPACE/scripts/release/notarize-submit.sh" breeze-viewer-macos.dmg
-          xcrun stapler staple breeze-viewer-macos.dmg
-          xcrun stapler validate breeze-viewer-macos.dmg
-
-      - name: Package updater bundle (macOS)
-        shell: bash
-        working-directory: apps/viewer
-        run: |
-          bundle_dir="src-tauri/target/universal-apple-darwin/release/bundle/macos"
-          tar_gz=$(ls "$bundle_dir"/*.app.tar.gz 2>/dev/null | head -1)
-          sig_file=$(ls "$bundle_dir"/*.app.tar.gz.sig 2>/dev/null | head -1)
-          if [ -z "$tar_gz" ] || [ -z "$sig_file" ]; then
-            echo "ERROR: Updater bundle not found in $bundle_dir"
-            ls -la "$bundle_dir" || true
-            ls -R src-tauri/target/*/release/bundle/ || true
-            exit 1
-          fi
-          cp "$tar_gz" breeze-viewer-macos.app.tar.gz
-          cp "$sig_file" breeze-viewer-macos.app.tar.gz.sig
-
-      - name: Upload Viewer macOS artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: breeze-viewer-macos.dmg
-          path: apps/viewer/breeze-viewer-macos.dmg
-          retention-days: 30
-
-      - name: Upload Viewer macOS updater bundle
-        uses: actions/upload-artifact@v7
-        with:
-          name: breeze-viewer-macos-updater
-          path: |
-            apps/viewer/breeze-viewer-macos.app.tar.gz
-            apps/viewer/breeze-viewer-macos.app.tar.gz.sig
-          retention-days: 30
-
-  build-helper-macos:
-    name: Build Helper (macOS)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: apps/helper/src-tauri -> target
-
-      - name: Add macOS universal target
-        run: |
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Get version from tag
-        id: version
-        shell: bash
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Inject version into helper config
-        shell: bash
-        working-directory: apps/helper
-        env:
-          BUILD_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          # Strip prerelease suffix for WiX/Tauri/Cargo compatibility (e.g. 0.11.3-rc.1 → 0.11.3)
-          MSI_VERSION="${BUILD_VERSION%%-*}"
-          sed -i.bak 's/"version": "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"/"version": "'"$MSI_VERSION"'"/' src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak
-          sed -i.bak 's/^version = "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"/version = "'"$MSI_VERSION"'"/' src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak
-          sed -i.bak 's/"version": "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"/"version": "'"$MSI_VERSION"'"/' package.json && rm package.json.bak
-          echo "Injected version $MSI_VERSION into helper config files (from $BUILD_VERSION)"
-
-      - name: Build Tauri app
-        working-directory: apps/helper
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ''
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm tauri build --target universal-apple-darwin
-
-      - name: Find and rename artifact
-        shell: bash
-        working-directory: apps/helper
-        run: |
-          asset=$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg 2>/dev/null | head -1)
-          if [ -z "$asset" ]; then
-            echo "ERROR: No DMG found"
-            ls -R src-tauri/target/*/release/bundle/ || true
-            exit 1
-          fi
-          cp "$asset" bl4ck-helper-macos.dmg
-
-      - name: Notarize and staple DMG
-        shell: bash
-        working-directory: apps/helper
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          "$GITHUB_WORKSPACE/scripts/release/notarize-submit.sh" bl4ck-helper-macos.dmg
-          xcrun stapler staple bl4ck-helper-macos.dmg
-          xcrun stapler validate bl4ck-helper-macos.dmg
-
-      - name: Upload Helper macOS artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: bl4ck-helper-macos.dmg
-          path: apps/helper/bl4ck-helper-macos.dmg
           retention-days: 30
 
   sign-windows-tauri:
@@ -1729,11 +963,10 @@ jobs:
   merge-viewer-update-manifest:
     name: Generate Viewer Update Manifest
     runs-on: ubuntu-latest
-    needs: [build-viewer, build-viewer-macos, package-windows-updater]
+    needs: [build-viewer, package-windows-updater]
     if: >-
       !cancelled()
       && (needs.build-viewer.result == 'success' || needs.build-viewer.result == 'skipped')
-      && (needs.build-viewer-macos.result == 'success' || needs.build-viewer-macos.result == 'skipped')
       && (needs.package-windows-updater.result == 'success' || needs.package-windows-updater.result == 'skipped')
     steps:
       - name: Download viewer updater bundles
@@ -1763,33 +996,6 @@ jobs:
           ls -la updater-bundles/ || true
 
           platforms='{}'
-
-          # macOS — Tauri builds a universal binary, so the same bundle
-          # satisfies both x86_64 and aarch64 clients.
-          mac_sig="updater-bundles/breeze-viewer-macos.app.tar.gz.sig"
-          if [ -f "$mac_sig" ]; then
-            sig_content=$(cat "$mac_sig")
-            url="${release_base}/breeze-viewer-macos.app.tar.gz"
-            platforms=$(jq -n \
-              --arg sig "$sig_content" \
-              --arg url "$url" \
-              '{"darwin-x86_64": {signature: $sig, url: $url}, "darwin-aarch64": {signature: $sig, url: $url}}')
-          else
-            echo "::warning::macOS updater signature not found — macOS auto-update disabled for this release"
-          fi
-
-          # Linux AppImage
-          linux_sig="updater-bundles/breeze-viewer-linux.AppImage.sig"
-          if [ -f "$linux_sig" ]; then
-            sig_content=$(cat "$linux_sig")
-            url="${release_base}/breeze-viewer-linux.AppImage"
-            platforms=$(echo "$platforms" | jq \
-              --arg sig "$sig_content" \
-              --arg url "$url" \
-              '. + {"linux-x86_64": {signature: $sig, url: $url}}')
-          else
-            echo "::warning::Linux updater signature not found — Linux auto-update disabled for this release"
-          fi
 
           # Windows MSI updater bundle
           win_sig="updater-bundles/breeze-viewer-windows.msi.zip.sig"
@@ -1832,7 +1038,7 @@ jobs:
   release-integrity-gate:
     name: Release Integrity Gate
     runs-on: ubuntu-latest
-    needs: [build-windows-msi, build-macos-agent, build-macos-installer-app, sign-windows-tauri, build-viewer-macos, build-helper-macos, package-windows-updater, merge-viewer-update-manifest]
+    needs: [build-windows-msi, sign-windows-tauri, package-windows-updater, merge-viewer-update-manifest]
     if: ${{ always() && !cancelled() }}
     steps:
       - name: Fail closed when release signing was skipped
@@ -1842,11 +1048,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           SKIP_RELEASE: ${{ inputs.skip_release || false }}
           BUILD_WINDOWS_MSI_RESULT: ${{ needs.build-windows-msi.result }}
-          BUILD_MACOS_AGENT_RESULT: ${{ needs.build-macos-agent.result }}
-          BUILD_MACOS_INSTALLER_APP_RESULT: ${{ needs.build-macos-installer-app.result }}
           SIGN_WINDOWS_TAURI_RESULT: ${{ needs.sign-windows-tauri.result }}
-          BUILD_VIEWER_MACOS_RESULT: ${{ needs.build-viewer-macos.result }}
-          BUILD_HELPER_MACOS_RESULT: ${{ needs.build-helper-macos.result }}
           PACKAGE_WINDOWS_UPDATER_RESULT: ${{ needs.package-windows-updater.result }}
           MERGE_VIEWER_UPDATE_MANIFEST_RESULT: ${{ needs.merge-viewer-update-manifest.result }}
         run: |
@@ -1866,11 +1068,7 @@ jobs:
           }
 
           require_success "build-windows-msi" "$BUILD_WINDOWS_MSI_RESULT"
-          require_success "build-macos-agent" "$BUILD_MACOS_AGENT_RESULT"
-          require_success "build-macos-installer-app" "$BUILD_MACOS_INSTALLER_APP_RESULT"
           require_success "sign-windows-tauri" "$SIGN_WINDOWS_TAURI_RESULT"
-          require_success "build-viewer-macos" "$BUILD_VIEWER_MACOS_RESULT"
-          require_success "build-helper-macos" "$BUILD_HELPER_MACOS_RESULT"
           require_success "package-windows-updater" "$PACKAGE_WINDOWS_UPDATER_RESULT"
           require_success "merge-viewer-update-manifest" "$MERGE_VIEWER_UPDATE_MANIFEST_RESULT"
 
@@ -1882,7 +1080,7 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build-api, build-web, build-agent, build-windows-msi, build-macos-agent, build-macos-installer-app, sign-windows-tauri, build-viewer, build-helper, build-viewer-macos, build-helper-macos, merge-viewer-update-manifest, package-windows-updater, release-integrity-gate]
+    needs: [build-api, build-web, build-agent, build-windows-msi, sign-windows-tauri, build-viewer, build-helper, merge-viewer-update-manifest, package-windows-updater, release-integrity-gate]
     if: >-
       !cancelled()
       && needs.build-api.result == 'success'
@@ -1890,14 +1088,10 @@ jobs:
       && needs.build-agent.result == 'success'
       && needs.release-integrity-gate.result == 'success'
       && (needs.build-windows-msi.result == 'success' || needs.build-windows-msi.result == 'skipped')
-      && (needs.build-macos-agent.result == 'success' || needs.build-macos-agent.result == 'skipped')
-      && (needs.build-macos-installer-app.result == 'success' || needs.build-macos-installer-app.result == 'skipped')
       && (needs.sign-windows-tauri.result == 'success' || needs.sign-windows-tauri.result == 'skipped')
       && (needs.package-windows-updater.result == 'success' || needs.package-windows-updater.result == 'skipped')
       && (needs.build-viewer.result == 'success' || needs.build-viewer.result == 'skipped')
       && (needs.build-helper.result == 'success' || needs.build-helper.result == 'skipped')
-      && (needs.build-viewer-macos.result == 'success' || needs.build-viewer-macos.result == 'skipped')
-      && (needs.build-helper-macos.result == 'success' || needs.build-helper-macos.result == 'skipped')
       && (needs.merge-viewer-update-manifest.result == 'success' || needs.merge-viewer-update-manifest.result == 'skipped')
       && !(github.event_name == 'workflow_dispatch' && inputs.skip_release)
     permissions:
@@ -1910,7 +1104,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts
-          pattern: '{api-dist,web-dist,bl4ck-agent-*,bl4ck-backup-*,bl4ck-desktop-helper-*,bl4ck-user-helper-*,bl4ck-watchdog-*,breeze-viewer-*,bl4ck-helper-*,breeze-installer-app,viewer-latest-json}'
+          pattern: '{api-dist,web-dist,bl4ck-agent-*,bl4ck-backup-*,bl4ck-user-helper-*,bl4ck-watchdog-*,breeze-viewer-*,bl4ck-helper-*,viewer-latest-json}'
           merge-multiple: false
 
       - name: Prepare release assets
@@ -1926,13 +1120,6 @@ jobs:
 
           # Copy backup binaries
           for dir in artifacts/bl4ck-backup-*; do
-            if [ -d "$dir" ] && ls "$dir"/* >/dev/null 2>&1; then
-              cp "$dir"/* release-assets/
-            fi
-          done
-
-          # Copy desktop-helper binaries
-          for dir in artifacts/bl4ck-desktop-helper-*; do
             if [ -d "$dir" ] && ls "$dir"/* >/dev/null 2>&1; then
               cp "$dir"/* release-assets/
             fi
@@ -1972,11 +1159,6 @@ jobs:
             fi
           done
 
-          # Copy macOS installer app
-          if [ -d "artifacts/breeze-installer-app" ] && ls "artifacts/breeze-installer-app/"* >/dev/null 2>&1; then
-            cp "artifacts/breeze-installer-app/"* release-assets/
-          fi
-
           # Create archives for API and Web
           if [ -d "artifacts/api-dist" ]; then
             tar -czvf release-assets/breeze-api.tar.gz -C artifacts/api-dist .
@@ -1990,7 +1172,6 @@ jobs:
           import hashlib
           import json
           import os
-          import re
           from pathlib import Path
 
           release_dir = Path("release-assets")
@@ -2001,25 +1182,9 @@ jobs:
               "release-artifact-manifest.json.minisig",
           }
 
-          # Raw Mach-O agent binaries get Developer ID + notarization but
-          # ship to users only inside the .pkg. spctl --assess --type execute
-          # is invalid against raw Mach-O, so the trust label is correct
-          # even though the end-user verifier differs (.pkg gatekeeper check).
-          DARWIN_BINARY_RE = re.compile(
-              r"^breeze-(agent|backup|desktop-helper|watchdog)-darwin-(amd64|arm64)$"
-          )
-
           def platform_trust(name):
               if name.endswith(".msi") or name.endswith(".exe"):
                   return "windows-authenticode-required"
-              if (
-                  name.endswith(".pkg")
-                  or name.endswith(".app.zip")
-                  or name.endswith(".dmg")
-              ):
-                  return "macos-developer-id-notarization-required"
-              if DARWIN_BINARY_RE.match(name):
-                  return "macos-developer-id-notarization-required"
               return "release-workflow-produced"
 
           assets = []
@@ -2224,17 +1389,14 @@ jobs:
   build-binaries-image:
     name: Build & Push Binaries Init Image
     runs-on: ubuntu-latest
-    needs: [build-agent, build-windows-msi, build-macos-agent, sign-windows-tauri, build-viewer, build-helper, build-viewer-macos, build-helper-macos, create-release]
+    needs: [build-agent, build-windows-msi, sign-windows-tauri, build-viewer, build-helper, create-release]
     if: >-
       !cancelled()
       && needs.build-agent.result == 'success'
       && (needs.build-windows-msi.result == 'success' || needs.build-windows-msi.result == 'skipped')
-      && (needs.build-macos-agent.result == 'success' || needs.build-macos-agent.result == 'skipped')
       && (needs.sign-windows-tauri.result == 'success' || needs.sign-windows-tauri.result == 'skipped')
       && needs.build-viewer.result == 'success'
       && needs.build-helper.result == 'success'
-      && (needs.build-viewer-macos.result == 'success' || needs.build-viewer-macos.result == 'skipped')
-      && (needs.build-helper-macos.result == 'success' || needs.build-helper-macos.result == 'skipped')
       && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     permissions:
       contents: read

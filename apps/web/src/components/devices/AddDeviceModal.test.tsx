@@ -132,26 +132,6 @@ describe('AddDeviceModal', () => {
     expect(screen.queryByText('Add New Device')).toBeNull();
   });
 
-  it('links to one public uninstall script and shows platform-specific verify commands', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      new Response('abc123  uninstall.sh\n', {
-        headers: { 'content-type': 'text/plain' },
-      }),
-    ));
-
-    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
-
-    const link = screen.getByText('Linux/macOS').closest('a');
-    expect(link?.getAttribute('href')).toBe('/api/v1/agents/uninstall.sh');
-    expect(link?.getAttribute('download')).toBe('uninstall.sh');
-
-    await waitFor(() => {
-      expect(screen.getByText(/SHA256: abc123/)).toBeDefined();
-    });
-    expect(screen.getByText('shasum -a 256 uninstall.sh')).toBeDefined();
-    expect(screen.getByText('sha256sum uninstall.sh')).toBeDefined();
-  });
-
   it('shows only the Windows installer option (Windows-only build)', () => {
     render(<AddDeviceModal isOpen onClose={vi.fn()} />);
 
@@ -381,31 +361,6 @@ describe('AddDeviceModal', () => {
     await waitFor(() => {
       expect(screen.getByText('test-token-xyz')).toBeDefined();
     });
-  });
-
-  it('groups the shared install.sh command under one Linux/macOS option', async () => {
-    fetchWithAuthMock.mockResolvedValueOnce(
-      makeJsonResponse({ token: 'test-token-xyz', enrollmentSecret: 'secret-abc' })
-    );
-
-    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
-
-    fireEvent.click(screen.getByText('CLI Commands'));
-
-    await waitFor(() => {
-      expect(screen.getByText('test-token-xyz')).toBeDefined();
-    });
-
-    expect(screen.getByRole('button', { name: 'Windows' })).toBeDefined();
-    const unixButton = screen.getByRole('button', { name: 'Linux/macOS' });
-    expect(unixButton).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'macOS' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Linux' })).toBeNull();
-
-    fireEvent.click(unixButton);
-
-    expect(screen.getByText(/\/api\/v1\/agents\/install\.sh/)).toBeDefined();
-    expect(screen.getByText('Run in Terminal')).toBeDefined();
   });
 
   it('requests a multi-use token after the operator raises the device count (#1108)', async () => {

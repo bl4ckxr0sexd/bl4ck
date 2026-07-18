@@ -11,36 +11,22 @@ export interface InstallCommandOptions {
 
 export interface InstallCommands {
   windows: string;
-  macos: string;
-  linux: string;
 }
 
 /**
- * Builds the copy-paste agent install commands shown in the Add Device modal
+ * Builds the copy-paste agent install command shown in the Add Device modal
  * and the setup wizard.
  *
- * macOS/Linux route through the server-generated install.sh, which pre-flights
- * connectivity to the server (distinguishing "unreachable" from "intercepted
- * by a captive portal/router"), verifies the download, and surfaces enrollment
- * failures — instead of letting `installer`/`bash` die with a cryptic OS error
- * (see PR #1271 for the original field report). The one-liner itself only
- * trusts the fetched file after a shebang check, so an intercepting device
- * serving HTML is reported as a connectivity problem rather than executed.
+ * The MZ-magic check guards the Windows download: a captive portal's 200 HTML
+ * saved as bl4ck-agent.exe would otherwise stop the chain with PowerShell's
+ * raw "not a valid application" exception, so the file is only trusted after
+ * verifying its PE magic bytes — an intercepting device serving HTML is
+ * reported as a connectivity problem rather than executed.
  */
 export function buildInstallCommands(opts: InstallCommandOptions): InstallCommands {
   const apiUrl = opts.apiUrl.replace(/\/+$/, '');
   const ghBase = opts.ghBase.replace(/\/+$/, '');
   const { token, enrollmentSecret } = opts;
-
-  // The connectivity message is scoped to the fetch + shebang check only —
-  // once install.sh runs it reports its own failures precisely, and appending
-  // a "could not reach" hint after e.g. an enrollment error would mislead.
-  const unixSecretFlag = enrollmentSecret ? ` --enrollment-secret "${enrollmentSecret}"` : '';
-  const unixCmd =
-    `f="$(mktemp)" && ` +
-    `{ curl -fsSL --connect-timeout 10 -o "$f" "${apiUrl}/api/v1/agents/install.sh" && head -n1 "$f" | grep -q '^#!' || ` +
-    `{ echo "[ERROR] Could not fetch the BL4CK installer from ${apiUrl} — verify this machine has network access to your BL4CK server." >&2; false; }; } && ` +
-    `sudo bash "$f" --server "${apiUrl}" --token "${token}"${unixSecretFlag}`;
 
   // The MZ-magic check is the Windows analog of the unix shebang check: a
   // captive portal's 200 HTML saved as bl4ck-agent.exe would otherwise stop
@@ -62,5 +48,5 @@ export function buildInstallCommands(opts: InstallCommandOptions): InstallComman
     `.\\bl4ck-agent.exe enroll "${token}" --server "${apiUrl}"${winSecretFlag}; ${winThrow('enrollment')}; ` +
     `.\\bl4ck-agent.exe service start; ${winThrow('service start')}`;
 
-  return { windows, macos: unixCmd, linux: unixCmd };
+  return { windows };
 }

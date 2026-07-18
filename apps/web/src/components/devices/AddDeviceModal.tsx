@@ -123,24 +123,6 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
   const [tokenMaxUsage, setTokenMaxUsage] = useState<number | null>(null);
   const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null);
   const [selectedOS, setSelectedOS] = useState<'windows' | 'macos' | 'linux'>(userOS);
-  const [sha256s, setSha256s] = useState<Record<string, string>>({});
-
-  // Fetch published SHA256SUMS so users can verify uninstall scripts before running
-  useEffect(() => {
-    fetch('/scripts/SHA256SUMS')
-      .then((r) => r.text())
-      .then((t) => {
-        const map: Record<string, string> = {};
-        for (const line of t.trim().split('\n')) {
-          const [hash, name] = line.split(/\s+/, 2);
-          if (hash && name) map[name] = hash;
-        }
-        setSha256s(map);
-      })
-      .catch((err) => {
-        console.warn('[AddDeviceModal] Failed to load SHA256SUMS:', err);
-      });
-  }, []);
 
   // Initialize site selection
   useEffect(() => {
@@ -521,7 +503,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                             : 'text-muted-foreground hover:bg-muted hover:text-foreground border-border'
                         }`}
                       >
-                        {p === 'windows' ? 'Windows (.msi)' : 'macOS (.zip)'}
+                        Windows (.msi)
                       </button>
                     ))}
                   </div>
@@ -834,11 +816,10 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                 token: onboardingToken || '<TOKEN>',
                 enrollmentSecret: enrollmentSecret || undefined,
               });
-              const commandPlatform = selectedOS === 'windows' ? 'windows' : 'linux';
-              const command = commands[commandPlatform];
+              const commandPlatform = 'windows' as const;
+              const command = commands.windows;
               const commandOptions = [
                 { platform: 'windows', label: 'Windows' },
-                { platform: 'linux', label: 'Linux/macOS' },
               ] as const;
 
               return (
@@ -902,27 +883,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
 
         {/* Footer */}
         <div className="mt-6 flex items-start justify-between gap-4">
-          <div className="text-xs text-muted-foreground">
-            <p>
-              Need to uninstall?{' '}
-              <a
-                href="/api/v1/agents/uninstall.sh"
-                download="uninstall.sh"
-                className="underline hover:text-foreground"
-              >
-                Linux/macOS
-              </a>
-            </p>
-            {sha256s['uninstall.sh'] && (
-              <p className="mt-1 font-mono text-[10px] leading-tight">
-                SHA256: {sha256s['uninstall.sh']}
-                <br />
-                macOS: <code>shasum -a 256 uninstall.sh</code>
-                <br />
-                Linux: <code>sha256sum uninstall.sh</code>
-              </p>
-            )}
-          </div>
+          <div />
           <button
             type="button"
             onClick={onClose}
