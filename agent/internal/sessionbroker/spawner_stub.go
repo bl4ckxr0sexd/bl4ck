@@ -10,7 +10,7 @@ import "fmt"
 // child processes directly.
 //
 // BinaryPath records which executable the spawner actually launched so
-// callers can distinguish the GUI-subsystem sibling (breeze-user-helper.exe)
+// callers can distinguish the GUI-subsystem sibling (bl4ck-user-helper.exe)
 // from the console-subsystem agent fallback in their telemetry. Always
 // empty on non-Windows builds since the stub never spawns.
 type SpawnedHelper struct {

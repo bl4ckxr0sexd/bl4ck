@@ -14,11 +14,11 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-const windowsServiceName = "BreezeAgent"
+const windowsServiceName = "Bl4ckAgent"
 
 var serviceCmd = &cobra.Command{
 	Use:   "service",
-	Short: "Manage the Breeze Agent Windows service",
+	Short: "Manage the BL4CK Agent Windows service",
 }
 
 // reconcileServiceUnitIfNeeded is a no-op on Windows.
@@ -43,7 +43,7 @@ var serviceInstallCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to determine executable path: %w", err)
 		}
-		serviceExePath, copied, err := serviceinstall.InstallProtectedBinary(exePath, "breeze-agent.exe")
+		serviceExePath, copied, err := serviceinstall.InstallProtectedBinary(exePath, "bl4ck-agent.exe")
 		if err != nil {
 			return fmt.Errorf("failed to install service binary in protected Program Files location: %w", err)
 		}
@@ -58,8 +58,8 @@ var serviceInstallCmd = &cobra.Command{
 		defer m.Disconnect()
 
 		s, err := m.CreateService(windowsServiceName, serviceExePath, mgr.Config{
-			DisplayName:  "Breeze RMM Agent",
-			Description:  "Breeze Remote Monitoring and Management Agent",
+			DisplayName:  "BL4CK RMM Agent",
+			Description:  "BL4CK Remote Monitoring and Management Agent",
 			StartType:    mgr.StartAutomatic,
 			ErrorControl: mgr.ErrorNormal,
 		}, "run")
@@ -92,9 +92,9 @@ var serviceInstallCmd = &cobra.Command{
 					"Warning: watchdog bootstrap failed: %v\n"+
 						"The agent service is installed and running. The watchdog is NOT installed.\n"+
 						"To retry, choose one of:\n"+
-						"  1. Re-run `breeze-agent.exe service install` (will retry the download).\n"+
-						"  2. Download %s manually, place it next to breeze-agent.exe,\n"+
-						"     then run `breeze-watchdog.exe service install`.\n"+
+						"  1. Re-run `bl4ck-agent.exe service install` (will retry the download).\n"+
+						"  2. Download %s manually, place it next to bl4ck-agent.exe,\n"+
+						"     then run `bl4ck-watchdog.exe service install`.\n"+
 						"  3. To skip the watchdog entirely, use `--no-watchdog`.\n",
 					err, watchdogDownloadURL(version, runtime.GOOS, runtime.GOARCH))
 			}

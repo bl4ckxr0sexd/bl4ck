@@ -1,4 +1,4 @@
-// agent/installer/macos-app/Sources/BreezeInstaller/Views/LoadingView.swift
+// agent/installer/macos-app/Sources/Bl4ckInstaller/Views/LoadingView.swift
 import SwiftUI
 
 struct LoadingView: View {

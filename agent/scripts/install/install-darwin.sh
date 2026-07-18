@@ -1,18 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
-BINARY="/usr/local/bin/breeze-agent"
-PLIST_SRC="$(dirname "$0")/../../service/launchd/com.breeze.agent.plist"
-PLIST_DST="/Library/LaunchDaemons/com.breeze.agent.plist"
-LOG_DIR="/Library/Logs/Breeze"
-CONFIG_DIR="/Library/Application Support/Breeze"
+BINARY="/usr/local/bin/bl4ck-agent"
+PLIST_SRC="$(dirname "$0")/../../service/launchd/com.bl4ck.agent.plist"
+PLIST_DST="/Library/LaunchDaemons/com.bl4ck.agent.plist"
+LOG_DIR="/Library/Logs/BL4CK"
+CONFIG_DIR="/Library/Application Support/BL4CK"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Error: must run as root (sudo $0)" >&2
     exit 1
 fi
 
-echo "Installing Breeze Agent..."
+echo "Installing BL4CK Agent..."
 
 ensure_breeze_group() {
     if dscl . -read /Groups/breeze &>/dev/null; then
@@ -42,7 +42,7 @@ ensure_breeze_group() {
 # Stop existing service before replacing binary (safe for upgrades).
 if [ -f "$PLIST_DST" ]; then
     if launchctl unload "$PLIST_DST" 2>&1; then
-        echo "Stopped existing Breeze Agent service."
+        echo "Stopped existing BL4CK Agent service."
     else
         echo "Warning: failed to stop existing service cleanly — continuing anyway" >&2
     fi
@@ -54,35 +54,35 @@ chmod 700 "$CONFIG_DIR"
 chmod 755 "$LOG_DIR"
 
 # Copy binary
-if [ -f bin/breeze-agent ]; then
-    cp bin/breeze-agent "$BINARY"
-elif [ -f breeze-agent ]; then
-    cp breeze-agent "$BINARY"
+if [ -f bin/bl4ck-agent ]; then
+    cp bin/bl4ck-agent "$BINARY"
+elif [ -f bl4ck-agent ]; then
+    cp bl4ck-agent "$BINARY"
 else
-    echo "Error: breeze-agent binary not found. Run 'make build' first." >&2
+    echo "Error: bl4ck-agent binary not found. Run 'make build' first." >&2
     exit 1
 fi
 chmod 755 "$BINARY"
 
 # Install watchdog
-if [ -f "bin/breeze-watchdog" ]; then
+if [ -f "bin/bl4ck-watchdog" ]; then
     echo "Installing watchdog..."
-    cp bin/breeze-watchdog /usr/local/bin/breeze-watchdog
-    chmod 755 /usr/local/bin/breeze-watchdog
-elif [ -f "breeze-watchdog" ]; then
+    cp bin/bl4ck-watchdog /usr/local/bin/bl4ck-watchdog
+    chmod 755 /usr/local/bin/bl4ck-watchdog
+elif [ -f "bl4ck-watchdog" ]; then
     echo "Installing watchdog..."
-    cp breeze-watchdog /usr/local/bin/breeze-watchdog
-    chmod 755 /usr/local/bin/breeze-watchdog
+    cp bl4ck-watchdog /usr/local/bin/bl4ck-watchdog
+    chmod 755 /usr/local/bin/bl4ck-watchdog
 fi
 
 # Register watchdog service
-if [ -f "/usr/local/bin/breeze-watchdog" ]; then
-    if [ ! -f "/Library/LaunchDaemons/com.breeze.watchdog.plist" ]; then
+if [ -f "/usr/local/bin/bl4ck-watchdog" ]; then
+    if [ ! -f "/Library/LaunchDaemons/com.bl4ck.watchdog.plist" ]; then
         echo "Registering watchdog service..."
-        /usr/local/bin/breeze-watchdog service install
+        /usr/local/bin/bl4ck-watchdog service install
     else
         echo "Restarting watchdog service..."
-        launchctl kickstart -k system/com.breeze.watchdog 2>/dev/null || true
+        launchctl kickstart -k system/com.bl4ck.watchdog 2>/dev/null || true
     fi
 fi
 
@@ -92,7 +92,7 @@ if [ -f "$PLIST_SRC" ]; then
 else
     # Fallback: find plist relative to script location
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    PLIST_ALT="$SCRIPT_DIR/../../service/launchd/com.breeze.agent.plist"
+    PLIST_ALT="$SCRIPT_DIR/../../service/launchd/com.bl4ck.agent.plist"
     if [ -f "$PLIST_ALT" ]; then
         cp "$PLIST_ALT" "$PLIST_DST"
     else
@@ -104,8 +104,8 @@ chown root:wheel "$PLIST_DST"
 chmod 644 "$PLIST_DST"
 
 # Install user helper LaunchAgent (runs per-user in GUI sessions)
-USER_PLIST_SRC="$(dirname "$0")/../../service/launchd/com.breeze.agent-user.plist"
-USER_PLIST_DST="/Library/LaunchAgents/com.breeze.agent-user.plist"
+USER_PLIST_SRC="$(dirname "$0")/../../service/launchd/com.bl4ck.agent-user.plist"
+USER_PLIST_DST="/Library/LaunchAgents/com.bl4ck.agent-user.plist"
 
 if [ -f "$USER_PLIST_SRC" ]; then
     cp "$USER_PLIST_SRC" "$USER_PLIST_DST"
@@ -114,7 +114,7 @@ if [ -f "$USER_PLIST_SRC" ]; then
     echo "User helper LaunchAgent installed."
 else
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    USER_PLIST_ALT="$SCRIPT_DIR/../../service/launchd/com.breeze.agent-user.plist"
+    USER_PLIST_ALT="$SCRIPT_DIR/../../service/launchd/com.bl4ck.agent-user.plist"
     if [ -f "$USER_PLIST_ALT" ]; then
         cp "$USER_PLIST_ALT" "$USER_PLIST_DST"
         chown root:wheel "$USER_PLIST_DST"
@@ -133,7 +133,7 @@ mkdir -p "$CONFIG_DIR"
 chmod 770 "$CONFIG_DIR"
 chown root:breeze "$CONFIG_DIR" 2>/dev/null || true
 
-echo "Breeze Agent installed."
+echo "BL4CK Agent installed."
 echo ""
 
 # If the agent is already enrolled, skip the enrollment step in Next Steps.
@@ -145,7 +145,7 @@ if [ -f "$CONFIG_DIR/agent.yaml" ] && grep -q 'agent_id:' "$CONFIG_DIR/agent.yam
     echo "  4. Add users to breeze group:  sudo dscl . -append /Groups/breeze GroupMembership <username>"
 else
     echo "Next steps:"
-    echo "  1. Enroll:  sudo breeze-agent enroll <enrollment-key> --server https://your-server [--enrollment-secret <secret>]"
+    echo "  1. Enroll:  sudo bl4ck-agent enroll <enrollment-key> --server https://your-server [--enrollment-secret <secret>]"
     echo "  2. Start:   sudo launchctl load $PLIST_DST"
     echo "  3. Status:  sudo launchctl list | grep breeze"
     echo "  4. Logs:    tail -f $LOG_DIR/agent.log"

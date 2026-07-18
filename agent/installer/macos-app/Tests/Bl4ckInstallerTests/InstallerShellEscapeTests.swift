@@ -1,5 +1,5 @@
 import XCTest
-@testable import BreezeInstaller
+@testable import Bl4ckInstaller
 
 final class InstallerShellEscapeTests: XCTestCase {
     func testSimpleString() {

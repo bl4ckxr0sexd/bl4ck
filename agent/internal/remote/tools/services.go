@@ -131,7 +131,7 @@ func StopService(payload map[string]any) CommandResult {
 
 	if isAgentService(name) {
 		return NewErrorResult(
-			fmt.Errorf("cannot stop the Breeze agent service — the device will go offline and become unreachable"),
+			fmt.Errorf("cannot stop the BL4CK agent service — the device will go offline and become unreachable"),
 			time.Since(startTime).Milliseconds(),
 		)
 	}

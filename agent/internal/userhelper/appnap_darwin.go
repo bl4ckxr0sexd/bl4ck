@@ -41,7 +41,7 @@ static int beginActivityAssertion(void) {
 	}
 	activityToken = [[NSProcessInfo processInfo]
 		beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
-		reason:@"Breeze desktop helper IPC keepalive"];
+		reason:@"BL4CK desktop helper IPC keepalive"];
 	return activityToken != nil ? 1 : 0;
 }
 */

@@ -496,7 +496,7 @@ func TestNamedPipeSessionIDCollisionRejected(t *testing.T) {
 }
 
 // TestAssistRoleRejectsSystemSID verifies the step-10 privilege-escalation gate
-// for the Breeze Assist helper: a process running as Local System (S-1-5-18)
+// for the BL4CK Assist helper: a process running as Local System (S-1-5-18)
 // that claims the "assist" role must be permanently rejected with the reason
 // "assist role requires non-SYSTEM identity", and no session is registered (the
 // gate returns before NewSession/registration).

@@ -1,4 +1,4 @@
-// agent/installer/macos-app/Sources/BreezeInstaller/Views/InstallingView.swift
+// agent/installer/macos-app/Sources/Bl4ckInstaller/Views/InstallingView.swift
 import SwiftUI
 
 struct InstallingView: View {
@@ -6,7 +6,7 @@ struct InstallingView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.2)
-            Text("Installing Breeze Agent…")
+            Text("Installing BL4CK Agent…")
                 .font(.headline)
             Text("This usually takes about 10 seconds.")
                 .foregroundStyle(.secondary)

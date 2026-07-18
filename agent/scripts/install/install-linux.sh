@@ -2,24 +2,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BINARY="/usr/local/bin/breeze-agent"
-SERVICE_SRC="$SCRIPT_DIR/../../service/systemd/breeze-agent.service"
-SERVICE_DST="/etc/systemd/system/breeze-agent.service"
-CONFIG_DIR="/etc/breeze"
-DATA_DIR="/var/lib/breeze"
-LOG_DIR="/var/log/breeze"
+BINARY="/usr/local/bin/bl4ck-agent"
+SERVICE_SRC="$SCRIPT_DIR/../../service/systemd/bl4ck-agent.service"
+SERVICE_DST="/etc/systemd/system/bl4ck-agent.service"
+CONFIG_DIR="/etc/bl4ck"
+DATA_DIR="/var/lib/bl4ck"
+LOG_DIR="/var/log/bl4ck"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Error: must run as root (sudo $0)" >&2
     exit 1
 fi
 
-echo "Installing Breeze Agent..."
+echo "Installing BL4CK Agent..."
 
 # Stop existing service before replacing binary (safe for upgrades).
 if [ -f "$SERVICE_DST" ]; then
-    if systemctl stop breeze-agent 2>&1; then
-        echo "Stopped existing Breeze Agent service."
+    if systemctl stop bl4ck-agent 2>&1; then
+        echo "Stopped existing BL4CK Agent service."
     else
         echo "Warning: failed to stop existing service cleanly — continuing anyway" >&2
     fi
@@ -31,30 +31,30 @@ chmod 700 "$CONFIG_DIR"
 chmod 755 "$DATA_DIR" "$LOG_DIR"
 
 # Copy binary
-if [ -f bin/breeze-agent ]; then
-    cp bin/breeze-agent "$BINARY"
-elif [ -f breeze-agent ]; then
-    cp breeze-agent "$BINARY"
+if [ -f bin/bl4ck-agent ]; then
+    cp bin/bl4ck-agent "$BINARY"
+elif [ -f bl4ck-agent ]; then
+    cp bl4ck-agent "$BINARY"
 else
-    echo "Error: breeze-agent binary not found. Run 'make build' first." >&2
+    echo "Error: bl4ck-agent binary not found. Run 'make build' first." >&2
     exit 1
 fi
 chmod 755 "$BINARY"
 
 # Install watchdog
-if [ -f "bin/breeze-watchdog" ]; then
+if [ -f "bin/bl4ck-watchdog" ]; then
     echo "Installing watchdog..."
-    cp bin/breeze-watchdog /usr/local/bin/breeze-watchdog
-    chmod 755 /usr/local/bin/breeze-watchdog
-elif [ -f "breeze-watchdog" ]; then
+    cp bin/bl4ck-watchdog /usr/local/bin/bl4ck-watchdog
+    chmod 755 /usr/local/bin/bl4ck-watchdog
+elif [ -f "bl4ck-watchdog" ]; then
     echo "Installing watchdog..."
-    cp breeze-watchdog /usr/local/bin/breeze-watchdog
-    chmod 755 /usr/local/bin/breeze-watchdog
+    cp bl4ck-watchdog /usr/local/bin/bl4ck-watchdog
+    chmod 755 /usr/local/bin/bl4ck-watchdog
 fi
 
 # (Re)install the watchdog systemd unit on EVERY install/upgrade.
 #
-# `breeze-watchdog service install` always rewrites the unit file (and runs
+# `bl4ck-watchdog service install` always rewrites the unit file (and runs
 # daemon-reload + enable). Re-running it on an existing host is how unit changes
 # — e.g. the RuntimeDirectory=breeze / RuntimeDirectoryPreserve=yes additions
 # for #1297 — reach already-deployed watchdogs. The old "rewrite only when
@@ -63,11 +63,11 @@ fi
 # 226/NAMESPACE wedge. `service install` is idempotent, so always calling it is
 # safe. It stops the service while writing the unit but does not start it, so we
 # (re)start explicitly afterward.
-if [ -f "/usr/local/bin/breeze-watchdog" ]; then
+if [ -f "/usr/local/bin/bl4ck-watchdog" ]; then
     echo "Registering watchdog service..."
-    /usr/local/bin/breeze-watchdog service install
+    /usr/local/bin/bl4ck-watchdog service install
     echo "Starting watchdog service..."
-    systemctl restart breeze-watchdog || true
+    systemctl restart bl4ck-watchdog || true
 fi
 
 # Install systemd unit
@@ -80,11 +80,11 @@ fi
 chmod 644 "$SERVICE_DST"
 
 systemctl daemon-reload
-systemctl enable breeze-agent
+systemctl enable bl4ck-agent
 
 # Install user helper systemd user unit
-USER_SERVICE_SRC="$SCRIPT_DIR/../../service/systemd/breeze-agent-user.service"
-USER_SERVICE_DST="/usr/lib/systemd/user/breeze-agent-user.service"
+USER_SERVICE_SRC="$SCRIPT_DIR/../../service/systemd/bl4ck-agent-user.service"
+USER_SERVICE_DST="/usr/lib/systemd/user/bl4ck-agent-user.service"
 
 if [ -f "$USER_SERVICE_SRC" ]; then
     mkdir -p "$(dirname "$USER_SERVICE_DST")"
@@ -94,8 +94,8 @@ if [ -f "$USER_SERVICE_SRC" ]; then
 fi
 
 # Install XDG autostart desktop file (fallback for non-systemd)
-XDG_SRC="$SCRIPT_DIR/../../service/xdg/breeze-agent-user.desktop"
-XDG_DST="/etc/xdg/autostart/breeze-agent-user.desktop"
+XDG_SRC="$SCRIPT_DIR/../../service/xdg/bl4ck-agent-user.desktop"
+XDG_DST="/etc/xdg/autostart/bl4ck-agent-user.desktop"
 
 if [ -f "$XDG_SRC" ]; then
     mkdir -p "$(dirname "$XDG_DST")"
@@ -110,31 +110,31 @@ if ! getent group breeze &>/dev/null; then
     echo "Created 'breeze' group for IPC socket access."
 fi
 
-# Install tmpfiles.d snippet so /run/breeze is recreated on every boot.
-# /run is tmpfs-backed and wiped across reboots. The breeze-agent.service and
-# breeze-watchdog.service units now declare RuntimeDirectory=breeze, so systemd
-# recreates /run/breeze before each ExecStart even without this snippet — that
+# Install tmpfiles.d snippet so /run/bl4ck is recreated on every boot.
+# /run is tmpfs-backed and wiped across reboots. The bl4ck-agent.service and
+# bl4ck-watchdog.service units now declare RuntimeDirectory=breeze, so systemd
+# recreates /run/bl4ck before each ExecStart even without this snippet — that
 # is the primary, self-contained fix for #1297. The snippet remains as defense-
-# in-depth so /run/breeze also exists for tooling that runs before the units
+# in-depth so /run/bl4ck also exists for tooling that runs before the units
 # start. Runs AFTER groupadd because the snippet references the breeze group.
-TMPFILES_SRC="$SCRIPT_DIR/../../service/tmpfiles.d/breeze-agent.conf"
-TMPFILES_DST="/usr/lib/tmpfiles.d/breeze-agent.conf"
+TMPFILES_SRC="$SCRIPT_DIR/../../service/tmpfiles.d/bl4ck-agent.conf"
+TMPFILES_DST="/usr/lib/tmpfiles.d/bl4ck-agent.conf"
 if [ -f "$TMPFILES_SRC" ]; then
     cp "$TMPFILES_SRC" "$TMPFILES_DST"
     chmod 644 "$TMPFILES_DST"
     if ! systemd-tmpfiles --create "$TMPFILES_DST"; then
-        echo "Warning: systemd-tmpfiles --create failed; relying on RuntimeDirectory=breeze in the unit to recreate /run/breeze on next start" >&2
+        echo "Warning: systemd-tmpfiles --create failed; relying on RuntimeDirectory=breeze in the unit to recreate /run/bl4ck on next start" >&2
     fi
-    echo "tmpfiles.d snippet installed (recreates /run/breeze on reboot)."
+    echo "tmpfiles.d snippet installed (recreates /run/bl4ck on reboot)."
 fi
 
 # Create IPC socket directory
-IPC_DIR="/var/run/breeze"
+IPC_DIR="/var/run/bl4ck"
 mkdir -p "$IPC_DIR"
 chown root:breeze "$IPC_DIR"
 chmod 770 "$IPC_DIR"
 
-# Verify /run/breeze exists post-install. With RuntimeDirectory=breeze on both
+# Verify /run/bl4ck exists post-install. With RuntimeDirectory=breeze on both
 # units this is normally redundant, but a failed mkdir/chown above (e.g. a
 # read-only /run) would otherwise ship a host one reboot away from a silent
 # 226/NAMESPACE wedge (#1297 / #502). Fail loudly instead of warn-and-continue.
@@ -152,21 +152,21 @@ for user in $(who | awk '{print $1}' | sort -u); do
     fi
 done
 
-echo "Breeze Agent installed."
+echo "BL4CK Agent installed."
 echo ""
 
 # If the agent is already enrolled, skip the enrollment step in Next Steps.
 if [ -f "$CONFIG_DIR/agent.yaml" ] && grep -q 'agent_id:' "$CONFIG_DIR/agent.yaml" 2>/dev/null; then
     echo "Next steps:"
-    echo "  1. Start:   sudo systemctl start breeze-agent"
-    echo "  2. Status:  sudo systemctl status breeze-agent"
-    echo "  3. Logs:    journalctl -u breeze-agent -f"
-    echo "  4. User helper: systemctl --user enable breeze-agent-user (per-user)"
+    echo "  1. Start:   sudo systemctl start bl4ck-agent"
+    echo "  2. Status:  sudo systemctl status bl4ck-agent"
+    echo "  3. Logs:    journalctl -u bl4ck-agent -f"
+    echo "  4. User helper: systemctl --user enable bl4ck-agent-user (per-user)"
 else
     echo "Next steps:"
-    echo "  1. Enroll:  sudo breeze-agent enroll <enrollment-key> --server https://your-server [--enrollment-secret <secret>]"
-    echo "  2. Start:   sudo systemctl start breeze-agent"
-    echo "  3. Status:  sudo systemctl status breeze-agent"
-    echo "  4. Logs:    journalctl -u breeze-agent -f"
-    echo "  5. User helper: systemctl --user enable breeze-agent-user (per-user)"
+    echo "  1. Enroll:  sudo bl4ck-agent enroll <enrollment-key> --server https://your-server [--enrollment-secret <secret>]"
+    echo "  2. Start:   sudo systemctl start bl4ck-agent"
+    echo "  3. Status:  sudo systemctl status bl4ck-agent"
+    echo "  4. Logs:    journalctl -u bl4ck-agent -f"
+    echo "  5. User helper: systemctl --user enable bl4ck-agent-user (per-user)"
 fi

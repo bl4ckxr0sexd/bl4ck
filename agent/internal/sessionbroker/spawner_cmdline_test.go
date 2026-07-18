@@ -29,7 +29,7 @@ func TestBuildUserHelperCmdLine_AlwaysExplicitRole(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.role, func(t *testing.T) {
-			got := buildUserHelperCmdLine(`C:\Program Files\Breeze\breeze-agent.exe`, tc.role)
+			got := buildUserHelperCmdLine(`C:\Program Files\BL4CK\bl4ck-agent.exe`, tc.role)
 			if !strings.Contains(got, tc.wantSubstr) {
 				t.Fatalf("cmdline missing %q: got %q", tc.wantSubstr, got)
 			}
@@ -37,7 +37,7 @@ func TestBuildUserHelperCmdLine_AlwaysExplicitRole(t *testing.T) {
 				t.Fatalf("cmdline missing user-helper subcommand: got %q", got)
 			}
 			// Quoting around the exe path matters — the path contains a space.
-			if !strings.HasPrefix(got, `"C:\Program Files\Breeze\breeze-agent.exe"`) {
+			if !strings.HasPrefix(got, `"C:\Program Files\BL4CK\bl4ck-agent.exe"`) {
 				t.Fatalf("exe path not quoted: got %q", got)
 			}
 		})

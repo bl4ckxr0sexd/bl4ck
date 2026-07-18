@@ -1,4 +1,4 @@
-// Package backup provides backup orchestration for the Breeze agent.
+// Package backup provides backup orchestration for the BL4CK agent.
 package backup
 
 import (

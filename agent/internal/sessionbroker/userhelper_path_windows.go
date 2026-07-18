@@ -10,8 +10,8 @@ import (
 // userHelperExePath returns the path that the SYSTEM-context spawner should
 // use when launching a user-helper process. On Windows the convention is:
 //
-//   - C:\Program Files\Breeze\breeze-agent.exe   (this process, console subsystem)
-//   - C:\Program Files\Breeze\breeze-user-helper.exe (GUI subsystem, same source)
+//   - C:\Program Files\BL4CK\bl4ck-agent.exe   (this process, console subsystem)
+//   - C:\Program Files\BL4CK\bl4ck-user-helper.exe (GUI subsystem, same source)
 //
 // Resolution logic lives in resolveUserHelperPath (userhelper_path.go) so the
 // fallback semantics are unit-testable on every platform the agent builds on,

@@ -15,30 +15,30 @@ import (
 )
 
 const (
-	darwinBinaryPath                 = "/usr/local/bin/breeze-agent"
-	darwinDesktopHelperBinaryPath    = "/usr/local/bin/breeze-desktop-helper"
-	darwinPlistDst                   = "/Library/LaunchDaemons/com.breeze.agent.plist"
-	darwinDesktopUserPlistDst        = "/Library/LaunchAgents/com.breeze.desktop-helper-user.plist"
-	darwinDesktopLoginWindowPlistDst = "/Library/LaunchAgents/com.breeze.desktop-helper-loginwindow.plist"
-	darwinLogDir                     = "/Library/Logs/Breeze"
-	darwinConfigDir                  = "/Library/Application Support/Breeze"
-	darwinLabel                      = "com.breeze.agent"
-	darwinWatchdogBinaryPath         = "/usr/local/bin/breeze-watchdog"
-	darwinWatchdogPlistDst           = "/Library/LaunchDaemons/com.breeze.watchdog.plist"
-	darwinWatchdogLabel              = "com.breeze.watchdog"
+	darwinBinaryPath                 = "/usr/local/bin/bl4ck-agent"
+	darwinDesktopHelperBinaryPath    = "/usr/local/bin/bl4ck-desktop-helper"
+	darwinPlistDst                   = "/Library/LaunchDaemons/com.bl4ck.agent.plist"
+	darwinDesktopUserPlistDst        = "/Library/LaunchAgents/com.bl4ck.desktop-helper-user.plist"
+	darwinDesktopLoginWindowPlistDst = "/Library/LaunchAgents/com.bl4ck.desktop-helper-loginwindow.plist"
+	darwinLogDir                     = "/Library/Logs/BL4CK"
+	darwinConfigDir                  = "/Library/Application Support/BL4CK"
+	darwinLabel                      = "com.bl4ck.agent"
+	darwinWatchdogBinaryPath         = "/usr/local/bin/bl4ck-watchdog"
+	darwinWatchdogPlistDst           = "/Library/LaunchDaemons/com.bl4ck.watchdog.plist"
+	darwinWatchdogLabel              = "com.bl4ck.watchdog"
 )
 
-// Embedded plist — matches agent/service/launchd/com.breeze.agent.plist
+// Embedded plist — matches agent/service/launchd/com.bl4ck.agent.plist
 const darwinPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.breeze.agent</string>
+    <string>com.bl4ck.agent</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/breeze-agent</string>
+        <string>/usr/local/bin/bl4ck-agent</string>
         <string>run</string>
     </array>
 
@@ -52,13 +52,13 @@ const darwinPlist = `<?xml version="1.0" encoding="UTF-8"?>
     <integer>5</integer>
 
     <key>WorkingDirectory</key>
-    <string>/Library/Application Support/Breeze</string>
+    <string>/Library/Application Support/BL4CK</string>
 
     <key>StandardOutPath</key>
-    <string>/Library/Logs/Breeze/agent.log</string>
+    <string>/Library/Logs/BL4CK/agent.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Library/Logs/Breeze/agent.err</string>
+    <string>/Library/Logs/BL4CK/agent.err</string>
 
     <key>SoftResourceLimits</key>
     <dict>
@@ -74,10 +74,10 @@ const darwinDesktopUserPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.breeze.desktop-helper-user</string>
+    <string>com.bl4ck.desktop-helper-user</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/breeze-desktop-helper</string>
+        <string>/usr/local/bin/bl4ck-desktop-helper</string>
         <string>--context</string>
         <string>user_session</string>
     </array>
@@ -104,10 +104,10 @@ const darwinDesktopLoginWindowPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.breeze.desktop-helper-loginwindow</string>
+    <string>com.bl4ck.desktop-helper-loginwindow</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/breeze-desktop-helper</string>
+        <string>/usr/local/bin/bl4ck-desktop-helper</string>
         <string>--context</string>
         <string>login_window</string>
     </array>
@@ -131,7 +131,7 @@ const darwinDesktopLoginWindowPlist = `<?xml version="1.0" encoding="UTF-8"?>
 
 var serviceCmd = &cobra.Command{
 	Use:   "service",
-	Short: "Manage the Breeze Agent system service (launchd)",
+	Short: "Manage the BL4CK Agent system service (launchd)",
 }
 
 var withUserHelper bool
@@ -153,7 +153,7 @@ var serviceInstallCmd = &cobra.Command{
 	Short: "Install the agent as a launchd service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service install)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service install)")
 		}
 
 		// Create directories
@@ -173,7 +173,7 @@ var serviceInstallCmd = &cobra.Command{
 			if stopErr := exec.Command("launchctl", "unload", darwinPlistDst).Run(); stopErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to stop existing service: %v\n", stopErr)
 			} else {
-				fmt.Println("Stopped existing Breeze Agent service.")
+				fmt.Println("Stopped existing BL4CK Agent service.")
 			}
 		}
 
@@ -204,7 +204,7 @@ var serviceInstallCmd = &cobra.Command{
 		}
 		fmt.Printf("LaunchDaemon plist installed to %s\n", darwinPlistDst)
 
-		desktopHelperSource := filepath.Join(filepath.Dir(exePath), "breeze-desktop-helper")
+		desktopHelperSource := filepath.Join(filepath.Dir(exePath), "bl4ck-desktop-helper")
 		desktopHelperBytes, desktopHelperErr := os.ReadFile(desktopHelperSource)
 		if desktopHelperErr != nil {
 			desktopHelperBytes, desktopHelperErr = os.ReadFile(exePath)
@@ -233,12 +233,12 @@ var serviceInstallCmd = &cobra.Command{
 		bootstrapDesktopHelperPlists()
 
 		// Create breeze group for IPC socket access without assuming a fixed GID.
-		if err := ensureDarwinBreezeGroup(); err != nil {
+		if err := ensureDarwinBL4CKGroup(); err != nil {
 			return err
 		}
 
 		fmt.Println()
-		fmt.Println("Breeze Agent service installed.")
+		fmt.Println("BL4CK Agent service installed.")
 
 		// Show contextual next steps based on enrollment and service state.
 		existingCfg, _ := config.Load(cfgFile)
@@ -252,15 +252,15 @@ var serviceInstallCmd = &cobra.Command{
 		} else if enrolled {
 			fmt.Println()
 			fmt.Println("Next steps:")
-			fmt.Printf("  1. Start:   sudo breeze-agent service start\n")
-			fmt.Printf("  2. Status:  sudo breeze-agent service status\n")
+			fmt.Printf("  1. Start:   sudo bl4ck-agent service start\n")
+			fmt.Printf("  2. Status:  sudo bl4ck-agent service status\n")
 			fmt.Printf("  3. Logs:    tail -f %s/agent.log\n", darwinLogDir)
 		} else {
 			fmt.Println()
 			fmt.Println("Next steps:")
-			fmt.Printf("  1. Enroll:  sudo breeze-agent enroll <key> --server https://your-server\n")
-			fmt.Printf("  2. Start:   sudo breeze-agent service start\n")
-			fmt.Printf("  3. Status:  sudo breeze-agent service status\n")
+			fmt.Printf("  1. Enroll:  sudo bl4ck-agent enroll <key> --server https://your-server\n")
+			fmt.Printf("  2. Start:   sudo bl4ck-agent service start\n")
+			fmt.Printf("  3. Status:  sudo bl4ck-agent service status\n")
 			fmt.Printf("  4. Logs:    tail -f %s/agent.log\n", darwinLogDir)
 		}
 		if !noWatchdog {
@@ -275,9 +275,9 @@ var serviceInstallCmd = &cobra.Command{
 					"Warning: watchdog bootstrap failed: %v\n"+
 						"The agent service is installed and running. The watchdog is NOT installed.\n"+
 						"To retry, choose one of:\n"+
-						"  1. Re-run `sudo breeze-agent service install` (will retry the download).\n"+
-						"  2. Download %s manually, place it next to breeze-agent,\n"+
-						"     then run `sudo breeze-watchdog service install`.\n"+
+						"  1. Re-run `sudo bl4ck-agent service install` (will retry the download).\n"+
+						"  2. Download %s manually, place it next to bl4ck-agent,\n"+
+						"     then run `sudo bl4ck-watchdog service install`.\n"+
 						"  3. To skip the watchdog entirely, use `--no-watchdog`.\n",
 					err, watchdogDownloadURL(version, runtime.GOOS, runtime.GOARCH))
 			}
@@ -292,7 +292,7 @@ var serviceUninstallCmd = &cobra.Command{
 	Short: "Uninstall the agent launchd service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service uninstall)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service uninstall)")
 		}
 
 		// Stop and unload the daemon
@@ -332,7 +332,7 @@ var serviceUninstallCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Warning: failed to remove %s: %v\n", darwinDesktopHelperBinaryPath, err)
 		}
 
-		fmt.Println("Breeze Agent service uninstalled.")
+		fmt.Println("BL4CK Agent service uninstalled.")
 		fmt.Printf("Config at %s was preserved.\n", darwinConfigDir)
 		fmt.Printf("To remove config: sudo rm -rf '%s'\n", darwinConfigDir)
 		return nil
@@ -365,11 +365,11 @@ var serviceStartCmd = &cobra.Command{
 	Short: "Start the agent service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service start)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service start)")
 		}
 
 		if !fileExists(darwinPlistDst) {
-			return fmt.Errorf("service not installed — run 'sudo breeze-agent service install' first")
+			return fmt.Errorf("service not installed — run 'sudo bl4ck-agent service install' first")
 		}
 
 		// Use bootstrap (modern) with fallback to load (legacy)
@@ -391,7 +391,7 @@ var serviceStartCmd = &cobra.Command{
 			}
 		}
 
-		fmt.Println("Breeze Agent service started.")
+		fmt.Println("BL4CK Agent service started.")
 		fmt.Printf("Logs: tail -f %s/agent.log\n", darwinLogDir)
 
 		// Bootstrap the desktop helper LaunchAgents so remote desktop connects promptly.
@@ -407,7 +407,7 @@ var serviceStopCmd = &cobra.Command{
 	Short: "Stop the agent service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service stop)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service stop)")
 		}
 
 		if !isLaunchdLoaded(darwinLabel) {
@@ -425,7 +425,7 @@ var serviceStopCmd = &cobra.Command{
 			}
 		}
 
-		fmt.Println("Breeze Agent service stopped.")
+		fmt.Println("BL4CK Agent service stopped.")
 		return nil
 	},
 }
@@ -487,8 +487,8 @@ func healLaunchdPlists() {
 		domain  string // launchd domain for reload
 	}{
 		{darwinPlistDst, darwinPlist, darwinLabel, "system"},
-		{darwinDesktopUserPlistDst, darwinDesktopUserPlist, "com.breeze.desktop-helper-user", ""},
-		{darwinDesktopLoginWindowPlistDst, darwinDesktopLoginWindowPlist, "com.breeze.desktop-helper-loginwindow", "loginwindow"},
+		{darwinDesktopUserPlistDst, darwinDesktopUserPlist, "com.bl4ck.desktop-helper-user", ""},
+		{darwinDesktopLoginWindowPlistDst, darwinDesktopLoginWindowPlist, "com.bl4ck.desktop-helper-loginwindow", "loginwindow"},
 	} {
 		data, err := os.ReadFile(entry.path)
 		if err != nil {
@@ -523,7 +523,7 @@ func ensureDesktopHelpersLoaded() {
 	if fileExists(darwinDesktopUserPlistDst) {
 		if uid := consoleUserUID(); uid != "" {
 			domain := "gui/" + uid
-			label := domain + "/com.breeze.desktop-helper-user"
+			label := domain + "/com.bl4ck.desktop-helper-user"
 			if exec.Command("launchctl", "print", label).Run() != nil {
 				out, err := exec.Command("launchctl", "bootstrap", domain, darwinDesktopUserPlistDst).CombinedOutput()
 				if err != nil {
@@ -537,7 +537,7 @@ func ensureDesktopHelpersLoaded() {
 	}
 
 	if fileExists(darwinDesktopLoginWindowPlistDst) {
-		lwLabel := "loginwindow/com.breeze.desktop-helper-loginwindow"
+		lwLabel := "loginwindow/com.bl4ck.desktop-helper-loginwindow"
 		if exec.Command("launchctl", "print", lwLabel).Run() != nil {
 			out, err := exec.Command("launchctl", "bootstrap", "loginwindow", darwinDesktopLoginWindowPlistDst).CombinedOutput()
 			if err != nil {
@@ -593,7 +593,7 @@ func bootstrapDesktopHelperPlists() {
 
 	// Bootstrap the login-window helper (covers login screen remote access).
 	// Use kickstart first (stable interface), fall back to bootstrap.
-	const loginWindowLabel = "loginwindow/com.breeze.desktop-helper-loginwindow"
+	const loginWindowLabel = "loginwindow/com.bl4ck.desktop-helper-loginwindow"
 	if err := exec.Command("launchctl", "kickstart", "-k", loginWindowLabel).Run(); err == nil {
 		fmt.Println("Login-window desktop helper kickstarted.")
 	} else {
@@ -607,7 +607,7 @@ func bootstrapDesktopHelperPlists() {
 	}
 }
 
-func ensureDarwinBreezeGroup() error {
+func ensureDarwinBL4CKGroup() error {
 	const script = `
 set -e
 if dscl . -read /Groups/breeze >/dev/null 2>&1; then

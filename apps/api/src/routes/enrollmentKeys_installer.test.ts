@@ -394,7 +394,7 @@ describe('enrollment key routes — installer download', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('application/zip');
-      expect(res.headers.get('Content-Disposition')).toContain('breeze-agent-macos.zip');
+      expect(res.headers.get('Content-Disposition')).toContain('bl4ck-agent-macos.zip');
     });
 
     it('creates child key with maxUsage=1 by default (macos)', async () => {

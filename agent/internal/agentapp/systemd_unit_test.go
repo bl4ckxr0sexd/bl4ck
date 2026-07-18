@@ -51,13 +51,13 @@ func TestUnitNeedsReconcile(t *testing.T) {
 		{"newer -> skip (no downgrade)", "# breeze-unit-version: 3\n", 2, false},
 		{"garbage -> reconcile", "# breeze-unit-version: x\n", 2, true},
 		// v3 adds RuntimeDirectory=breeze (#1297): a host still on the v2 unit
-		// (which lacks RuntimeDirectory) must reconcile up to v3 so /run/breeze
+		// (which lacks RuntimeDirectory) must reconcile up to v3 so /run/bl4ck
 		// is recreated at boot independent of the tmpfiles.d snippet.
 		{"v2 on disk -> reconcile to v3", "# breeze-unit-version: 2\n", 3, true},
 		{"v3 on disk -> skip", "# breeze-unit-version: 3\n", 3, false},
 		// v4 adds RuntimeDirectoryPreserve=yes (#1297 follow-up): a host on the
 		// v3 unit (which lacks it) must reconcile up to v4 so an agent restart
-		// no longer removes /run/breeze out from under the hardened watchdog.
+		// no longer removes /run/bl4ck out from under the hardened watchdog.
 		{"v3 on disk -> reconcile to v4", "# breeze-unit-version: 3\n", 4, true},
 		{"v4 on disk -> skip", "# breeze-unit-version: 4\n", 4, false},
 	}
@@ -71,7 +71,7 @@ func TestUnitNeedsReconcile(t *testing.T) {
 }
 
 func TestReconcileTransientArgs(t *testing.T) {
-	args := reconcileTransientArgs(4242, "/usr/local/bin/breeze-agent")
+	args := reconcileTransientArgs(4242, "/usr/local/bin/bl4ck-agent")
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "--collect") {
@@ -90,14 +90,14 @@ func TestReconcileTransientArgs(t *testing.T) {
 		t.Fatalf("argv too short: %v", args)
 	}
 	tail := args[len(args)-3:]
-	if tail[0] != "/usr/local/bin/breeze-agent" || tail[1] != "service" || tail[2] != "reconcile-unit" {
+	if tail[0] != "/usr/local/bin/bl4ck-agent" || tail[1] != "service" || tail[2] != "reconcile-unit" {
 		t.Errorf("must invoke `<bin> service reconcile-unit`; got trailing %v", tail)
 	}
 }
 
 func TestStaticUnitMatchesEmbedded(t *testing.T) {
-	// Test runs with cwd = package dir (agent/cmd/breeze-agent).
-	data, err := os.ReadFile("../../service/systemd/breeze-agent.service")
+	// Test runs with cwd = package dir (agent/cmd/bl4ck-agent).
+	data, err := os.ReadFile("../../service/systemd/bl4ck-agent.service")
 	if err != nil {
 		t.Fatalf("read static unit: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestStaticUnitMatchesEmbedded(t *testing.T) {
 		for i < len(got) && i < len(want) && got[i] == want[i] {
 			i++
 		}
-		t.Fatalf("static breeze-agent.service is not byte-identical to embedded linuxUnit "+
+		t.Fatalf("static bl4ck-agent.service is not byte-identical to embedded linuxUnit "+
 			"(first divergence at byte %d: file has %q, const has %q). "+
 			"Keep them in sync (the auto-heal writes the embedded copy).",
 			i, snippetAt(got, i), snippetAt(want, i))
@@ -156,7 +156,7 @@ func TestUnitIsNotReHardened(t *testing.T) {
 }
 
 // TestUnitDeclaresRuntimeDirectory guards the #1297 fix: the agent unit must
-// declare RuntimeDirectory=breeze so systemd recreates /run/breeze before every
+// declare RuntimeDirectory=breeze so systemd recreates /run/bl4ck before every
 // ExecStart. /run is tmpfs and wiped on reboot; without this a host whose
 // tmpfiles.d snippet is missing wedges at 226/NAMESPACE on the next reboot
 // (regression of #502). RuntimeDirectory is not a sandbox directive, so it does
@@ -164,33 +164,33 @@ func TestUnitIsNotReHardened(t *testing.T) {
 func TestUnitDeclaresRuntimeDirectory(t *testing.T) {
 	if !strings.Contains(linuxUnit, "RuntimeDirectory=breeze") {
 		t.Error("linuxUnit must declare RuntimeDirectory=breeze so systemd recreates " +
-			"/run/breeze at boot independent of the tmpfiles.d snippet (#1297)")
+			"/run/bl4ck at boot independent of the tmpfiles.d snippet (#1297)")
 	}
 	if !strings.Contains(linuxUnit, "RuntimeDirectoryMode=0770") {
 		t.Error("linuxUnit must declare RuntimeDirectoryMode=0770 so the breeze group " +
-			"can traverse /run/breeze to the IPC socket")
+			"can traverse /run/bl4ck to the IPC socket")
 	}
 }
 
 // TestUnitDeclaresRuntimeDirectoryPreserve guards the #1297 follow-up: on a
-// partially-upgraded host the still-hardened breeze-watchdog binds /run/breeze
+// partially-upgraded host the still-hardened bl4ck-watchdog binds /run/bl4ck
 // via ReadWritePaths, so an agent restart must NOT remove the directory out
 // from under it. RuntimeDirectoryPreserve defaults to 'no' (remove on stop), so
 // the directive must be set explicitly.
 func TestUnitDeclaresRuntimeDirectoryPreserve(t *testing.T) {
 	if !strings.Contains(linuxUnit, "RuntimeDirectoryPreserve=yes") {
 		t.Error("linuxUnit must declare RuntimeDirectoryPreserve=yes so an agent restart " +
-			"does not remove /run/breeze out from under a still-hardened watchdog (#1297)")
+			"does not remove /run/bl4ck out from under a still-hardened watchdog (#1297)")
 	}
 }
 
 // TestUnitDoesNotClaimRuntimeChown guards against the false comment that was
-// corrected: the agent does NOT re-chown /run/breeze to root:breeze at runtime
+// corrected: the agent does NOT re-chown /run/bl4ck to root:breeze at runtime
 // (broker_unix.go setupSocket relaxes it to 0755, never chowns). If a future
 // edit re-introduces that claim without the implementation, this catches it.
 func TestUnitDoesNotClaimRuntimeChown(t *testing.T) {
 	if strings.Contains(linuxUnit, "re-chowns it to root:breeze") {
-		t.Error("linuxUnit comment claims the agent re-chowns /run/breeze to root:breeze at " +
+		t.Error("linuxUnit comment claims the agent re-chowns /run/bl4ck to root:breeze at " +
 			"runtime, but setupSocket only chmods it to 0755 — the comment is false (#1297)")
 	}
 }

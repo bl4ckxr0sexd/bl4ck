@@ -211,7 +211,7 @@ var (
 	systemHelperScopes   = []string{"notify", "tray", "clipboard", "desktop"}
 	userHelperScopes     = []string{"notify", "clipboard", "run_as_user", ipc.ScopePam}
 	watchdogHelperScopes = []string{"watchdog"}
-	// assistHelperScopes is least-privilege: the Breeze Assist helper receives
+	// assistHelperScopes is least-privilege: the BL4CK Assist helper receives
 	// only the helper token and must NOT get desktop/clipboard/run_as_user/notify/tray.
 	// consent_ui is a narrow UI-only scope that lets the assist helper receive
 	// remote-session consent prompts and active-session banner messages.
@@ -1903,7 +1903,7 @@ func (b *Broker) isDesktopHelperPeerPath(peerPath string) bool {
 	}
 	peerResolved = normalizeBinaryPath(filepath.Clean(peerResolved))
 	for _, candidate := range b.allowedHelperPaths() {
-		if !strings.Contains(filepath.Base(candidate), "breeze-desktop-helper") {
+		if !strings.Contains(filepath.Base(candidate), "bl4ck-desktop-helper") {
 			continue
 		}
 		resolvedCandidate, err := filepath.EvalSymlinks(candidate)
@@ -1928,9 +1928,9 @@ func (b *Broker) allowedHelperPaths() []string {
 		}
 		log.Warn("failed to get executable path, falling back to hardcoded helper paths", "error", err.Error())
 		return []string{
-			"/usr/local/bin/breeze-agent",
-			"/usr/local/bin/breeze-desktop-helper",
-			"/usr/local/bin/breeze-watchdog",
+			"/usr/local/bin/bl4ck-agent",
+			"/usr/local/bin/bl4ck-desktop-helper",
+			"/usr/local/bin/bl4ck-watchdog",
 		}
 	}
 	exePath, err = filepath.EvalSymlinks(exePath)
@@ -1940,20 +1940,20 @@ func (b *Broker) allowedHelperPaths() []string {
 	dir := filepath.Dir(exePath)
 	paths := []string{
 		exePath,
-		filepath.Join(dir, "breeze-desktop-helper"),
-		filepath.Join(dir, "breeze-watchdog"),
-		filepath.Join(dir, "breeze-desktop-helper.exe"),
+		filepath.Join(dir, "bl4ck-desktop-helper"),
+		filepath.Join(dir, "bl4ck-watchdog"),
+		filepath.Join(dir, "bl4ck-desktop-helper.exe"),
 		filepath.Join(dir, UserHelperBinaryName),
-		filepath.Join(dir, "breeze-watchdog.exe"),
+		filepath.Join(dir, "bl4ck-watchdog.exe"),
 	}
 	if runtime.GOOS != "windows" {
 		paths = append(paths,
-			"/usr/local/bin/breeze-agent",
-			"/usr/local/bin/breeze-desktop-helper",
-			"/usr/local/bin/breeze-watchdog",
+			"/usr/local/bin/bl4ck-agent",
+			"/usr/local/bin/bl4ck-desktop-helper",
+			"/usr/local/bin/bl4ck-watchdog",
 		)
 	}
-	// Allowlist the Breeze Assist helper binary so it can connect over IPC.
+	// Allowlist the BL4CK Assist helper binary so it can connect over IPC.
 	paths = append(paths, assistHelperBinaryPaths(dir)...)
 	seen := make(map[string]struct{}, len(paths))
 	out := make([]string, 0, len(paths))
@@ -1971,9 +1971,9 @@ func (b *Broker) allowedHelperPaths() []string {
 	return out
 }
 
-// assistHelperBinaryPaths returns candidate install paths for the Breeze Assist
+// assistHelperBinaryPaths returns candidate install paths for the BL4CK Assist
 // helper, derived from the agent install dir. Used so RefreshAllowedHashes
-// allowlists the genuine breeze-helper binary's SHA-256. Non-existent paths are
+// allowlists the genuine bl4ck-helper binary's SHA-256. Non-existent paths are
 // skipped silently by computeAllowedHashes, so listing all platform candidates
 // is safe even when the helper is not installed.
 func assistHelperBinaryPaths(agentDir string) []string {
@@ -1983,9 +1983,9 @@ func assistHelperBinaryPaths(agentDir string) []string {
 // assistHelperBinaryPathsForOS is the OS-parameterized core, exported-for-test
 // so the Windows path (which can't run on the CI host) is verified directly.
 //
-// IMPORTANT: the Helper MSI installs to "<ProgramFiles>\Breeze Helper\"
-// (Tauri productName "Breeze Helper"), NOT the agent's install dir. An earlier
-// version allowlisted only "<agentDir>\breeze-helper.exe", which never matches
+// IMPORTANT: the Helper MSI installs to "<ProgramFiles>\BL4CK Helper\"
+// (Tauri productName "BL4CK Helper"), NOT the agent's install dir. An earlier
+// version allowlisted only "<agentDir>\bl4ck-helper.exe", which never matches
 // the real install location, so the genuine Helper's hash was never added to
 // the allowlist and the assist IPC session was rejected on Windows. We now
 // cover the real install path (ProgramFiles + agent-dir sibling) plus the
@@ -1994,22 +1994,22 @@ func assistHelperBinaryPathsForOS(agentDir, goos, programFiles string) []string 
 	switch goos {
 	case "windows":
 		paths := []string{
-			// Sibling of the agent dir, e.g. C:\Program Files\Breeze ->
-			// C:\Program Files\Breeze Helper. Robust to ProgramFiles localization.
-			filepath.Join(filepath.Dir(agentDir), "Breeze Helper", "breeze-helper.exe"),
-			filepath.Join(agentDir, "breeze-helper.exe"), // legacy/colocated
+			// Sibling of the agent dir, e.g. C:\Program Files\BL4CK ->
+			// C:\Program Files\BL4CK Helper. Robust to ProgramFiles localization.
+			filepath.Join(filepath.Dir(agentDir), "BL4CK Helper", "bl4ck-helper.exe"),
+			filepath.Join(agentDir, "bl4ck-helper.exe"), // legacy/colocated
 		}
 		if programFiles != "" {
-			paths = append(paths, filepath.Join(programFiles, "Breeze Helper", "breeze-helper.exe"))
+			paths = append(paths, filepath.Join(programFiles, "BL4CK Helper", "bl4ck-helper.exe"))
 		}
 		return paths
 	case "darwin":
 		return []string{
-			"/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper",
-			filepath.Join(agentDir, "breeze-helper"),
+			"/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper",
+			filepath.Join(agentDir, "bl4ck-helper"),
 		}
 	default:
-		return []string{filepath.Join(agentDir, "breeze-helper")}
+		return []string{filepath.Join(agentDir, "bl4ck-helper")}
 	}
 }
 

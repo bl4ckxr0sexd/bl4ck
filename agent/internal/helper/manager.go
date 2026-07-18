@@ -133,19 +133,19 @@ func New(ctx context.Context, serverURL string, authToken *secmem.SecureString, 
 func defaultBinaryPath() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper"
+		return "/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper"
 	case "windows":
 		pf := os.Getenv("ProgramFiles")
 		if pf == "" {
 			pf = `C:\Program Files`
 		}
-		return filepath.Join(pf, "Breeze Helper", "breeze-helper.exe")
+		return filepath.Join(pf, "BL4CK Helper", "bl4ck-helper.exe")
 	default:
-		return "/usr/local/bin/breeze-helper"
+		return "/usr/local/bin/bl4ck-helper"
 	}
 }
 
-// DefaultBinaryPath returns the platform-default Breeze Assist binary path.
+// DefaultBinaryPath returns the platform-default BL4CK Assist binary path.
 func DefaultBinaryPath() string {
 	return defaultBinaryPath()
 }
@@ -153,15 +153,15 @@ func DefaultBinaryPath() string {
 func defaultBaseDir() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "/Library/Application Support/Breeze"
+		return "/Library/Application Support/BL4CK"
 	case "windows":
 		pd := os.Getenv("ProgramData")
 		if pd == "" {
 			pd = `C:\ProgramData`
 		}
-		return filepath.Join(pd, "Breeze")
+		return filepath.Join(pd, "BL4CK")
 	default:
-		return "/etc/breeze"
+		return "/etc/bl4ck"
 	}
 }
 
@@ -416,7 +416,7 @@ func (m *Manager) writeSessionConfig(state *sessionState, cfg *Config, si Sessio
 var minConfigFlagVersion = [3]int{0, 14, 0}
 
 func (m *Manager) ensureRunningSession(state *sessionState) error {
-	// First check: scan the process table for breeze-helper.exe in this
+	// First check: scan the process table for bl4ck-helper.exe in this
 	// session. This is the reliable check that the old code used (by process
 	// name) — immune to PID tracking failures from cmd.exe wrappers, Tauri
 	// re-exec, or missing status files.

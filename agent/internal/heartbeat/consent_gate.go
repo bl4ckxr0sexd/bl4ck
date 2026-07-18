@@ -169,7 +169,7 @@ func (h *Heartbeat) sendSessionNotify(body string) {
 		return
 	}
 	req := ipc.NotifyRequest{
-		Title:   "Breeze Agent",
+		Title:   "BL4CK Agent",
 		Body:    body,
 		Urgency: "normal",
 	}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate a JWT token for Breeze API dev use.
+# Generate a JWT token for BL4CK API dev use.
 #
 # Usage:
 #   ./agent/scripts/gen-jwt.sh              # uses defaults from .env

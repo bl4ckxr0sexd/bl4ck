@@ -1,12 +1,12 @@
 // Package pam provides the agent-side rule cache for the PAM (Privileged Access
 // Management) rule engine. The cache lets the agent enforce PAM rules while
-// offline from the Breeze API.
+// offline from the BL4CK API.
 //
 // File layout (uses config.GetDataDir under the hood):
 //
-//	Windows:  %ProgramData%\Breeze\data\pam-rules.json
-//	Linux:    /var/lib/breeze/pam-rules.json
-//	macOS:    /Library/Application Support/Breeze/data/pam-rules.json
+//	Windows:  %ProgramData%\BL4CK\data\pam-rules.json
+//	Linux:    /var/lib/bl4ck/pam-rules.json
+//	macOS:    /Library/Application Support/BL4CK/data/pam-rules.json
 //
 // The HMAC key lives in a sibling `keys/` subdir under the same data root
 // (see DefaultKeyPath). Co-locating the key with the cache file would mean a
@@ -27,7 +27,7 @@
 // (data/pam-rules.json vs data/keys/pam-rules.key) rather than alongside each
 // other in the same dir. Both paths inherit hardened parent-dir perms today,
 // but if a future change ever loosens the data dir's ACL/perms (e.g. to let
-// the Breeze Helper running as the logged-in user read agent.yaml), the key
+// the BL4CK Helper running as the logged-in user read agent.yaml), the key
 // still sits behind a separately ACL'd subdir (0700 on Unix, SYSTEM+Admins-
 // only DACL on Windows). An attacker who can read the envelope still can't
 // forge a new MAC without also breaching the keys dir.
@@ -315,8 +315,8 @@ func computeMAC(signed *SignedFields, key []byte) (string, error) {
 
 // DefaultPath returns the platform default cache file path. Routes through
 // config.GetDataDir so all platforms land under the same data root the rest
-// of the agent uses (Windows: %ProgramData%\Breeze\data,
-// macOS: /Library/Application Support/Breeze/data, Linux: /var/lib/breeze).
+// of the agent uses (Windows: %ProgramData%\BL4CK\data,
+// macOS: /Library/Application Support/BL4CK/data, Linux: /var/lib/bl4ck).
 func DefaultPath() string {
 	return filepath.Join(config.GetDataDir(), "pam-rules.json")
 }

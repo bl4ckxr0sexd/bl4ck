@@ -77,7 +77,7 @@ func (b *Broker) spawnBackupHelper(binaryPath string) (*Session, error) {
 			return nil, fmt.Errorf("failed to find self path: %w", err)
 		}
 		dir := filepath.Dir(self)
-		path = filepath.Join(dir, "breeze-backup")
+		path = filepath.Join(dir, "bl4ck-backup")
 	}
 
 	if _, err := os.Stat(path); err != nil {

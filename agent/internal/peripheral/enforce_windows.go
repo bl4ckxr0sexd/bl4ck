@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -16,7 +17,7 @@ const (
 	usbstorValue   = "Start"
 	usbstorBlock   = 4
 	usbstorDefault = 3
-	breezeManaged  = "BreezeManaged"
+	breezeManaged  = "BL4CKManaged"
 
 	removableStorageKey = `SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}`
 	denyWriteValue      = "Deny_Write"
@@ -41,7 +42,7 @@ func (winEnforcer) ApplyGate(class string, hasExceptions bool) EnforceOutcome {
 	}
 	if serr := k.SetDWordValue(breezeManaged, 1); serr != nil {
 		return EnforceOutcome{Mechanism: "usbstor-start", Applied: true, Verified: false,
-			Detail: "Start set but BreezeManaged sentinel write failed (revert would refuse): " + serr.Error()}
+			Detail: "Start set but BL4CKManaged sentinel write failed (revert would refuse): " + serr.Error()}
 	}
 	// Probe-verify.
 	got, _, err := k.GetIntegerValue(usbstorValue)
@@ -59,7 +60,7 @@ func (winEnforcer) RevertGate(class string) EnforceOutcome {
 	// Only revert if WE set it (sentinel present), to avoid clobbering admin config.
 	if managed, _, mErr := k.GetIntegerValue(breezeManaged); mErr != nil || managed != 1 {
 		return EnforceOutcome{Mechanism: "usbstor-start", Applied: false, Verified: true,
-			Detail: "not Breeze-managed; left untouched"}
+			Detail: "not BL4CK-managed; left untouched"}
 	}
 	if err := k.SetDWordValue(usbstorValue, usbstorDefault); err != nil {
 		return EnforceOutcome{Mechanism: "usbstor-start", Detail: "restore Start: " + err.Error()}
@@ -73,10 +74,12 @@ func (winEnforcer) RevertGate(class string) EnforceOutcome {
 
 func (winEnforcer) DisableDevice(instanceID string) EnforceOutcome {
 	cmd := exec.Command("pnputil", "/remove-device", instanceID)
+	oscmd.Hide(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		removeErr := err
 		removeOut := strings.TrimSpace(string(out))
 		cmd = exec.Command("pnputil", "/disable-device", instanceID)
+		oscmd.Hide(cmd)
 		if out, err = cmd.CombinedOutput(); err != nil {
 			return EnforceOutcome{Mechanism: "pnputil", Applied: false, Verified: false,
 				Detail: fmt.Sprintf("pnputil remove: %v: %s; disable: %v: %s",
@@ -85,6 +88,7 @@ func (winEnforcer) DisableDevice(instanceID string) EnforceOutcome {
 	}
 	// Probe: device should no longer enumerate as present (removed) or report disabled.
 	probe := exec.Command("pnputil", "/enum-devices", "/instanceid", instanceID)
+	oscmd.Hide(probe)
 	pout, perr := probe.CombinedOutput()
 	normalized := strings.Join(strings.Fields(strings.ToLower(string(pout))), " ")
 	var exitErr *exec.ExitError

@@ -181,7 +181,7 @@ describe('GET /i/:shortCode/download/:os', () => {
     const res = await buildApp().request('/i/abc1234567/download/win');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/zip');
-    expect(res.headers.get('content-disposition')).toContain('breeze-agent-windows.zip');
+    expect(res.headers.get('content-disposition')).toContain('bl4ck-agent-windows.zip');
     expect(fetchRegularMsiMock).toHaveBeenCalledTimes(1);
     expect(buildWindowsInstallerZipMock).toHaveBeenCalledTimes(1);
     const [, values] = buildWindowsInstallerZipMock.mock.calls[0]!;
@@ -203,7 +203,7 @@ describe('GET /i/:shortCode/download/:os', () => {
     });
     const res = await buildApp().request('/i/abc1234567/download/mac');
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-disposition')).toContain('breeze-agent-macos.zip');
+    expect(res.headers.get('content-disposition')).toContain('bl4ck-agent-macos.zip');
     // macOS no longer fetches a pkg server-side — install.sh downloads the
     // arch-matched pkg at install time; only the zip is built here.
     expect(buildMacosInstallerZipMock).toHaveBeenCalledTimes(1);

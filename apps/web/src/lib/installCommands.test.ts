@@ -63,7 +63,7 @@ describe('buildInstallCommands', () => {
       const { windows } = buildInstallCommands(base);
       expect(windows.startsWith("$ErrorActionPreference='Stop';")).toBe(true);
       expect(windows).toContain('Invoke-WebRequest');
-      expect(windows).toContain('breeze-agent-windows-amd64.exe');
+      expect(windows).toContain('bl4ck-agent-windows-amd64.exe');
     });
 
     it('checks $LASTEXITCODE after every agent invocation', () => {
@@ -77,7 +77,7 @@ describe('buildInstallCommands', () => {
     it('verifies the download is a real PE executable before running it', () => {
       const { windows } = buildInstallCommands(base);
       // The Windows analog of the unix shebang check: a captive portal's 200
-      // HTML saved as breeze-agent.exe must be blamed on the network, not
+      // HTML saved as bl4ck-agent.exe must be blamed on the network, not
       // surface as PowerShell's raw "not a valid application" exception.
       expect(windows).toContain('0x4D');
       expect(windows).toContain('0x5A');
@@ -101,6 +101,6 @@ describe('buildInstallCommands', () => {
     });
     expect(cmds.macos).toContain('https://rmm.example.com/api/v1/agents/install.sh');
     expect(cmds.macos).not.toContain('com//');
-    expect(cmds.windows).toContain('https://gh.example.com/dl/breeze-agent-windows-amd64.exe');
+    expect(cmds.windows).toContain('https://gh.example.com/dl/bl4ck-agent-windows-amd64.exe');
   });
 });

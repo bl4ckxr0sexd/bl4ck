@@ -14,7 +14,7 @@ var applyWinUpdate = winupdate.Apply
 // applyPatchSourceConfig handles the patch_source_settings block from the
 // heartbeat config update (#1872). When exclusiveWindowsUpdate is true the
 // Windows agent suppresses the native Windows Update automatic-install channel;
-// false reverts any enforcement Breeze previously applied. No-op on non-Windows.
+// false reverts any enforcement BL4CK previously applied. No-op on non-Windows.
 func (h *Heartbeat) applyPatchSourceConfig(raw any) {
 	m, ok := raw.(map[string]any)
 	if !ok {

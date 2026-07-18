@@ -15,18 +15,18 @@ func TestXmlEscapeString_EscapesSpecialChars(t *testing.T) {
 	}{
 		{
 			name:  "plain path",
-			input: "/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper",
-			want:  "/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper",
+			input: "/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper",
+			want:  "/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper",
 		},
 		{
 			name:  "path with angle brackets",
-			input: "/tmp/<test>/breeze-helper",
-			want:  "/tmp/&lt;test&gt;/breeze-helper",
+			input: "/tmp/<test>/bl4ck-helper",
+			want:  "/tmp/&lt;test&gt;/bl4ck-helper",
 		},
 		{
 			name:  "path with ampersand",
-			input: "/opt/breeze & co/breeze-helper",
-			want:  "/opt/breeze &amp; co/breeze-helper",
+			input: "/opt/breeze & co/bl4ck-helper",
+			want:  "/opt/breeze &amp; co/bl4ck-helper",
 		},
 		{
 			name:  "path with quotes",
@@ -48,7 +48,7 @@ func TestXmlEscapeString_EscapesSpecialChars(t *testing.T) {
 func TestInstallAutoStart_PathWithAngleBracketNotUnescaped(t *testing.T) {
 	// A path containing '<' must appear XML-escaped in the plist output,
 	// never as a raw '<' character between the <string> tags.
-	binaryPath := "/tmp/<evil>/breeze-helper"
+	binaryPath := "/tmp/<evil>/bl4ck-helper"
 
 	// We call the plist builder indirectly by constructing what it would produce.
 	// Since installAutoStart writes to disk (requires root on macOS), we test

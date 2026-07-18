@@ -14,7 +14,7 @@ import (
 )
 
 const desktopEntryDir = "/etc/xdg/autostart"
-const desktopEntryPath = "/etc/xdg/autostart/breeze-helper.desktop"
+const desktopEntryPath = "/etc/xdg/autostart/bl4ck-helper.desktop"
 
 func packageExtension() string { return ".AppImage" }
 
@@ -61,7 +61,7 @@ func installPackage(appImagePath, binaryPath string) error {
 func renderAutoStartEntry(binaryPath string) string {
 	return fmt.Sprintf(`[Desktop Entry]
 Type=Application
-Name=Breeze Helper
+Name=BL4CK Helper
 Exec=%q
 Hidden=false
 NoDisplay=true
@@ -141,7 +141,7 @@ func spawnWithConfig(binaryPath, sessionKey, configPath string) (int, error) {
 }
 
 func isHelperRunning() bool {
-	out, err := outputHelperCommand("pgrep", "-f", "breeze-helper")
+	out, err := outputHelperCommand("pgrep", "-f", "bl4ck-helper")
 	if err != nil {
 		return false
 	}
@@ -149,5 +149,5 @@ func isHelperRunning() bool {
 }
 
 func stopHelper() error {
-	return runHelperCommand("pkill", "-f", "breeze-helper")
+	return runHelperCommand("pkill", "-f", "bl4ck-helper")
 }

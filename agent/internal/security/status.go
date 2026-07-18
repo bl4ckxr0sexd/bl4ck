@@ -88,13 +88,13 @@ func defaultDataDir() string {
 	case "windows":
 		programData := os.Getenv("ProgramData")
 		if programData == "" {
-			return filepath.Join("C:", "ProgramData", "Breeze")
+			return filepath.Join("C:", "ProgramData", "BL4CK")
 		}
-		return filepath.Join(programData, "Breeze")
+		return filepath.Join(programData, "BL4CK")
 	case "darwin":
-		return "/Library/Application Support/Breeze"
+		return "/Library/Application Support/BL4CK"
 	default:
-		return "/var/lib/breeze"
+		return "/var/lib/bl4ck"
 	}
 }
 

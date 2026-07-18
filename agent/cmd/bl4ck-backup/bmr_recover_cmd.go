@@ -48,7 +48,7 @@ func newBMRRecoverCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&token, "token", "", "BMR recovery token")
-	cmd.Flags().StringVar(&server, "server", "", "Breeze server URL")
+	cmd.Flags().StringVar(&server, "server", "", "BL4CK server URL")
 	cmd.Flags().StringArrayVar(&targetPathFlags, "target-path", nil, "Target path override in the form source=target; may be repeated")
 	_ = cmd.MarkFlagRequired("token")
 	_ = cmd.MarkFlagRequired("server")

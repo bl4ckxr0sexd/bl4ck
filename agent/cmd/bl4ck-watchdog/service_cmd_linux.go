@@ -13,40 +13,40 @@ import (
 )
 
 const (
-	watchdogBinaryPath  = "/usr/local/bin/breeze-watchdog"
-	watchdogUnitDst     = "/etc/systemd/system/breeze-watchdog.service"
-	watchdogServiceName = "breeze-watchdog"
+	watchdogBinaryPath  = "/usr/local/bin/bl4ck-watchdog"
+	watchdogUnitDst     = "/etc/systemd/system/bl4ck-watchdog.service"
+	watchdogServiceName = "bl4ck-watchdog"
 )
 
 const watchdogUnit = `[Unit]
-Description=Breeze RMM Agent Watchdog
+Description=BL4CK RMM Agent Watchdog
 Documentation=https://github.com/breeze-rmm/breeze
-After=breeze-agent.service
+After=bl4ck-agent.service
 Wants=network-online.target
 StartLimitIntervalSec=300
 StartLimitBurst=10
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/breeze-watchdog run
-WorkingDirectory=/etc/breeze
+ExecStart=/usr/local/bin/bl4ck-watchdog run
+WorkingDirectory=/etc/bl4ck
 Restart=always
 # Watchdog should come back faster than the agent (RestartSec=30) so it can
 # cover an agent crash, but 5s was unnecessarily aggressive.
 RestartSec=15
 
-# RuntimeDirectory makes systemd create /run/breeze before this unit's mount
+# RuntimeDirectory makes systemd create /run/bl4ck before this unit's mount
 # namespace is built. The watchdog stays sandboxed (ProtectSystem=strict +
-# ReadWritePaths=/var/run/breeze below), so without this it hit the SAME
+# ReadWritePaths=/var/run/bl4ck below), so without this it hit the SAME
 # 226/NAMESPACE wedge as the pre-#1197 agent: /run is tmpfs, wiped on reboot,
-# and a missing tmpfiles.d snippet left /run/breeze absent, so the bind mount
+# and a missing tmpfiles.d snippet left /run/bl4ck absent, so the bind mount
 # for ReadWritePaths failed and the watchdog could not start. systemd reference-
-# counts the directory across breeze-agent + breeze-watchdog, so the directory
+# counts the directory across bl4ck-agent + bl4ck-watchdog, so the directory
 # survives as long as either unit is active (issue #1297). RuntimeDirectory is
 # not a sandbox restriction, so it does not relax the hardening below.
-# RuntimeDirectoryPreserve=yes keeps /run/breeze across a single unit's
+# RuntimeDirectoryPreserve=yes keeps /run/bl4ck across a single unit's
 # stop/restart so a restart of THIS unit does not remove the directory out from
-# under a still-running breeze-agent on a partially-upgraded host (RemoveOnStop
+# under a still-running bl4ck-agent on a partially-upgraded host (RemoveOnStop
 # defaults to 'no'/remove, which would re-wedge the agent at 226/NAMESPACE).
 RuntimeDirectory=breeze
 RuntimeDirectoryMode=0770
@@ -55,13 +55,13 @@ RuntimeDirectoryPreserve=yes
 # Security hardening
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/etc/breeze /var/lib/breeze /var/log/breeze /var/run/breeze /usr/local/bin
+ReadWritePaths=/etc/bl4ck /var/lib/bl4ck /var/log/bl4ck /var/run/bl4ck /usr/local/bin
 PrivateTmp=true
 
 # Logging (stdout goes to journald)
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=breeze-watchdog
+SyslogIdentifier=bl4ck-watchdog
 
 [Install]
 WantedBy=multi-user.target
@@ -70,7 +70,7 @@ WantedBy=multi-user.target
 func serviceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
-		Short: "Manage the Breeze Watchdog system service (systemd)",
+		Short: "Manage the BL4CK Watchdog system service (systemd)",
 	}
 	cmd.AddCommand(serviceInstallCmd())
 	cmd.AddCommand(serviceUninstallCmd())
@@ -85,11 +85,11 @@ func serviceInstallCmd() *cobra.Command {
 		Short: "Install the watchdog as a systemd service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service install)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service install)")
 			}
 
 			// Create log directory.
-			logDir := "/var/log/breeze"
+			logDir := "/var/log/bl4ck"
 			if err := os.MkdirAll(logDir, 0755); err != nil {
 				return fmt.Errorf("failed to create %s: %w", logDir, err)
 			}
@@ -99,7 +99,7 @@ func serviceInstallCmd() *cobra.Command {
 				if stopErr := exec.Command("systemctl", "stop", watchdogServiceName).Run(); stopErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to stop existing service: %v\n", stopErr)
 				} else {
-					fmt.Println("Stopped existing Breeze Watchdog service.")
+					fmt.Println("Stopped existing BL4CK Watchdog service.")
 				}
 			}
 
@@ -140,8 +140,8 @@ func serviceInstallCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Warning: failed to enable service: %s\n", strings.TrimSpace(string(out)))
 			}
 
-			fmt.Println("Breeze Watchdog service installed and enabled.")
-			fmt.Println("Start with: sudo breeze-watchdog service start")
+			fmt.Println("BL4CK Watchdog service installed and enabled.")
+			fmt.Println("Start with: sudo bl4ck-watchdog service start")
 			return nil
 		},
 	}
@@ -153,7 +153,7 @@ func serviceUninstallCmd() *cobra.Command {
 		Short: "Uninstall the watchdog systemd service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service uninstall)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service uninstall)")
 			}
 
 			// Stop the service.
@@ -181,7 +181,7 @@ func serviceUninstallCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Warning: failed to remove %s: %v\n", watchdogBinaryPath, err)
 			}
 
-			fmt.Println("Breeze Watchdog service uninstalled.")
+			fmt.Println("BL4CK Watchdog service uninstalled.")
 			return nil
 		},
 	}
@@ -193,11 +193,11 @@ func serviceStartCmd() *cobra.Command {
 		Short: "Start the watchdog service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service start)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service start)")
 			}
 
 			if _, err := os.Stat(watchdogUnitDst); os.IsNotExist(err) {
-				return fmt.Errorf("service not installed — run 'sudo breeze-watchdog service install' first")
+				return fmt.Errorf("service not installed — run 'sudo bl4ck-watchdog service install' first")
 			}
 
 			out, err := exec.Command("systemctl", "start", watchdogServiceName).CombinedOutput()
@@ -205,8 +205,8 @@ func serviceStartCmd() *cobra.Command {
 				return fmt.Errorf("failed to start service: %s", strings.TrimSpace(string(out)))
 			}
 
-			fmt.Println("Breeze Watchdog service started.")
-			fmt.Println("Logs: journalctl -u breeze-watchdog -f")
+			fmt.Println("BL4CK Watchdog service started.")
+			fmt.Println("Logs: journalctl -u bl4ck-watchdog -f")
 			return nil
 		},
 	}
@@ -218,7 +218,7 @@ func serviceStopCmd() *cobra.Command {
 		Short: "Stop the watchdog service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service stop)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service stop)")
 			}
 
 			out, err := exec.Command("systemctl", "stop", watchdogServiceName).CombinedOutput()
@@ -226,7 +226,7 @@ func serviceStopCmd() *cobra.Command {
 				return fmt.Errorf("failed to stop service: %s", strings.TrimSpace(string(out)))
 			}
 
-			fmt.Println("Breeze Watchdog service stopped.")
+			fmt.Println("BL4CK Watchdog service stopped.")
 			return nil
 		},
 	}
@@ -243,5 +243,5 @@ func restartWatchdogService() error {
 
 // agentBinaryPath returns the platform-specific agent binary path.
 func agentBinaryPath() string {
-	return "/usr/local/bin/breeze-agent"
+	return "/usr/local/bin/bl4ck-agent"
 }

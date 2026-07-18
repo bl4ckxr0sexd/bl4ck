@@ -145,16 +145,16 @@ func (u *Updater) expectedReleaseAssetNames() map[string]struct{} {
 			suffix = ".exe"
 		}
 		return map[string]struct{}{
-			fmt.Sprintf("breeze-agent-%s-%s%s", runtime.GOOS, runtime.GOARCH, suffix): {},
+			fmt.Sprintf("bl4ck-agent-%s-%s%s", runtime.GOOS, runtime.GOARCH, suffix): {},
 		}
 	case "helper":
 		switch runtime.GOOS {
 		case "windows":
-			return map[string]struct{}{"breeze-helper-windows.msi": {}}
+			return map[string]struct{}{"bl4ck-helper-windows.msi": {}}
 		case "darwin":
-			return map[string]struct{}{"breeze-helper-macos.dmg": {}}
+			return map[string]struct{}{"bl4ck-helper-macos.dmg": {}}
 		case "linux":
-			return map[string]struct{}{"breeze-helper-linux.AppImage": {}}
+			return map[string]struct{}{"bl4ck-helper-linux.AppImage": {}}
 		}
 	case "viewer":
 		switch manifestPlatform() {
@@ -166,7 +166,7 @@ func (u *Updater) expectedReleaseAssetNames() map[string]struct{} {
 			return map[string]struct{}{"breeze-viewer-linux.AppImage": {}}
 		}
 	case "user-helper":
-		// breeze-user-helper is the GUI-subsystem sibling of breeze-agent
+		// bl4ck-user-helper is the GUI-subsystem sibling of bl4ck-agent
 		// that runs in interactive user sessions (sessionbroker spawn path).
 		// It only exists on Windows — Linux/macOS user-session work is
 		// handled by other surfaces. See agent/installer/build-msi.ps1
@@ -174,11 +174,11 @@ func (u *Updater) expectedReleaseAssetNames() map[string]struct{} {
 		// auto-upgrade path (#816) downloads it as a separate artifact.
 		if runtime.GOOS == "windows" {
 			return map[string]struct{}{
-				fmt.Sprintf("breeze-user-helper-%s-%s.exe", runtime.GOOS, runtime.GOARCH): {},
+				fmt.Sprintf("bl4ck-user-helper-%s-%s.exe", runtime.GOOS, runtime.GOARCH): {},
 			}
 		}
 	case "watchdog":
-		// breeze-watchdog is the supervisor sibling of breeze-agent, shipped
+		// bl4ck-watchdog is the supervisor sibling of bl4ck-agent, shipped
 		// per-arch on every platform with the same asset-name shape as the
 		// agent. Used by doUpdateWatchdog (the watchdog's failover self-update)
 		// and by the agent's handleWatchdogUpgrade self-heal. Without this case the
@@ -190,7 +190,7 @@ func (u *Updater) expectedReleaseAssetNames() map[string]struct{} {
 			suffix = ".exe"
 		}
 		return map[string]struct{}{
-			fmt.Sprintf("breeze-watchdog-%s-%s%s", runtime.GOOS, runtime.GOARCH, suffix): {},
+			fmt.Sprintf("bl4ck-watchdog-%s-%s%s", runtime.GOOS, runtime.GOARCH, suffix): {},
 		}
 	}
 	return map[string]struct{}{}
@@ -200,7 +200,7 @@ func (u *Updater) expectedReleaseAssetNames() map[string]struct{} {
 // the running architecture. The .pkg is built and listed in the signed release
 // manifest's asset list alongside the bare binary (release.yml).
 func pkgAssetName() string {
-	return fmt.Sprintf("breeze-agent-darwin-%s.pkg", runtime.GOARCH)
+	return fmt.Sprintf("bl4ck-agent-darwin-%s.pkg", runtime.GOARCH)
 }
 
 // pkgAssetChecksum extracts the signed SHA-256 of the macOS .pkg installer from
@@ -300,7 +300,7 @@ func writeUpdateMarker(version string) {
 
 // UpdateTo is a thin shim around UpdateToWithOptions for the common case of
 // an agent-only upgrade. New code (and any caller that needs to thread a
-// companion binary like breeze-user-helper.exe through the Windows restart
+// companion binary like bl4ck-user-helper.exe through the Windows restart
 // helper) should call UpdateToWithOptions directly.
 func (u *Updater) UpdateTo(version string) error {
 	return u.UpdateToWithOptions(version, UpdateOptions{})
@@ -567,7 +567,7 @@ func (u *Updater) verifyReleaseArtifactManifest(payload []byte, info downloadInf
 	// rather than parsed from info.URL — the URL may be a server-relative
 	// proxy (e.g. https://breeze.example.com/api/v1/agents/download/...)
 	// whose last segment is not the asset filename. The signed manifest's
-	// asset list still uses canonical names like "breeze-agent-windows-amd64.exe".
+	// asset list still uses canonical names like "bl4ck-agent-windows-amd64.exe".
 	// Issue #646.
 	expected := u.expectedReleaseAssetNames()
 	if len(expected) == 0 {
@@ -620,7 +620,7 @@ func (u *Updater) verifyReleaseArtifactManifest(payload []byte, info downloadInf
 
 // DownloadBinary is the exported wrapper around downloadBinary used by
 // callers that need to pre-download a companion artifact (e.g. the
-// breeze-user-helper.exe) outside the full UpdateTo flow. Returns the
+// bl4ck-user-helper.exe) outside the full UpdateTo flow. Returns the
 // temp-file path on success after verifying the downloaded bytes against
 // the signed manifest checksum. The caller is responsible for cleanup.
 // Issue #816.
@@ -963,7 +963,7 @@ func (u *Updater) downloadFromURL(rawURL string) (string, error) {
 		return "", fmt.Errorf("binary download failed with status %d", resp.StatusCode)
 	}
 
-	tempFile, err := os.CreateTemp("", "breeze-agent-dev-*")
+	tempFile, err := os.CreateTemp("", "bl4ck-agent-dev-*")
 	if err != nil {
 		return "", err
 	}

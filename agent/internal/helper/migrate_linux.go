@@ -14,7 +14,7 @@ func migrateLegacyPlatform() {
 }
 
 func stopHelperLegacy() {
-	_ = runHelperCommand("pkill", "-f", "breeze-helper")
+	_ = runHelperCommand("pkill", "-f", "bl4ck-helper")
 }
 
 func migrationTargets() ([]string, error) {

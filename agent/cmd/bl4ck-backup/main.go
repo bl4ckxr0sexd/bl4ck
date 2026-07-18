@@ -1,5 +1,5 @@
-// Package main is the entry point for the breeze-backup helper binary.
-// It is spawned on demand by the main breeze-agent when backup commands
+// Package main is the entry point for the bl4ck-backup helper binary.
+// It is spawned on demand by the main bl4ck-agent when backup commands
 // arrive, connects to the agent over IPC, and owns all heavy backup
 // dependencies (cloud SDKs, VSS COM, MSSQL, Hyper-V).
 package main
@@ -31,9 +31,9 @@ import (
 var version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:   "breeze-backup",
-	Short: "Breeze RMM Backup Helper",
-	Long:  "Backup helper binary spawned by the Breeze agent for backup operations.",
+	Use:   "bl4ck-backup",
+	Short: "BL4CK RMM Backup Helper",
+	Long:  "Backup helper binary spawned by the BL4CK agent for backup operations.",
 	Run:   func(cmd *cobra.Command, args []string) { runBackupHelper() },
 }
 
@@ -95,7 +95,7 @@ func main() {
 }
 
 func runBackupHelper() {
-	slog.Info("breeze-backup starting", "version", version, "pid", os.Getpid(), "platform", runtime.GOOS)
+	slog.Info("bl4ck-backup starting", "version", version, "pid", os.Getpid(), "platform", runtime.GOOS)
 
 	if socketPath == "" {
 		socketPath = ipc.DefaultSocketPath()
@@ -156,7 +156,7 @@ func runBackupHelper() {
 	if mgr != nil {
 		mgr.Stop()
 	}
-	slog.Info("breeze-backup exiting")
+	slog.Info("bl4ck-backup exiting")
 }
 
 func dialAgent(path string) (*ipc.Conn, error) {

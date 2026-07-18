@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 const (
@@ -23,6 +25,7 @@ func runHelperCommand(name string, args ...string) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	oscmd.Hide(cmd)
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return fmt.Errorf("%s timed out: %w", name, ctx.Err())
@@ -35,6 +38,7 @@ func outputHelperCommand(name string, args ...string) ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	oscmd.Hide(cmd)
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("%s timed out: %w", name, ctx.Err())

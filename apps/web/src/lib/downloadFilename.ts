@@ -27,7 +27,7 @@ export function filenameFromContentDisposition(header: string | null): string | 
 }
 
 export function fallbackInstallerFilename(platform: 'windows' | 'macos'): string {
-  return platform === 'windows' ? 'breeze-agent-windows.zip' : 'breeze-agent-macos.zip';
+  return platform === 'windows' ? 'bl4ck-agent-windows.zip' : 'bl4ck-agent-macos.zip';
 }
 
 function unquote(value: string): string {

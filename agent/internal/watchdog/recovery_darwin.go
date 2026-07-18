@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const agentServiceLabel = "com.breeze.agent"
+const agentServiceLabel = "com.bl4ck.agent"
 
 // restartAgentService restarts the launchd service for the agent.
 // It tries "launchctl kickstart -k" first (modern), then falls back to
@@ -26,7 +26,7 @@ func restartAgentService() error {
 		_ = bootoutErr
 	}
 
-	const darwinPlistPath = "/Library/LaunchDaemons/com.breeze.agent.plist"
+	const darwinPlistPath = "/Library/LaunchDaemons/com.bl4ck.agent.plist"
 	out, err = exec.Command("launchctl", "bootstrap", "system", darwinPlistPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("launchctl bootstrap failed: %s: %w", strings.TrimSpace(string(out)), err)
@@ -49,7 +49,7 @@ func startAgentService() error {
 	}
 
 	// Not loaded — bootstrap from plist.
-	const darwinPlistPath = "/Library/LaunchDaemons/com.breeze.agent.plist"
+	const darwinPlistPath = "/Library/LaunchDaemons/com.bl4ck.agent.plist"
 	out, err := exec.Command("launchctl", "bootstrap", "system", darwinPlistPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("launchctl bootstrap failed: %s: %w", strings.TrimSpace(string(out)), err)

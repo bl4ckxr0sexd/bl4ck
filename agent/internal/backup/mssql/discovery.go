@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -137,7 +138,9 @@ func discoverFromRegistry() ([]SQLInstance, error) {
 
 // discoverFromServices looks for SQL Server Windows services.
 func discoverFromServices() ([]SQLInstance, error) {
-	out, err := exec.Command("sc", "query", "type=", "service", "state=", "all").CombinedOutput()
+	c := exec.Command("sc", "query", "type=", "service", "state=", "all")
+	oscmd.Hide(c)
+	out, err := c.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("sc query: %w", err)
 	}
@@ -163,7 +166,9 @@ func discoverFromServices() ([]SQLInstance, error) {
 
 		status := "unknown"
 		// Check if the service is running
-		checkOut, checkErr := exec.Command("sc", "query", svcName).CombinedOutput()
+		checkCmd := exec.Command("sc", "query", svcName)
+		oscmd.Hide(checkCmd)
+		checkOut, checkErr := checkCmd.CombinedOutput()
 		if checkErr == nil {
 			checkStr := string(checkOut)
 			if strings.Contains(checkStr, "RUNNING") {
@@ -297,6 +302,7 @@ func runSqlcmd(serverName, query string) (string, error) {
 	}
 
 	cmd := exec.Command(sqlcmdPath, "-S", serverName, "-E", "-Q", query, "-W", "-h", "-1", "-s", "|")
+	oscmd.Hide(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("sqlcmd: %w: %s", err, string(out))

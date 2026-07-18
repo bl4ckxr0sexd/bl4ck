@@ -25,7 +25,7 @@ const (
 )
 
 func showPamDialog(req ipc.PamRequestDialog) ipc.PamDialogResult {
-	title := syscall.StringToUTF16Ptr("Breeze — Elevation Request")
+	title := syscall.StringToUTF16Ptr("BL4CK — Elevation Request")
 	body := syscall.StringToUTF16Ptr(buildPamDialogBody(req))
 	flags := uintptr(mbYesNo | mbIconWarning | mbTopMost | mbSystemModal | mbSetForeground)
 
@@ -38,7 +38,7 @@ func showPamDialog(req ipc.PamRequestDialog) ipc.PamDialogResult {
 
 func buildPamDialogBody(req ipc.PamRequestDialog) string {
 	lines := []string{
-		"Breeze detected an elevation request.",
+		"BL4CK detected an elevation request.",
 		"",
 		fmt.Sprintf("Program: %s", pamDialogValue(req.ExePath)),
 		fmt.Sprintf("Signer: %s", pamDialogValue(req.Signer)),

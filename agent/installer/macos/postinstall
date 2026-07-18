@@ -1,16 +1,16 @@
 #!/bin/bash
-# Breeze Agent macOS .pkg postinstall script
+# BL4CK Agent macOS .pkg postinstall script
 # Runs as root after the installer places files on disk.
 
 set -e
 
-BINARY="/usr/local/bin/breeze-agent"
-DESKTOP_HELPER_BINARY="/usr/local/bin/breeze-desktop-helper"
-CONFIG_DIR="/Library/Application Support/Breeze"
-LOG_DIR="/Library/Logs/Breeze"
-DAEMON_PLIST="/Library/LaunchDaemons/com.breeze.agent.plist"
-DESKTOP_USER_PLIST="/Library/LaunchAgents/com.breeze.desktop-helper-user.plist"
-DESKTOP_LOGINWINDOW_PLIST="/Library/LaunchAgents/com.breeze.desktop-helper-loginwindow.plist"
+BINARY="/usr/local/bin/bl4ck-agent"
+DESKTOP_HELPER_BINARY="/usr/local/bin/bl4ck-desktop-helper"
+CONFIG_DIR="/Library/Application Support/BL4CK"
+LOG_DIR="/Library/Logs/BL4CK"
+DAEMON_PLIST="/Library/LaunchDaemons/com.bl4ck.agent.plist"
+DESKTOP_USER_PLIST="/Library/LaunchAgents/com.bl4ck.desktop-helper-user.plist"
+DESKTOP_LOGINWINDOW_PLIST="/Library/LaunchAgents/com.bl4ck.desktop-helper-loginwindow.plist"
 
 ensure_breeze_group() {
     if dscl . -read /Groups/breeze &>/dev/null; then
@@ -51,16 +51,16 @@ chmod 0644 "$DESKTOP_USER_PLIST"
 chmod 0644 "$DESKTOP_LOGINWINDOW_PLIST"
 
 # Watchdog
-WATCHDOG_BINARY="/usr/local/bin/breeze-watchdog"
+WATCHDOG_BINARY="/usr/local/bin/bl4ck-watchdog"
 if [ -f "$WATCHDOG_BINARY" ]; then
     xattr -d com.apple.quarantine "$WATCHDOG_BINARY" 2>/dev/null || true
     chmod 0755 "$WATCHDOG_BINARY"
 fi
 
 # Bootstrap watchdog daemon
-WATCHDOG_PLIST="/Library/LaunchDaemons/com.breeze.watchdog.plist"
+WATCHDOG_PLIST="/Library/LaunchDaemons/com.bl4ck.watchdog.plist"
 if [ -f "$WATCHDOG_PLIST" ]; then
-    launchctl bootout system/com.breeze.watchdog 2>/dev/null || true
+    launchctl bootout system/com.bl4ck.watchdog 2>/dev/null || true
     launchctl bootstrap system "$WATCHDOG_PLIST" 2>/dev/null || \
         launchctl load "$WATCHDOG_PLIST" 2>/dev/null || true
 fi
@@ -69,7 +69,7 @@ fi
 ensure_breeze_group
 
 # Stop existing service if running
-launchctl bootout system/com.breeze.agent 2>/dev/null || true
+launchctl bootout system/com.bl4ck.agent 2>/dev/null || true
 
 # Load the daemon (starts automatically via RunAtLoad)
 launchctl bootstrap system "$DAEMON_PLIST"
@@ -82,12 +82,12 @@ for uid in $(ps -axo uid= -o comm= | grep -i '[lL]oginwindow' | awk '{print $1}'
     # Skip root (uid 0) — LaunchAgents are user-session only
     [ "$uid" = "0" ] && continue
     # Unload any stale instance first
-    launchctl bootout "gui/$uid/com.breeze.desktop-helper-user" 2>/dev/null || true
+    launchctl bootout "gui/$uid/com.bl4ck.desktop-helper-user" 2>/dev/null || true
     # Bootstrap into the user's GUI domain
     launchctl bootstrap "gui/$uid" "$DESKTOP_USER_PLIST" 2>/dev/null || true
 done
 
 launchctl bootstrap loginwindow "$DESKTOP_LOGINWINDOW_PLIST" 2>/dev/null || true
 
-echo "Breeze Agent installed and started."
+echo "BL4CK Agent installed and started."
 exit 0

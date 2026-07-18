@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.breeze.agent</string>
+    <string>com.bl4ck.agent</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/breeze-agent</string>
+        <string>/usr/local/bin/bl4ck-agent</string>
         <string>run</string>
     </array>
 
@@ -21,13 +21,13 @@
     <integer>5</integer>
 
     <key>WorkingDirectory</key>
-    <string>/Library/Application Support/Breeze</string>
+    <string>/Library/Application Support/BL4CK</string>
 
     <key>StandardOutPath</key>
-    <string>/Library/Logs/Breeze/agent.log</string>
+    <string>/Library/Logs/BL4CK/agent.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Library/Logs/Breeze/agent.err</string>
+    <string>/Library/Logs/BL4CK/agent.err</string>
 
     <key>SoftResourceLimits</key>
     <dict>

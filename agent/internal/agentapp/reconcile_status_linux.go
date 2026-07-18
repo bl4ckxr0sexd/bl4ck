@@ -78,7 +78,7 @@ func startReconcileFailureReporter() {
 			if reason, ok := readReconcileFailure(); ok {
 				log.Error(
 					"systemd unit auto-heal failed; remote terminal/scripts may hit privilege "+
-						"errors until 'sudo breeze-agent service install' is run",
+						"errors until 'sudo bl4ck-agent service install' is run",
 					"component", "service-reconcile",
 					"reason", reason,
 				)

@@ -19,14 +19,14 @@ var log = logging.L("tcc")
 // Only processes with Full Disk Access (or root) can write to it.
 const systemTCCDBPath = "/Library/Application Support/com.apple.TCC/TCC.db"
 
-// agentBinaryPath is the installed location of the Breeze agent.
-const agentBinaryPath = "/usr/local/bin/breeze-agent"
+// agentBinaryPath is the installed location of the BL4CK agent.
+const agentBinaryPath = "/usr/local/bin/bl4ck-agent"
 
-// helperBinaryPath is the installed location of the Breeze desktop helper.
+// helperBinaryPath is the installed location of the BL4CK desktop helper.
 // The helper runs in the user's GUI session and is the process that
 // actually performs screen capture and accessibility actions, so it
 // needs its own TCC grants separate from the agent daemon.
-const helperBinaryPath = "/usr/local/bin/breeze-desktop-helper"
+const helperBinaryPath = "/usr/local/bin/bl4ck-desktop-helper"
 
 // tccService represents a macOS TCC service identifier.
 type tccService struct {

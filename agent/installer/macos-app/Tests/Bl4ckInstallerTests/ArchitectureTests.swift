@@ -1,5 +1,5 @@
 import XCTest
-@testable import BreezeInstaller
+@testable import Bl4ckInstaller
 
 final class ArchitectureTests: XCTestCase {
     func testMapsArm64() {
@@ -18,7 +18,7 @@ final class ArchitectureTests: XCTestCase {
     }
 
     func testPickPkgFilenames() {
-        XCTAssertEqual(Architecture.arm64.pkgResourceName, "breeze-agent-arm64.pkg")
-        XCTAssertEqual(Architecture.amd64.pkgResourceName, "breeze-agent-amd64.pkg")
+        XCTAssertEqual(Architecture.arm64.pkgResourceName, "bl4ck-agent-arm64.pkg")
+        XCTAssertEqual(Architecture.amd64.pkgResourceName, "bl4ck-agent-amd64.pkg")
     }
 }

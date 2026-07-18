@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-const agentWindowsServiceName = "BreezeAgent"
+const agentWindowsServiceName = "Bl4ckAgent"
 
 // restartAgentService stops then starts the Windows service for the agent.
 // It waits up to 15 seconds for the service to reach the Stopped state before

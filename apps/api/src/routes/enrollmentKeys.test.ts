@@ -1431,7 +1431,7 @@ describe("GET /:id/installer/macos — app-bundle path", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Disposition")).toContain(
-      "breeze-agent-macos.zip",
+      "bl4ck-agent-macos.zip",
     );
     // The app-bundle path must NOT have been called
     expect(vi.mocked(renameAppInZip)).not.toHaveBeenCalled();
@@ -1473,7 +1473,7 @@ describe("GET /:id/installer/macos — app-bundle path", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Disposition")).toContain(
-      "breeze-agent-macos.zip",
+      "bl4ck-agent-macos.zip",
     );
     expect(vi.mocked(renameAppInZip)).not.toHaveBeenCalled();
     expect(issueSpy).not.toHaveBeenCalled();

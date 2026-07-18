@@ -325,7 +325,7 @@ type Heartbeat struct {
 
 	// watchdogVersionReader is an optional test seam: when non-nil,
 	// installedWatchdogVersion calls this instead of the real on-disk read
-	// (readInstalledWatchdogVersion, which execs `breeze-watchdog status`). It
+	// (readInstalledWatchdogVersion, which execs `bl4ck-watchdog status`). It
 	// returns (version, stable) — stable=false marks a transient failure that
 	// must NOT be cached. nil in production.
 	watchdogVersionReader func() (string, bool)
@@ -454,7 +454,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		h.mu.Unlock()
 	}
 
-	// Initialize Breeze Assist manager
+	// Initialize BL4CK Assist manager
 	helperCtx, helperCancel := context.WithCancel(context.Background())
 	go func() { <-h.stopChan; helperCancel() }()
 
@@ -483,7 +483,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 			}),
 		)
 	} else if cfg.IsHeadless && h.sessionBroker != nil {
-		// macOS/Linux headless daemons: launch Breeze Helper via user-role
+		// macOS/Linux headless daemons: launch BL4CK Helper via user-role
 		// IPC helper (LaunchAgent) so the Tauri app runs in the user session.
 		h.helperMgr = helper.New(helperCtx, cfg.ServerURL, ftToken, cfg.AgentID,
 			helper.WithSessionEnumerator(helper.NewPlatformEnumerator()),
@@ -525,7 +525,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 	// Enable IPC session broker when running as a service, headless, or when
 	// explicitly configured. macOS daemons handle desktop capture directly
 	// but still need the broker for user-context operations (run_as_user
-	// scripts and Breeze Helper launch).
+	// scripts and BL4CK Helper launch).
 	needsBroker := cfg.UserHelperEnabled || cfg.IsService || cfg.IsHeadless
 	if needsBroker {
 		socketPath := cfg.IPCSocketPath
@@ -564,7 +564,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		}
 	}, cfg.PatchRebootMaxPerDay)
 
-	// Set backup binary path for IPC forwarding to breeze-backup helper
+	// Set backup binary path for IPC forwarding to bl4ck-backup helper
 	h.backupBinaryPath = cfg.BackupBinaryPath
 
 	// For direct mode (non-service), notify API when WebRTC peer drops.
@@ -848,7 +848,7 @@ func (h *Heartbeat) Start() {
 	defer ticker.Stop()
 	const bootCheckInterval = 5 * time.Minute
 	var lastBootCheck time.Time
-	// Self-heal a missing breeze-user-helper.exe (Windows), decoupled from
+	// Self-heal a missing bl4ck-user-helper.exe (Windows), decoupled from
 	// upgrades. Zero-valued timer → fires on the first tick (≈startup), then
 	// every interval after (issue #816 follow-up).
 	const userHelperCheckInterval = 30 * time.Minute
@@ -1676,7 +1676,7 @@ func (h *Heartbeat) applyConfigUpdate(update map[string]any) {
 		}
 	}
 
-	// Apply patch_source_settings if present (#1872): enforce/revert Breeze as
+	// Apply patch_source_settings if present (#1872): enforce/revert BL4CK as
 	// the sole Windows Update source. No-op on non-Windows.
 	psRaw, hasPS := update["patch_source_settings"]
 	if !hasPS {
@@ -3761,7 +3761,7 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-// handleWatchdogUpgrade swaps the on-disk breeze-watchdog binary to
+// handleWatchdogUpgrade swaps the on-disk bl4ck-watchdog binary to
 // targetVersion and restarts the watchdog service. Invoked when the server sets
 // watchdogUpgradeTo in the heartbeat response (it does so only after a watchdog
 // failover heartbeat told it the on-disk watchdog is behind the latest
@@ -3901,7 +3901,7 @@ func (h *Heartbeat) handleUpgrade(targetVersion string) {
 	}
 }
 
-// prefetchUserHelper pre-downloads breeze-user-helper.exe so the upgrade-restart
+// prefetchUserHelper pre-downloads bl4ck-user-helper.exe so the upgrade-restart
 // script can drop it alongside the new agent binary. Returns nil when the
 // helper is not applicable (non-Windows) or could not be fetched (404 for
 // pre-#816 releases, network errors, checksum mismatches, manifest signature
@@ -3910,7 +3910,7 @@ func (h *Heartbeat) handleUpgrade(targetVersion string) {
 //
 // Without this prefetch, in-place upgrades produce an agent install missing
 // the user-helper (only the MSI installer ever placed it on disk before #816),
-// the HelperLifecycleManager falls through to a `breeze-agent.exe user-helper`
+// the HelperLifecycleManager falls through to a `bl4ck-agent.exe user-helper`
 // fallback every ~30s, and orphaned processes accumulate during heartbeat
 // goroutine wedges until the service dies.
 //
@@ -3960,7 +3960,7 @@ func (h *Heartbeat) prefetchUserHelper(targetVersion, binaryPath string) *update
 
 	pair := &updater.BinaryPair{
 		Temp:   tempPath,
-		Target: filepath.Join(filepath.Dir(binaryPath), "breeze-user-helper.exe"),
+		Target: filepath.Join(filepath.Dir(binaryPath), "bl4ck-user-helper.exe"),
 	}
 	log.Info(
 		"pre-downloaded user-helper for restart-helper swap",
@@ -3970,13 +3970,13 @@ func (h *Heartbeat) prefetchUserHelper(targetVersion, binaryPath string) *update
 	return pair
 }
 
-// reconcileUserHelper self-heals a Windows agent whose breeze-user-helper.exe
+// reconcileUserHelper self-heals a Windows agent whose bl4ck-user-helper.exe
 // sibling is missing from disk, decoupled from any version upgrade. The MSI
 // installer and the in-place upgrade prefetch (see prefetchUserHelper) are the
 // only two vectors that ever place the helper, so an agent installed via a
 // vector that skips it (direct-exe enrollment, pre-#816 MSI) and already at the
 // latest version has no path to acquire it — it falls back to spawning
-// breeze-agent.exe as the helper every ~30s, which is unstable (issue #816
+// bl4ck-agent.exe as the helper every ~30s, which is unstable (issue #816
 // follow-up). This reconciliation closes that gap: if the helper is absent next
 // to the agent, fetch the matching CURRENT version via the user-helper update
 // component and drop it in. All failure modes are non-fatal — we log and return
@@ -3988,11 +3988,11 @@ func (h *Heartbeat) reconcileUserHelper(binaryPath string) {
 	}
 	if goos != "windows" {
 		// macOS/Linux have no sibling helper binary — the helper runs as a
-		// breeze-agent subcommand — so there is nothing to reconcile.
+		// bl4ck-agent subcommand — so there is nothing to reconcile.
 		return
 	}
 
-	helperPath := filepath.Join(filepath.Dir(binaryPath), "breeze-user-helper.exe")
+	helperPath := filepath.Join(filepath.Dir(binaryPath), "bl4ck-user-helper.exe")
 	switch fi, statErr := os.Stat(helperPath); {
 	case statErr == nil && fi.Size() > 0:
 		// Present and non-empty — nothing to heal. If we'd been failing (e.g.
@@ -4150,7 +4150,7 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 		log.Error("failed to create backup directory", "path", backupDir, "error", err.Error())
 		return
 	}
-	backupPath := filepath.Join(backupDir, "breeze-agent.backup")
+	backupPath := filepath.Join(backupDir, "bl4ck-agent.backup")
 
 	updaterCfg := &updater.Config{
 		ServerURL:             h.config.ServerURL,
@@ -4161,7 +4161,7 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 		PinnedManifestPubKeys: h.config.PinnedManifestPubKeys,
 	}
 
-	// Pre-download breeze-user-helper.exe on Windows so the restart-helper
+	// Pre-download bl4ck-user-helper.exe on Windows so the restart-helper
 	// script can drop it alongside the new agent binary. See prefetchUserHelper
 	// for the full rationale (issue #816 / PR #845). All failure modes are
 	// non-fatal — a nil return value is the normal "agent-only upgrade"

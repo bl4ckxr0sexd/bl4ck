@@ -1,17 +1,17 @@
 import XCTest
-@testable import BreezeInstaller
+@testable import Bl4ckInstaller
 
 final class PrivilegedShellTests: XCTestCase {
     private let marker = "__BREEZE_INSTALLER_EXIT_STATUS__"
 
     func testParseExitStatusSuccessReturnsCleanedOutput() throws {
         let raw = """
-        installer: Package name is breeze-agent
+        installer: Package name is bl4ck-agent
         installer: Installation finished
         \(marker)0
         """
         let cleaned = try PrivilegedShell.parseExitStatus(rawOutput: raw)
-        XCTAssertEqual(cleaned, "installer: Package name is breeze-agent\ninstaller: Installation finished")
+        XCTAssertEqual(cleaned, "installer: Package name is bl4ck-agent\ninstaller: Installation finished")
     }
 
     func testParseExitStatusNonZeroThrowsCommandFailedWithCode() {

@@ -19,23 +19,23 @@ var (
 	installPackageFunc = installPackage
 )
 
-// legacyBinaryPath returns the old "Breeze Helper" binary path.
+// legacyBinaryPath returns the old "BL4CK Helper" binary path.
 func legacyBinaryPath() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "/Applications/Breeze Helper.app/Contents/MacOS/Breeze Helper"
+		return "/Applications/BL4CK Helper.app/Contents/MacOS/BL4CK Helper"
 	case "windows":
 		pf := os.Getenv("ProgramFiles")
 		if pf == "" {
 			pf = `C:\Program Files`
 		}
-		return filepath.Join(pf, "Breeze Helper", "Breeze Helper.exe")
+		return filepath.Join(pf, "BL4CK Helper", "BL4CK Helper.exe")
 	default:
-		return "/usr/local/bin/breeze-helper"
+		return "/usr/local/bin/bl4ck-helper"
 	}
 }
 
-// migrateFromLegacyName cleans up old "Breeze Helper" installations.
+// migrateFromLegacyName cleans up old "BL4CK Helper" installations.
 // Called at the top of Apply() under the manager mutex. Idempotent.
 func (m *Manager) migrateFromLegacyName() {
 	oldPath := legacyBinaryPath()
@@ -43,23 +43,23 @@ func (m *Manager) migrateFromLegacyName() {
 		return
 	}
 
-	log.Info("migrating from legacy Breeze Helper installation", "oldPath", oldPath)
+	log.Info("migrating from legacy BL4CK Helper installation", "oldPath", oldPath)
 	migrateLegacyPlatform()
 
 	switch runtime.GOOS {
 	case "darwin":
-		_ = os.RemoveAll("/Applications/Breeze Helper.app")
+		_ = os.RemoveAll("/Applications/BL4CK Helper.app")
 	case "windows":
 		pf := os.Getenv("ProgramFiles")
 		if pf == "" {
 			pf = `C:\Program Files`
 		}
-		_ = os.RemoveAll(filepath.Join(pf, "Breeze Helper"))
+		_ = os.RemoveAll(filepath.Join(pf, "BL4CK Helper"))
 	default:
 		_ = os.Remove(oldPath)
 	}
 
-	log.Info("legacy Breeze Helper installation cleaned up")
+	log.Info("legacy BL4CK Helper installation cleaned up")
 }
 
 func (m *Manager) needsSessionMigration() bool {

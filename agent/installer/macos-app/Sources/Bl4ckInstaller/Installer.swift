@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-/// Runs `installer -pkg` and `breeze-agent enroll` as root via the modern
+/// Runs `installer -pkg` and `bl4ck-agent enroll` as root via the modern
 /// macOS auth dialog (Touch ID / Apple Watch unlock when enabled). See
 /// `PrivilegedShell` for why we bridge to `AuthorizationExecuteWithPrivileges`
 /// directly instead of using AppleScript's `do shell script ... with
@@ -46,8 +46,8 @@ struct Installer {
             enrollArgs += ["--site-id", Installer.shellEscape(site)]
         }
         let enrollCmd = enrollArgs.joined(separator: " ")
-        let command = "/usr/sbin/installer -pkg \(Installer.shellEscape(pkgPath)) -target / && /usr/local/bin/breeze-agent enroll \(enrollCmd)"
-        let prompt = "Breeze needs to install the agent and configure system services."
+        let command = "/usr/sbin/installer -pkg \(Installer.shellEscape(pkgPath)) -target / && /usr/local/bin/bl4ck-agent enroll \(enrollCmd)"
+        let prompt = "BL4CK needs to install the agent and configure system services."
 
         do {
             _ = try PrivilegedShell.run(command: command, promptText: prompt)

@@ -10,8 +10,8 @@ import (
 )
 
 // watchdogLaunchdLabel is the launchd label of the watchdog LaunchDaemon
-// (matches breeze-watchdog's own service install).
-const watchdogLaunchdLabel = "com.breeze.watchdog"
+// (matches bl4ck-watchdog's own service install).
+const watchdogLaunchdLabel = "com.bl4ck.watchdog"
 
 // installAndRestartWatchdog downloads the verified watchdog binary, swaps it in
 // place, and kickstarts the watchdog LaunchDaemon so the new binary is

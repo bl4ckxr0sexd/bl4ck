@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const agentServiceName = "breeze-agent"
+const agentServiceName = "bl4ck-agent"
 
 // restartAgentService restarts the systemd unit for the agent.
 func restartAgentService() error {

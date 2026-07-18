@@ -55,7 +55,7 @@ func decideBootstrap(in bootstrapInputs) bootstrapAction {
 
 // artifactRef identifies a single pinned bootstrap artifact: its logical
 // name (for error messages), the expected SHA-256 hex digest, and the path
-// to GET it from relative to the Breeze API base URL.
+// to GET it from relative to the BL4CK API base URL.
 type artifactRef struct {
 	Name   string
 	SHA256 string

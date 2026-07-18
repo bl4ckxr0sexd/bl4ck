@@ -62,7 +62,7 @@ func TestApplyDisabledStopsRunningHelperAfterRestart(t *testing.T) {
 	}
 }
 
-// #1382: a running Breeze Assist helper only reads its config at spawn
+// #1382: a running BL4CK Assist helper only reads its config at spawn
 // (--config), so a Configuration Policy change must restart it to take effect.
 func TestApplyRestartsHelperOnConfigChangeWhenIdle(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -98,7 +98,7 @@ func TestApplyRestartsHelperOnConfigChangeWhenIdle(t *testing.T) {
 		_ = os.WriteFile(statusPath, []byte("version: 0.14.0\npid: 9001\n"), 0644)
 		return 9001, nil
 	}
-	helperBinary := filepath.Join(tmpDir, "breeze-helper")
+	helperBinary := filepath.Join(tmpDir, "bl4ck-helper")
 	if err := os.WriteFile(helperBinary, []byte("bin"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestApplyDefersRestartWhileChatActive(t *testing.T) {
 		spawned++
 		return 9001, nil
 	}
-	helperBinary := filepath.Join(tmpDir, "breeze-helper")
+	helperBinary := filepath.Join(tmpDir, "bl4ck-helper")
 	if err := os.WriteFile(helperBinary, []byte("bin"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestApplyEnabledSpawnsPerSession(t *testing.T) {
 		return 9001, nil
 	}
 
-	helperBinary := filepath.Join(tmpDir, "breeze-helper")
+	helperBinary := filepath.Join(tmpDir, "bl4ck-helper")
 	if err := os.WriteFile(helperBinary, []byte("bin"), 0755); err != nil {
 		t.Fatal(err)
 	}

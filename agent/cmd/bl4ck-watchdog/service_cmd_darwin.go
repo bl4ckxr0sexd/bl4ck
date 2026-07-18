@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	watchdogBinaryPath = "/usr/local/bin/breeze-watchdog"
-	watchdogPlistDst   = "/Library/LaunchDaemons/com.breeze.watchdog.plist"
-	watchdogLabel      = "com.breeze.watchdog"
+	watchdogBinaryPath = "/usr/local/bin/bl4ck-watchdog"
+	watchdogPlistDst   = "/Library/LaunchDaemons/com.bl4ck.watchdog.plist"
+	watchdogLabel      = "com.bl4ck.watchdog"
 )
 
 const watchdogPlist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -23,11 +23,11 @@ const watchdogPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.breeze.watchdog</string>
+    <string>com.bl4ck.watchdog</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/breeze-watchdog</string>
+        <string>/usr/local/bin/bl4ck-watchdog</string>
         <string>run</string>
     </array>
 
@@ -41,13 +41,13 @@ const watchdogPlist = `<?xml version="1.0" encoding="UTF-8"?>
     <integer>5</integer>
 
     <key>WorkingDirectory</key>
-    <string>/Library/Application Support/Breeze</string>
+    <string>/Library/Application Support/BL4CK</string>
 
     <key>StandardOutPath</key>
-    <string>/Library/Logs/Breeze/watchdog.log</string>
+    <string>/Library/Logs/BL4CK/watchdog.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Library/Logs/Breeze/watchdog.err</string>
+    <string>/Library/Logs/BL4CK/watchdog.err</string>
 </dict>
 </plist>
 `
@@ -55,7 +55,7 @@ const watchdogPlist = `<?xml version="1.0" encoding="UTF-8"?>
 func serviceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
-		Short: "Manage the Breeze Watchdog system service (launchd)",
+		Short: "Manage the BL4CK Watchdog system service (launchd)",
 	}
 	cmd.AddCommand(serviceInstallCmd())
 	cmd.AddCommand(serviceUninstallCmd())
@@ -70,11 +70,11 @@ func serviceInstallCmd() *cobra.Command {
 		Short: "Install the watchdog as a launchd service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service install)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service install)")
 			}
 
 			// Create log directory.
-			logDir := "/Library/Logs/Breeze"
+			logDir := "/Library/Logs/BL4CK"
 			if err := os.MkdirAll(logDir, 0755); err != nil {
 				return fmt.Errorf("failed to create %s: %w", logDir, err)
 			}
@@ -84,7 +84,7 @@ func serviceInstallCmd() *cobra.Command {
 				if stopErr := exec.Command("launchctl", "unload", watchdogPlistDst).Run(); stopErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to stop existing service: %v\n", stopErr)
 				} else {
-					fmt.Println("Stopped existing Breeze Watchdog service.")
+					fmt.Println("Stopped existing BL4CK Watchdog service.")
 				}
 			}
 
@@ -126,7 +126,7 @@ func serviceInstallCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Println("Breeze Watchdog service installed and started.")
+			fmt.Println("BL4CK Watchdog service installed and started.")
 			return nil
 		},
 	}
@@ -138,7 +138,7 @@ func serviceUninstallCmd() *cobra.Command {
 		Short: "Uninstall the watchdog launchd service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service uninstall)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service uninstall)")
 			}
 
 			// Stop and unload.
@@ -164,7 +164,7 @@ func serviceUninstallCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Warning: failed to remove %s: %v\n", watchdogBinaryPath, err)
 			}
 
-			fmt.Println("Breeze Watchdog service uninstalled.")
+			fmt.Println("BL4CK Watchdog service uninstalled.")
 			return nil
 		},
 	}
@@ -176,11 +176,11 @@ func serviceStartCmd() *cobra.Command {
 		Short: "Start the watchdog service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service start)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service start)")
 			}
 
 			if !fileExists(watchdogPlistDst) {
-				return fmt.Errorf("service not installed — run 'sudo breeze-watchdog service install' first")
+				return fmt.Errorf("service not installed — run 'sudo bl4ck-watchdog service install' first")
 			}
 
 			if isWatchdogLoaded() {
@@ -199,7 +199,7 @@ func serviceStartCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Println("Breeze Watchdog service started.")
+			fmt.Println("BL4CK Watchdog service started.")
 			return nil
 		},
 	}
@@ -211,7 +211,7 @@ func serviceStopCmd() *cobra.Command {
 		Short: "Stop the watchdog service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
-				return fmt.Errorf("must run as root (sudo breeze-watchdog service stop)")
+				return fmt.Errorf("must run as root (sudo bl4ck-watchdog service stop)")
 			}
 
 			if !isWatchdogLoaded() {
@@ -228,7 +228,7 @@ func serviceStopCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Println("Breeze Watchdog service stopped.")
+			fmt.Println("BL4CK Watchdog service stopped.")
 			return nil
 		},
 	}
@@ -245,7 +245,7 @@ func restartWatchdogService() error {
 
 // agentBinaryPath returns the platform-specific agent binary path.
 func agentBinaryPath() string {
-	return "/usr/local/bin/breeze-agent"
+	return "/usr/local/bin/bl4ck-agent"
 }
 
 func isWatchdogLoaded() bool {

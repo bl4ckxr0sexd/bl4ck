@@ -8,7 +8,7 @@ package eventlog
 
 // Info writes an informational event to the OS event log (no-op on
 // non-Windows platforms). source is a short registered name like
-// "BreezeAgent".
+// "Bl4ckAgent".
 func Info(source, message string) {}
 
 // Warning writes a warning event.

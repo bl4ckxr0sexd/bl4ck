@@ -161,7 +161,7 @@ export default function ThirdPartyCatalogEditor({ initial, onClose, onSaved }: P
                   checked={breezeTested}
                   onChange={(e) => setBreezeTested(e.target.checked)}
                 />
-                Breeze-tested
+                BL4CK-tested
               </label>
             </div>
           </div>

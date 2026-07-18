@@ -6,7 +6,7 @@ import (
 )
 
 // defaultHelperDownloader returns the production verified-download function for
-// the Breeze Helper package. It mirrors the agent's own self-updater and the
+// the BL4CK Helper package. It mirrors the agent's own self-updater and the
 // user-helper companion download (issue #816): the returned func fetches the
 // signed release manifest for component="helper" WITHOUT following redirects,
 // verifies the Ed25519 manifest signature against the embedded trust root plus

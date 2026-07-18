@@ -14,16 +14,16 @@ import (
 	"syscall"
 )
 
-const plistLabel = "com.breeze.helper"
-const plistPath = "/Library/LaunchAgents/com.breeze.helper.plist"
-const appBundleName = "Breeze Helper.app"
+const plistLabel = "com.bl4ck.helper"
+const plistPath = "/Library/LaunchAgents/com.bl4ck.helper.plist"
+const appBundleName = "BL4CK Helper.app"
 
 func packageExtension() string { return ".dmg" }
 
 // destAppPath is the fixed install location — avoids fragile filepath.Dir chains.
-const destAppPath = "/Applications/Breeze Helper.app"
+const destAppPath = "/Applications/BL4CK Helper.app"
 
-// uninstallPackage removes the installed Breeze Helper.app bundle.
+// uninstallPackage removes the installed BL4CK Helper.app bundle.
 // Idempotent: returns nil if the bundle is already gone.
 func uninstallPackage() error {
 	if err := os.RemoveAll(destAppPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -36,7 +36,7 @@ func uninstallPackage() error {
 // installPackage mounts the DMG, copies the .app bundle, and unmounts.
 func installPackage(dmgPath, _ string) error {
 	// Mount the DMG to a temp mount point
-	mountPoint, err := os.MkdirTemp("", "breeze-helper-mount-")
+	mountPoint, err := os.MkdirTemp("", "bl4ck-helper-mount-")
 	if err != nil {
 		return fmt.Errorf("create mount point: %w", err)
 	}
@@ -172,7 +172,7 @@ func spawnWithConfig(binaryPath, sessionKey, configPath string) (int, error) {
 func isHelperRunning() bool {
 	// Check for running process directly — the agent starts the helper via
 	// exec.Command, not launchctl bootstrap, so launchctl list won't show it.
-	return runHelperCommand("pgrep", "-f", "breeze-helper") == nil
+	return runHelperCommand("pgrep", "-f", "bl4ck-helper") == nil
 }
 
 func stopHelper() error {

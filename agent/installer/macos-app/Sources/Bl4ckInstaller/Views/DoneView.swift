@@ -1,4 +1,4 @@
-// agent/installer/macos-app/Sources/BreezeInstaller/Views/DoneView.swift
+// agent/installer/macos-app/Sources/Bl4ckInstaller/Views/DoneView.swift
 import SwiftUI
 
 struct DoneView: View {
@@ -9,7 +9,7 @@ struct DoneView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(.green)
-            Text("Breeze Agent installed")
+            Text("BL4CK Agent installed")
                 .font(.title2).bold()
             Text("Your Mac is now monitored under **\(orgName)**.")
             Spacer()

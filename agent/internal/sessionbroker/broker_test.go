@@ -145,7 +145,7 @@ func TestLaunchProcessViaUserHelperBroadcastsToAllUserSessions(t *testing.T) {
 	startResponder("older", olderClient)
 	startResponder("newer", newerClient)
 
-	if err := b.LaunchProcessViaUserHelper("/usr/local/bin/breeze-agent"); err != nil {
+	if err := b.LaunchProcessViaUserHelper("/usr/local/bin/bl4ck-agent"); err != nil {
 		t.Fatalf("LaunchProcessViaUserHelper: %v", err)
 	}
 
@@ -209,7 +209,7 @@ func TestLaunchProcessViaUserHelperForSessionTargetsMatchingHelper(t *testing.T)
 		}
 	}()
 
-	if err := b.LaunchProcessViaUserHelperForSession("502", "/usr/local/bin/breeze-helper", "--config", "/tmp/helper.yaml"); err != nil {
+	if err := b.LaunchProcessViaUserHelperForSession("502", "/usr/local/bin/bl4ck-helper", "--config", "/tmp/helper.yaml"); err != nil {
 		t.Fatalf("LaunchProcessViaUserHelperForSession: %v", err)
 	}
 
@@ -910,11 +910,11 @@ func TestPamScopeBelongsOnlyToUserHelper(t *testing.T) {
 	}
 
 	b := &Broker{}
-	userScopes := b.scopesForRole(ipc.HelperRoleUser, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\Breeze\breeze-user-helper.exe`)
+	userScopes := b.scopesForRole(ipc.HelperRoleUser, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\BL4CK\bl4ck-user-helper.exe`)
 	if !containsString(userScopes, ipc.ScopePam) {
 		t.Fatalf("scopesForRole(user) = %v, want %q", userScopes, ipc.ScopePam)
 	}
-	systemScopes := b.scopesForRole(ipc.HelperRoleSystem, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\Breeze\breeze-user-helper.exe`)
+	systemScopes := b.scopesForRole(ipc.HelperRoleSystem, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\BL4CK\bl4ck-user-helper.exe`)
 	if containsString(systemScopes, ipc.ScopePam) {
 		t.Fatalf("scopesForRole(system) = %v, must not contain %q", systemScopes, ipc.ScopePam)
 	}
@@ -951,23 +951,23 @@ func TestFindCapableSessionPamUsesUserPamScope(t *testing.T) {
 	}
 }
 
-func TestAssistHelperBinaryPathsIncludeBreezeHelper(t *testing.T) {
+func TestAssistHelperBinaryPathsIncludeBL4CKHelper(t *testing.T) {
 	paths := assistHelperBinaryPaths("/opt/breeze")
 	found := false
 	for _, p := range paths {
 		base := filepath.Base(p)
-		if base == "breeze-helper" || base == "breeze-helper.exe" {
+		if base == "bl4ck-helper" || base == "bl4ck-helper.exe" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("assistHelperBinaryPaths(%q) = %v, missing breeze-helper binary", "/opt/breeze", paths)
+		t.Fatalf("assistHelperBinaryPaths(%q) = %v, missing bl4ck-helper binary", "/opt/breeze", paths)
 	}
 
 	// On non-windows platforms the agent-dir-relative path must be present so
 	// the hash allowlist covers helpers installed alongside the agent.
 	if runtime.GOOS != "windows" {
-		want := filepath.Join("/opt/breeze", "breeze-helper")
+		want := filepath.Join("/opt/breeze", "bl4ck-helper")
 		has := false
 		for _, p := range paths {
 			if p == want {
@@ -980,7 +980,7 @@ func TestAssistHelperBinaryPathsIncludeBreezeHelper(t *testing.T) {
 	}
 
 	if runtime.GOOS == "darwin" {
-		want := "/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper"
+		want := "/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper"
 		has := false
 		for _, p := range paths {
 			if p == want {
@@ -1004,20 +1004,20 @@ func containsString(values []string, want string) bool {
 
 // TestAssistHelperBinaryPathsWindowsRealInstallPath guards the regression where
 // the Windows allowlist used the agent dir instead of the Helper MSI's real
-// "<ProgramFiles>\Breeze Helper\" install location, causing the broker to reject
+// "<ProgramFiles>\BL4CK Helper\" install location, causing the broker to reject
 // the genuine Helper on Windows. Runs on any host via the OS-parameterized core.
 func TestAssistHelperBinaryPathsWindowsRealInstallPath(t *testing.T) {
-	paths := assistHelperBinaryPathsForOS(`C:\Program Files\Breeze`, "windows", `C:\Program Files`)
-	// At least one candidate must point at the "Breeze Helper" install dir
-	// (not the agent's "Breeze" dir) and be the breeze-helper.exe binary.
+	paths := assistHelperBinaryPathsForOS(`C:\Program Files\BL4CK`, "windows", `C:\Program Files`)
+	// At least one candidate must point at the "BL4CK Helper" install dir
+	// (not the agent's "BL4CK" dir) and be the bl4ck-helper.exe binary.
 	found := false
 	for _, p := range paths {
-		if strings.Contains(p, "Breeze Helper") && strings.HasSuffix(p, "breeze-helper.exe") {
+		if strings.Contains(p, "BL4CK Helper") && strings.HasSuffix(p, "bl4ck-helper.exe") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("windows assist paths %v missing a 'Breeze Helper\\breeze-helper.exe' candidate", paths)
+		t.Fatalf("windows assist paths %v missing a 'BL4CK Helper\\bl4ck-helper.exe' candidate", paths)
 	}
 }
 

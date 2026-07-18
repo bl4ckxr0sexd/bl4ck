@@ -10,14 +10,14 @@ import (
 // Locate probes the WindowsApps folder for an existing winget.exe,
 // AppxAvailable probes for the Add-AppxProvisionedPackage cmdlet, and
 // Provision is a deliberate stub — Task 9b implements the real
-// fetch/verify/provision flow against the Breeze API bootstrap endpoint.
+// fetch/verify/provision flow against the BL4CK API bootstrap endpoint.
 // Until then, EnsureWinget treats a Provision error as "unavailable",
 // which is the correct fallback: hosts with a pre-existing winget install
 // keep working end to end, and hosts without one simply report unavailable
 // instead of silently no-op'ing.
 //
 // cfg is accepted (rather than dropped) so the Task 9b Provision
-// implementation can read the Breeze API base URL / auth without changing
+// implementation can read the BL4CK API base URL / auth without changing
 // this function's signature or its call site in registerSystemWinget.
 func NewEnsureDeps(cfg *config.Config) EnsureDeps {
 	return EnsureDeps{

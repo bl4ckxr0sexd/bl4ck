@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// The Breeze Helper ("Breeze Assist") runs in the logged-in user's session,
+// The BL4CK Helper ("BL4CK Assist") runs in the logged-in user's session,
 // while the agent (SYSTEM) writes these files. The config dir and agent.yaml
 // grant BUILTIN\Users read so the Helper can read the server URL, agent ID, and
 // helper-scoped token — restoring the default ProgramData ACL that #568's
@@ -28,7 +28,7 @@ const (
 	// SYSTEM and Administrators get full control, container+object inheritable,
 	// the DACL is PROTECTED (no inheritance), and BUILTIN\Users gets NOTHING.
 	// Unlike the config dir — which intentionally grants Users read so the
-	// Breeze Helper can read agent.yaml — the logs/data trees must never be
+	// BL4CK Helper can read agent.yaml — the logs/data trees must never be
 	// Users-readable or -writable.
 	windowsProgramDataDirSDDL = `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`
 )

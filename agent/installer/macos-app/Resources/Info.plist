@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>BreezeInstaller</string>
+    <string>Bl4ckInstaller</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.breeze.installer</string>
+    <string>com.bl4ck.installer</string>
     <key>CFBundleName</key>
-    <string>Breeze Installer</string>
+    <string>BL4CK Installer</string>
     <key>CFBundleDisplayName</key>
-    <string>Breeze Installer</string>
+    <string>BL4CK Installer</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

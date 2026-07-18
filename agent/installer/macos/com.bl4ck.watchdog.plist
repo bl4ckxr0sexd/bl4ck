@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.breeze.watchdog</string>
+    <string>com.bl4ck.watchdog</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/breeze-watchdog</string>
+        <string>/usr/local/bin/bl4ck-watchdog</string>
         <string>run</string>
     </array>
     <key>RunAtLoad</key>
@@ -16,10 +16,10 @@
     <key>ThrottleInterval</key>
     <integer>5</integer>
     <key>WorkingDirectory</key>
-    <string>/Library/Application Support/Breeze</string>
+    <string>/Library/Application Support/BL4CK</string>
     <key>StandardOutPath</key>
-    <string>/Library/Logs/Breeze/watchdog.log</string>
+    <string>/Library/Logs/BL4CK/watchdog.log</string>
     <key>StandardErrorPath</key>
-    <string>/Library/Logs/Breeze/watchdog.err</string>
+    <string>/Library/Logs/BL4CK/watchdog.err</string>
 </dict>
 </plist>

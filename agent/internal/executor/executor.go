@@ -329,7 +329,7 @@ func (e *Executor) validateScript(content string) error {
 func (e *Executor) buildEnvironment(script ScriptExecution) []string {
 	env := os.Environ()
 
-	// Add Breeze-specific environment variables
+	// Add BL4CK-specific environment variables
 	env = append(env,
 		"BREEZE_EXECUTION_ID="+script.ID,
 		"BREEZE_SCRIPT_ID="+script.ScriptID,

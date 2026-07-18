@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 // CollectHardwareProfile captures hardware info using WMI queries.
@@ -91,7 +93,9 @@ func (c *WindowsCollector) CollectHardwareProfile() (*HardwareProfile, error) {
 	}
 
 	// UEFI detection
-	if out, err := exec.Command("bcdedit").Output(); err == nil {
+	cBcd := exec.Command("bcdedit")
+	oscmd.Hide(cBcd)
+	if out, err := cBcd.Output(); err == nil {
 		hw.IsUEFI = strings.Contains(string(out), `\EFI\`)
 	}
 
@@ -113,6 +117,7 @@ func wmicCSV(alias string, fields ...string) ([]byte, error) {
 	parts := strings.Fields(alias)
 	cmdArgs := append(parts[1:], "get", strings.Join(fields, ","), "/format:csv")
 	cmd := exec.Command("wmic", append([]string{parts[0]}, cmdArgs...)...)
+	oscmd.Hide(cmd)
 	return cmd.Output()
 }
 

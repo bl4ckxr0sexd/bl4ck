@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Breeze RMM User Session Helper - provides desktop notifications, tray icon, and user-context operations.</Description>
-    <Author>Breeze RMM</Author>
-    <URI>\Breeze\AgentUserHelper</URI>
+    <Description>BL4CK RMM User Session Helper - provides desktop notifications, tray icon, and user-context operations.</Description>
+    <Author>BL4CK RMM</Author>
+    <URI>\BL4CK\AgentUserHelper</URI>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -36,7 +36,7 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>"C:\Program Files\Breeze\breeze-user-helper.exe"</Command>
+      <Command>"C:\Program Files\BL4CK\bl4ck-user-helper.exe"</Command>
       <Arguments>user-helper --role user</Arguments>
     </Exec>
   </Actions>

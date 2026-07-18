@@ -8,12 +8,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 func listEventLogsOS(startTime time.Time) CommandResult {
 	// Use PowerShell to get event log names
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
 		utf8PowerShellCommand(`Get-WinEvent -ListLog * -ErrorAction SilentlyContinue | Select-Object LogName, RecordCount, MaximumSizeInBytes | ConvertTo-Json`))
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return NewErrorResult(fmt.Errorf("failed to list event logs: %w", err), time.Since(startTime).Milliseconds())
@@ -65,6 +68,7 @@ func queryEventLogsOS(logName, level, source string, eventID, page, limit int, s
 			`Select-Object RecordId, LogName, LevelDisplayName, TimeCreated, ProviderName, Id, Message | `+
 			`ConvertTo-Json -Depth 2`, filter, maxEvents)))
 
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		// Return empty result if no events found
@@ -112,6 +116,7 @@ func getEventLogEntryOS(logName string, recordID int64, startTime time.Time) Com
 			`Select-Object RecordId, LogName, LevelDisplayName, TimeCreated, ProviderName, Id, Message, UserId, MachineName | `+
 			`ConvertTo-Json -Depth 2`, escapePowerShellSingleQuoted(logName), recordID)))
 
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return NewErrorResult(fmt.Errorf("event not found"), time.Since(startTime).Milliseconds())

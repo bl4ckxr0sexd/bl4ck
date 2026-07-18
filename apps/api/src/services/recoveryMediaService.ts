@@ -55,7 +55,7 @@ function getBundleChecksumFileName() {
 
 function getBinaryFileName(platform: string, architecture: string): string {
   const extension = platform === 'windows' ? '.exe' : '';
-  return `breeze-backup-${platform}-${architecture}${extension}`;
+  return `bl4ck-backup-${platform}-${architecture}${extension}`;
 }
 
 function buildStorageKey(namespace: string, artifactId: string, fileName: string, prefix?: string | null): string {
@@ -384,13 +384,13 @@ export async function buildRecoveryMediaArtifact(artifactId: string, requestUrl?
     await mkdir(bundleDir, { recursive: true });
 
     const binary = await resolveBackupBinary(artifact.platform, artifact.architecture, workingDir);
-    const binaryTargetPath = join(bundleDir, artifact.platform === 'windows' ? 'breeze-backup.exe' : 'breeze-backup');
+    const binaryTargetPath = join(bundleDir, artifact.platform === 'windows' ? 'bl4ck-backup.exe' : 'bl4ck-backup');
     await copyFile(binary.filePath, binaryTargetPath);
 
     const serverUrl = resolveServerUrl(requestUrl);
     const launchScript = buildLaunchScript({
       platform: artifact.platform,
-      fileName: artifact.platform === 'windows' ? 'breeze-backup.exe' : 'breeze-backup',
+      fileName: artifact.platform === 'windows' ? 'bl4ck-backup.exe' : 'bl4ck-backup',
       serverUrl,
     });
 
@@ -420,7 +420,7 @@ export async function buildRecoveryMediaArtifact(artifactId: string, requestUrl?
     const binaryChecksum = sha256Hex(await readFile(binaryTargetPath));
     await writeFile(
       join(bundleDir, 'CHECKSUM.txt'),
-      `${binaryChecksum}  ${artifact.platform === 'windows' ? 'breeze-backup.exe' : 'breeze-backup'}\n`
+      `${binaryChecksum}  ${artifact.platform === 'windows' ? 'bl4ck-backup.exe' : 'bl4ck-backup'}\n`
     );
 
     const archivePath = join(workingDir, getArchiveFileName(artifact.platform, artifact.architecture));
@@ -495,7 +495,7 @@ export async function buildRecoveryMediaArtifact(artifactId: string, requestUrl?
             'README.txt',
             'bootstrap.json',
             'CHECKSUM.txt',
-            artifact.platform === 'windows' ? 'breeze-backup.exe' : 'breeze-backup',
+            artifact.platform === 'windows' ? 'bl4ck-backup.exe' : 'bl4ck-backup',
           ],
           bundleBinaryChecksum: binaryChecksum,
           helperBinaryVersion: binary.verified.version,

@@ -16,7 +16,7 @@ enum FilenameTokenParser {
 
     private static let pattern = #"\[([A-Z0-9]{10})@([a-zA-Z0-9.\-]+)\]"#
     private static let hostPattern = #"^[a-zA-Z0-9.\-]+$"#
-    private static let payloadFileName = "Breeze Installer.bootstrap.json"
+    private static let payloadFileName = "BL4CK Installer.bootstrap.json"
 
     private struct Payload: Decodable {
         let token: String

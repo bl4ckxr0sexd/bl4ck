@@ -123,7 +123,7 @@ const (
 	HelperRoleSystem   = "system"
 	HelperRoleUser     = "user"
 	HelperRoleWatchdog = "watchdog"
-	HelperRoleAssist   = "assist" // Breeze Assist Tauri helper; receives helper token only
+	HelperRoleAssist   = "assist" // BL4CK Assist Tauri helper; receives helper token only
 )
 
 // Scope constants identify the capabilities granted to a helper session.

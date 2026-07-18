@@ -9,9 +9,9 @@ func TestNoPanicOnAllPlatforms(t *testing.T) {
 	// Calling any of these from a non-admin context on Windows, or
 	// anywhere on macOS/Linux, must not panic. Registration errors
 	// are silently swallowed per package contract.
-	Info("BreezeAgent", "test info message")
-	Warning("BreezeAgent", "test warning message")
-	Error("BreezeAgent", "test error message")
+	Info("Bl4ckAgent", "test info message")
+	Warning("Bl4ckAgent", "test warning message")
+	Error("Bl4ckAgent", "test error message")
 }
 
 func TestConcurrentLogging(t *testing.T) {
@@ -25,9 +25,9 @@ func TestConcurrentLogging(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			Info("BreezeAgent", "concurrent info")
-			Warning("BreezeAgent", "concurrent warning")
-			Error("BreezeAgent", "concurrent error")
+			Info("Bl4ckAgent", "concurrent info")
+			Warning("Bl4ckAgent", "concurrent warning")
+			Error("Bl4ckAgent", "concurrent error")
 		}()
 	}
 	wg.Wait()

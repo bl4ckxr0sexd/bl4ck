@@ -13,7 +13,7 @@ func TestHashFileSHA256(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "bin")
-	data := []byte("breeze-agent")
+	data := []byte("bl4ck-agent")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}

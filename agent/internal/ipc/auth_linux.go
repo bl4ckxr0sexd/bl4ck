@@ -67,5 +67,5 @@ func (p *PeerCredentials) IdentityKey() string {
 
 // DefaultSocketPath returns the default IPC socket path for Linux.
 func DefaultSocketPath() string {
-	return "/var/run/breeze/agent.sock"
+	return "/var/run/bl4ck/agent.sock"
 }

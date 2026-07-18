@@ -156,7 +156,7 @@ type RecoveryTokenRecord = {
 type TokenStatusFilter = RecoveryTokenStatus | 'all';
 type RestoreTypeFilter = RecoveryTokenRestoreType | 'all';
 
-const STORAGE_KEY = 'breeze-backup-recovery-bootstrap-catalog';
+const STORAGE_KEY = 'bl4ck-backup-recovery-bootstrap-catalog';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -259,7 +259,7 @@ function getRecoveryServerBase(): string {
 
 function buildCliCommand(token: string): string {
   const server = getRecoveryServerBase();
-  return `breeze-backup bmr-recover --token ${token} --server ${server}`;
+  return `bl4ck-backup bmr-recover --token ${token} --server ${server}`;
 }
 
 function normalizeApiResponse<T = Record<string, unknown>>(payload: unknown): T {
@@ -1036,7 +1036,7 @@ export default function RecoveryBootstrapTab() {
   }, [refreshArtifacts, selectedToken]);
 
   const selectedCommand = selectedToken?.token
-    ? `breeze-backup bmr-recover --token ${selectedToken.token} --server ${selectedToken.bootstrapPreview?.serverUrl ?? getRecoveryServerBase()}`
+    ? `bl4ck-backup bmr-recover --token ${selectedToken.token} --server ${selectedToken.bootstrapPreview?.serverUrl ?? getRecoveryServerBase()}`
     : selectedToken?.bootstrapPreview?.commandTemplate ?? null;
   const selectedBootstrap = selectedToken?.bootstrapPreview ?? null;
 
@@ -1069,7 +1069,7 @@ export default function RecoveryBootstrapTab() {
           <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">CLI template</p>
             <p className="mt-1 font-mono chart-legend-xs">
-              breeze-backup bmr-recover --token &lt;token&gt; --server &lt;api-server&gt;
+              bl4ck-backup bmr-recover --token &lt;token&gt; --server &lt;api-server&gt;
             </p>
           </div>
         </div>

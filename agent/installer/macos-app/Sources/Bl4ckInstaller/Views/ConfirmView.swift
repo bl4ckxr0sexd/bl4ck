@@ -1,4 +1,4 @@
-// agent/installer/macos-app/Sources/BreezeInstaller/Views/ConfirmView.swift
+// agent/installer/macos-app/Sources/Bl4ckInstaller/Views/ConfirmView.swift
 import SwiftUI
 
 struct ConfirmView: View {
@@ -7,9 +7,9 @@ struct ConfirmView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Install Breeze Agent")
+            Text("Install BL4CK Agent")
                 .font(.title2).bold()
-            Text("This will install the Breeze monitoring agent for **\(payload.orgName)**. You will be prompted for your administrator password.")
+            Text("This will install the BL4CK monitoring agent for **\(payload.orgName)**. You will be prompted for your administrator password.")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             HStack {

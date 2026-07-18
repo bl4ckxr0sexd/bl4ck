@@ -1,4 +1,4 @@
-// Package bmr implements bare metal recovery orchestration for the Breeze agent.
+// Package bmr implements bare metal recovery orchestration for the BL4CK agent.
 package bmr
 
 import "encoding/json"

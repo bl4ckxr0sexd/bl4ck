@@ -7,7 +7,7 @@ import (
 )
 
 func TestBinaryPathMatchesAllowedRequiresResolvablePeerPath(t *testing.T) {
-	allowed := filepath.Join(t.TempDir(), "breeze-agent")
+	allowed := filepath.Join(t.TempDir(), "bl4ck-agent")
 	if err := os.WriteFile(allowed, []byte("agent"), 0o755); err != nil {
 		t.Fatalf("write allowed binary: %v", err)
 	}
@@ -19,7 +19,7 @@ func TestBinaryPathMatchesAllowedRequiresResolvablePeerPath(t *testing.T) {
 
 func TestBinaryPathMatchesAllowedResolvesSymlinks(t *testing.T) {
 	dir := t.TempDir()
-	allowed := filepath.Join(dir, "breeze-desktop-helper")
+	allowed := filepath.Join(dir, "bl4ck-desktop-helper")
 	if err := os.WriteFile(allowed, []byte("helper"), 0o755); err != nil {
 		t.Fatalf("write allowed binary: %v", err)
 	}

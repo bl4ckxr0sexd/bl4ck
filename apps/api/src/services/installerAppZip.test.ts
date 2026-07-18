@@ -24,10 +24,10 @@ async function buildFixtureZip(appName: string): Promise<Buffer> {
       name: `${appName}/Contents/_CodeSignature/CodeResources`,
     });
     archive.append("pkg-bytes", {
-      name: `${appName}/Contents/Resources/breeze-agent-amd64.pkg`,
+      name: `${appName}/Contents/Resources/bl4ck-agent-amd64.pkg`,
     });
     archive.append("pkg-bytes", {
-      name: `${appName}/Contents/Resources/breeze-agent-arm64.pkg`,
+      name: `${appName}/Contents/Resources/bl4ck-agent-arm64.pkg`,
     });
     archive.finalize().catch(reject);
   });
@@ -57,8 +57,8 @@ describe("renameAppInZip", () => {
     expect(entries).toEqual([
       "Breeze Installer [A7K2XQ@us.2breeze.app].app/Contents/Info.plist",
       "Breeze Installer [A7K2XQ@us.2breeze.app].app/Contents/MacOS/BreezeInstaller",
-      "Breeze Installer [A7K2XQ@us.2breeze.app].app/Contents/Resources/breeze-agent-amd64.pkg",
-      "Breeze Installer [A7K2XQ@us.2breeze.app].app/Contents/Resources/breeze-agent-arm64.pkg",
+      "Breeze Installer [A7K2XQ@us.2breeze.app].app/Contents/Resources/bl4ck-agent-amd64.pkg",
+      "Breeze Installer [A7K2XQ@us.2breeze.app].app/Contents/Resources/bl4ck-agent-arm64.pkg",
       "Breeze Installer [A7K2XQ@us.2breeze.app].app/Contents/_CodeSignature/CodeResources",
     ]);
   });

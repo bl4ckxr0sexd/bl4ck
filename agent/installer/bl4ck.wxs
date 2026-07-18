@@ -3,19 +3,19 @@
 <?define Version=0.1.0?>
 <?endif?>
 <?ifndef AgentExePath?>
-<?define AgentExePath=..\breeze-agent-windows-amd64.exe?>
+<?define AgentExePath=..\bl4ck-agent-windows-amd64.exe?>
 <?endif?>
 <?ifndef BackupExePath?>
-<?define BackupExePath=..\breeze-backup-windows-amd64.exe?>
+<?define BackupExePath=..\bl4ck-backup-windows-amd64.exe?>
 <?endif?>
 <?ifndef WatchdogExePath?>
-<?define WatchdogExePath=..\breeze-watchdog-windows-amd64.exe?>
+<?define WatchdogExePath=..\bl4ck-watchdog-windows-amd64.exe?>
 <?endif?>
 <?ifndef UserHelperExePath?>
-<?define UserHelperExePath=..\breeze-user-helper-windows-amd64.exe?>
+<?define UserHelperExePath=..\bl4ck-user-helper-windows-amd64.exe?>
 <?endif?>
 <?ifndef UserTaskXmlPath?>
-<?define UserTaskXmlPath=..\service\windows\breeze-agent-user-task.xml?>
+<?define UserTaskXmlPath=..\service\windows\bl4ck-agent-user-task.xml?>
 <?endif?>
 <?ifndef InstallUserHelperScriptPath?>
 <?define InstallUserHelperScriptPath=..\scripts\install\install-windows.ps1?>
@@ -26,25 +26,25 @@
 
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
-    Name="Breeze Agent"
-    Manufacturer="Breeze RMM"
+    Name="BL4CK Agent"
+    Manufacturer="BL4CK RMM"
     Version="$(var.Version)"
     UpgradeCode="{70A57B7A-4F72-4E18-B8D3-7D2783C2C1A9}"
     Scope="perMachine"
     InstallerVersion="500"
     Language="1033">
 
-    <SummaryInformation Description="Breeze RMM endpoint agent" />
+    <SummaryInformation Description="BL4CK RMM endpoint agent" />
     <!-- CompressionLevel="high" = LZX (vs the default mszip) for a smaller
          embedded CAB. Fully supported by Windows Installer; only trade-off is
          slightly slower build/decompress. Pairs with the stripped (-s -w) Go
          binaries built by the Makefile. -->
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <MajorUpgrade
-      DowngradeErrorMessage="A newer version of Breeze Agent is already installed."
+      DowngradeErrorMessage="A newer version of BL4CK Agent is already installed."
       Schedule="afterInstallExecute" />
 
-    <Launch Condition="VersionNT64" Message="Breeze Agent requires 64-bit Windows." />
+    <Launch Condition="VersionNT64" Message="BL4CK Agent requires 64-bit Windows." />
     <Launch Condition="(NOT SERVER_URL AND NOT ENROLLMENT_KEY) OR (SERVER_URL AND ENROLLMENT_KEY)" Message="SERVER_URL and ENROLLMENT_KEY must be provided together." />
 
     <?ifdef ServerUrlDefault ?>
@@ -76,7 +76,7 @@
          So each deferred CA "Foo" is paired with an immediate SetProperty CA
          "SetFooCmd" that formats the command (resolving [Directory], [#File],
          secrets, etc. at schedule time) into property "Foo". The lone immediate
-         CA (KillBreezeProcesses) instead reads the fixed WixQuietExec64CmdLine
+         CA (KillBL4CKProcesses) instead reads the fixed WixQuietExec64CmdLine
          property, since immediate quiet-exec CAs have no CustomActionData.
 
          EnrollAgent and BootstrapEnroll assemble a command that embeds secrets
@@ -93,9 +93,9 @@
     <Property Id="EnrollAgent" Hidden="yes" />
     <Property Id="BootstrapEnroll" Hidden="yes" />
 
-    <!-- Kill any running Breeze processes before InstallValidate so file
+    <!-- Kill any running BL4CK processes before InstallValidate so file
          replacement isn't blocked by locked exes.
-         ServiceControl stops BreezeAgent and BreezeWatchdog below, but the
+         ServiceControl stops Bl4ckAgent and Bl4ckWatchdog below, but the
          user-session desktop helper (spawned via CreateProcessAsUser) is not a
          service and would otherwise survive an in-place upgrade — causing the
          sessionbroker binary hash check to fail on the next remote-desktop
@@ -103,7 +103,7 @@
          upgrade, repair) because a fresh install can land on top of a binary
          left behind by a previous uninstall or a non-MSI deployment — the
          MSI install log line we kept seeing was:
-            File: ...\breeze-agent.exe; Won't Overwrite;
+            File: ...\bl4ck-agent.exe; Won't Overwrite;
             Existing file is unversioned but modified
          even on a "first-time" MSI install where the agent was previously
          dropped onto the box by another mechanism. Skipping the kill on
@@ -118,11 +118,11 @@
          InstallValidate — which is where a deferred CA could not go. taskkill's
          non-zero "process not found" exit on a fresh box is swallowed by
          Return="ignore" (#944). -->
-    <CustomAction Id="SetKillBreezeCmd" Property="WixQuietExec64CmdLine"
-      Value="&quot;[System64Folder]taskkill.exe&quot; /F /T /IM breeze-agent.exe /IM breeze-user-helper.exe /IM breeze-watchdog.exe /IM breeze-desktop-helper.exe /IM breeze-backup.exe"
+    <CustomAction Id="SetKillBL4CKCmd" Property="WixQuietExec64CmdLine"
+      Value="&quot;[System64Folder]taskkill.exe&quot; /F /T /IM bl4ck-agent.exe /IM bl4ck-user-helper.exe /IM bl4ck-watchdog.exe /IM bl4ck-desktop-helper.exe /IM bl4ck-backup.exe"
       Execute="immediate" />
     <CustomAction
-      Id="KillBreezeProcesses"
+      Id="KillBL4CKProcesses"
       BinaryRef="Wix4UtilCA_X64"
       DllEntry="WixQuietExec64"
       Execute="immediate"
@@ -138,7 +138,7 @@
          sequenced After CreateFolders below, which now (unlike the immediate
          case) actually runs first in the in-script, so the dirs already exist
          and the mkdir guards are belt-and-suspenders. Return="ignore" mirrors
-         ConfigureBreezeFailureActions: ACL hardening that is blocked by an
+         ConfigureBL4CKFailureActions: ACL hardening that is blocked by an
          external control (Controlled Folder Access / ASR / EDR / GPO) must
          never roll back an otherwise-good install — the folders are still
          created by CreateFolders with default ProgramData ACLs, and the agent
@@ -147,7 +147,7 @@
          agent/internal/config/permissions_windows.go), so a skipped/blocked
          icacls here self-heals and never leaves tokens world-readable. -->
     <CustomAction Id="SetHardenProgramDataAclCmd" Property="HardenProgramDataAcl"
-      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;New-Item -ItemType Directory -Force '[ProgramDataBreezeDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBreezeDataDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBreezeLogsDir]' | Out-Null; icacls '[ProgramDataBreezeDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBreezeDataDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBreezeLogsDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'&quot;"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;New-Item -ItemType Directory -Force '[ProgramDataBL4CKDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBL4CKDataDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBL4CKLogsDir]' | Out-Null; icacls '[ProgramDataBL4CKDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBL4CKDataDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBL4CKLogsDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'&quot;"
       Execute="immediate" />
     <CustomAction
       Id="HardenProgramDataAcl"
@@ -158,12 +158,12 @@
       Return="ignore" />
 
     <!-- Set SCM failure-action recovery on both services after they're
-         installed. Mirrors agent/cmd/breeze-agent/service_cmd_windows.go:72-79
-         and agent/cmd/breeze-watchdog/service_cmd_windows.go:63-67 (5s/10s/30s
+         installed. Mirrors agent/cmd/bl4ck-agent/service_cmd_windows.go:72-79
+         and agent/cmd/bl4ck-watchdog/service_cmd_windows.go:63-67 (5s/10s/30s
          restart escalation with 24-hour counter reset).
 
          Without this, MSI-installed services have no SCM-driven auto-restart;
-         only `breeze-agent.exe service install` (the manual subcommand)
+         only `bl4ck-agent.exe service install` (the manual subcommand)
          applied the recovery actions before. So every MSI deployment was
          missing this hardening.
 
@@ -172,11 +172,11 @@
          (below) is what prevents a transient sc-error from rolling back the
          install — keep both the static ExeCommand and Return="ignore" in
          sync if either is ever edited. -->
-    <CustomAction Id="SetConfigureBreezeFailureActionsCmd" Property="ConfigureBreezeFailureActions"
-      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;sc.exe failure BreezeAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000; sc.exe failure BreezeWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000&quot;"
+    <CustomAction Id="SetConfigureBL4CKFailureActionsCmd" Property="ConfigureBL4CKFailureActions"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;sc.exe failure Bl4ckAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000; sc.exe failure Bl4ckWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000&quot;"
       Execute="immediate" />
     <CustomAction
-      Id="ConfigureBreezeFailureActions"
+      Id="ConfigureBL4CKFailureActions"
       BinaryRef="Wix4UtilCA_X64"
       DllEntry="WixQuietExec64"
       Execute="deferred"
@@ -184,66 +184,66 @@
       Return="ignore" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Breeze">
-        <Component Id="cmpBreezeAgentExe" Guid="*">
-          <File Id="filBreezeAgentExe" Name="breeze-agent.exe" Source="$(var.AgentExePath)" KeyPath="yes" />
+      <Directory Id="INSTALLFOLDER" Name="BL4CK">
+        <Component Id="cmpBl4ckAgentExe" Guid="*">
+          <File Id="filBl4ckAgentExe" Name="bl4ck-agent.exe" Source="$(var.AgentExePath)" KeyPath="yes" />
           <ServiceInstall
-            Id="svcInstallBreezeAgent"
-            Name="BreezeAgent"
-            DisplayName="Breeze Agent"
-            Description="Breeze RMM endpoint agent"
+            Id="svcInstallBl4ckAgent"
+            Name="Bl4ckAgent"
+            DisplayName="BL4CK Agent"
+            Description="BL4CK RMM endpoint agent"
             Type="ownProcess"
             Arguments="run"
             Start="auto"
             ErrorControl="normal"
             Vital="yes" />
           <ServiceControl
-            Id="svcControlBreezeAgent"
-            Name="BreezeAgent"
+            Id="svcControlBl4ckAgent"
+            Name="Bl4ckAgent"
             Start="install"
             Stop="both"
             Remove="uninstall"
             Wait="yes" />
         </Component>
 
-        <Component Id="cmpBreezeBackupExe" Guid="*">
-          <File Id="filBreezeBackupExe" Name="breeze-backup.exe"
+        <Component Id="cmpBL4CKBackupExe" Guid="*">
+          <File Id="filBL4CKBackupExe" Name="bl4ck-backup.exe"
                 Source="$(var.BackupExePath)" KeyPath="yes" />
         </Component>
 
-        <Component Id="cmpBreezeUserHelperExe" Guid="*">
-          <!-- GUI-subsystem sibling of breeze-agent.exe (same Go source, -H windowsgui).
+        <Component Id="cmpBL4CKUserHelperExe" Guid="*">
+          <!-- GUI-subsystem sibling of bl4ck-agent.exe (same Go source, -H windowsgui).
                Launched by the AgentUserHelper scheduled task at user logon and by the
                SYSTEM-context sessionbroker spawn paths. GUI subsystem prevents the
                Windows kernel from allocating a console window for the helper. -->
-          <File Id="filBreezeUserHelperExe" Name="breeze-user-helper.exe"
+          <File Id="filBL4CKUserHelperExe" Name="bl4ck-user-helper.exe"
                 Source="$(var.UserHelperExePath)" KeyPath="yes" />
         </Component>
 
-        <Component Id="cmpBreezeWatchdogExe" Guid="*">
-          <File Id="filBreezeWatchdogExe" Name="breeze-watchdog.exe"
+        <Component Id="cmpBl4ckWatchdogExe" Guid="*">
+          <File Id="filBl4ckWatchdogExe" Name="bl4ck-watchdog.exe"
                 Source="$(var.WatchdogExePath)" KeyPath="yes" />
           <ServiceInstall Id="svcInstallWatchdog"
-                          Name="BreezeWatchdog"
-                          DisplayName="Breeze RMM Watchdog"
-                          Description="Monitors and recovers the Breeze RMM Agent"
+                          Name="Bl4ckWatchdog"
+                          DisplayName="BL4CK RMM Watchdog"
+                          Description="Monitors and recovers the BL4CK RMM Agent"
                           Start="auto"
                           Type="ownProcess"
                           ErrorControl="normal"
                           Arguments="run" />
           <ServiceControl Id="svcControlWatchdog"
-                          Name="BreezeWatchdog"
+                          Name="Bl4ckWatchdog"
                           Start="install"
                           Stop="both"
                           Remove="uninstall"
                           Wait="yes" />
         </Component>
 
-        <!-- Register BreezeAgent to run in Safe Mode with Networking. Without this,
+        <!-- Register Bl4ckAgent to run in Safe Mode with Networking. Without this,
              the SCM won't start the service in safe mode, preventing the agent from
              auto-clearing the BCD safeboot flag and reconnecting to the server. -->
         <Component Id="cmpSafeBootNetworkReg" Guid="*">
-          <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\SafeBoot\Network\BreezeAgent">
+          <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\SafeBoot\Network\Bl4ckAgent">
             <RegistryValue Type="string" Value="Service" />
           </RegistryKey>
         </Component>
@@ -270,12 +270,12 @@
     </StandardDirectory>
 
     <StandardDirectory Id="CommonAppDataFolder">
-      <Directory Id="ProgramDataBreezeDir" Name="Breeze">
+      <Directory Id="ProgramDataBL4CKDir" Name="BL4CK">
         <Component Id="cmpProgramDataRoot" Guid="{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}" Permanent="yes">
           <CreateFolder />
         </Component>
         <Component Id="cmpCleanConfigOnUninstall" Guid="{D4E5F6A7-B8C9-0123-DEFA-456789012345}">
-          <RegistryValue Root="HKLM" Key="SOFTWARE\Breeze" Name="ConfigCleanup" Type="integer" Value="1" KeyPath="yes" />
+          <RegistryValue Root="HKLM" Key="SOFTWARE\BL4CK" Name="ConfigCleanup" Type="integer" Value="1" KeyPath="yes" />
           <RemoveFile Id="rmfAgentYaml" Name="agent.yaml" On="uninstall" />
           <RemoveFile Id="rmfAgentYamlBak" Name="agent.yaml.bak" On="uninstall" />
           <!-- secrets.yaml holds the agent auth token and mTLS private key
@@ -285,12 +285,12 @@
                components are Permanent="yes") for post-uninstall forensics. -->
           <RemoveFile Id="rmfSecretsYaml" Name="secrets.yaml" On="uninstall" />
         </Component>
-        <Directory Id="ProgramDataBreezeDataDir" Name="data">
+        <Directory Id="ProgramDataBL4CKDataDir" Name="data">
           <Component Id="cmpProgramDataData" Guid="{B2C3D4E5-F6A7-8901-BCDE-F12345678901}" Permanent="yes">
             <CreateFolder />
           </Component>
         </Directory>
-        <Directory Id="ProgramDataBreezeLogsDir" Name="logs">
+        <Directory Id="ProgramDataBL4CKLogsDir" Name="logs">
           <Component Id="cmpProgramDataLogs" Guid="{C3D4E5F6-A7B8-9012-CDEF-123456789012}" Permanent="yes">
             <CreateFolder />
           </Component>
@@ -339,12 +339,12 @@
     <!-- Enrollment via WixSilentExec64 (deferred). The command launches
          powershell.exe (a fixed, space-free System64 path) which in turn runs
          the installed agent exe. Two historical MSI failures stay avoided:
-           * type 18 (FileRef) -> "2753: The File 'filBreezeAgentExe' is not
+           * type 18 (FileRef) -> "2753: The File 'filBl4ckAgentExe' is not
              marked for installation" — never used here; the agent path is a
              plain formatted string, not a File token.
            * type 50 (Property holding the exe path) -> "1721: a program
              required for this install could not be run" — the install path
-             C:\Program Files\Breeze\breeze-agent.exe contains a space; here the
+             C:\Program Files\BL4CK\bl4ck-agent.exe contains a space; here the
              exe WixQuietExec launches is powershell.exe (no space), and the
              agent path rides inside powershell's own single quotes, so the
              space is handled by PowerShell, not the MSI engine.
@@ -355,7 +355,7 @@
          HideTarget="yes" masks the CustomActionData line too. Return="check"
          still rolls the install back on a non-zero agent exit. -->
     <CustomAction Id="SetEnrollAgentCmd" Property="EnrollAgent"
-      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]breeze-agent.exe' enroll '[ENROLLMENT_KEY]' --server '[SERVER_URL]' --enrollment-secret '[ENROLLMENT_SECRET]' --quiet; exit $LASTEXITCODE&quot;"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]bl4ck-agent.exe' enroll '[ENROLLMENT_KEY]' --server '[SERVER_URL]' --enrollment-secret '[ENROLLMENT_SECRET]' --quiet; exit $LASTEXITCODE&quot;"
       Execute="immediate" />
     <CustomAction
       Id="EnrollAgent"
@@ -367,7 +367,7 @@
       HideTarget="yes" />
 
     <!-- Pass the launched MSI path (which carries the bootstrap token in its
-         filename — Breeze Agent (TOKEN@HOST).msi) to the agent on the deferred
+         filename — BL4CK Agent (TOKEN@HOST).msi) to the agent on the deferred
          CA's command line, via [OriginalDatabase] referenced DIRECTLY.
 
          MSI formats a deferred CA's Target at SCHEDULE time (the immediate
@@ -390,7 +390,7 @@
          SetBootstrapData then CustomActionData indirection never delivered the
          token at all.
 
-         The token rides in PARENTHESES — Breeze Agent (TOKEN@HOST).msi — not
+         The token rides in PARENTHESES — BL4CK Agent (TOKEN@HOST).msi — not
          square brackets, because "[...]" is MSI's Formatted-field delimiter and a
          bracketed substring is stripped; parens are literal and survive. The
          agent parser (installer_filename.go) accepts both. The pipe-delimited
@@ -410,7 +410,7 @@
          command: an EXE/quiet-exec CA reads CustomActionData as its whole
          command, it is not a substitutable field.) -->
     <CustomAction Id="SetBootstrapEnrollCmd" Property="BootstrapEnroll"
-      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]breeze-agent.exe' bootstrap --install-data '[OriginalDatabase]|[BOOTSTRAP_TOKEN]|[SERVER_URL]' --quiet; exit $LASTEXITCODE&quot;"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]bl4ck-agent.exe' bootstrap --install-data '[OriginalDatabase]|[BOOTSTRAP_TOKEN]|[SERVER_URL]' --quiet; exit $LASTEXITCODE&quot;"
       Execute="immediate" />
     <CustomAction
       Id="BootstrapEnroll"
@@ -426,8 +426,8 @@
            original `WIX_UPGRADE_DETECTED OR Installed` (which skipped fresh
            installs over a pre-existing non-MSI binary) — see comment at the
            CA definition above and issue #944. -->
-      <Custom Action="SetKillBreezeCmd" Before="KillBreezeProcesses" Condition="NOT REMOVE" />
-      <Custom Action="KillBreezeProcesses" Before="InstallValidate" Condition="NOT REMOVE" />
+      <Custom Action="SetKillBL4CKCmd" Before="KillBL4CKProcesses" Condition="NOT REMOVE" />
+      <Custom Action="KillBL4CKProcesses" Before="InstallValidate" Condition="NOT REMOVE" />
       <Custom Action="SetHardenProgramDataAclCmd" Before="HardenProgramDataAcl" Condition="NOT REMOVE" />
       <Custom Action="HardenProgramDataAcl" After="CreateFolders" Condition="NOT REMOVE" />
       <!-- Rollback rolls back the FIRST-install case only; on upgrade or
@@ -448,26 +448,26 @@
       <!-- Apply SCM recovery actions immediately after the services are
            registered. Deferred + non-impersonated so it runs as LocalSystem
            (which sc.exe needs for SERVICE_CHANGE_CONFIG). -->
-      <Custom Action="SetConfigureBreezeFailureActionsCmd" Before="ConfigureBreezeFailureActions" Condition="NOT REMOVE" />
-      <Custom Action="ConfigureBreezeFailureActions" After="InstallServices" Condition="NOT REMOVE" />
+      <Custom Action="SetConfigureBL4CKFailureActionsCmd" Before="ConfigureBL4CKFailureActions" Condition="NOT REMOVE" />
+      <Custom Action="ConfigureBL4CKFailureActions" After="InstallServices" Condition="NOT REMOVE" />
       <!-- Enrollment runs after file copy but before InstallServices.
 
            Return="check" on the EnrollAgent CA means a non-zero exit
-           from breeze-agent.exe enroll rolls back the install cleanly.
+           from bl4ck-agent.exe enroll rolls back the install cleanly.
            Admins see a specific cause in four places:
 
              1. install.log (captured from the CA's stderr)
-             2. C:\ProgramData\Breeze\logs\agent.log (slog structured)
-             3. C:\ProgramData\Breeze\logs\enroll-last-error.txt
+             2. C:\ProgramData\BL4CK\logs\agent.log (slog structured)
+             3. C:\ProgramData\BL4CK\logs\enroll-last-error.txt
                 (single-line timestamped, survives rollback because
                 CA-written files are opaque to MSI)
-             4. Event Viewer, Application, BreezeAgent (Error)
+             4. Event Viewer, Application, Bl4ckAgent (Error)
 
            Installs without ENROLLMENT_KEY skip this CA entirely
            (condition below requires both SERVER_URL and ENROLLMENT_KEY).
            The service starts anyway and idles in a wait-for-enrollment
-           loop (see waitForEnrollment in cmd/breeze-agent/main.go), so
-           a later manual enrollment (running breeze-agent.exe enroll
+           loop (see waitForEnrollment in cmd/bl4ck-agent/main.go), so
+           a later manual enrollment (running bl4ck-agent.exe enroll
            with the key and the server URL flag, same arguments used
            by the CA above) is picked up live without a service
            restart. This is the intended flow for imaged/sysprep'd
@@ -485,11 +485,11 @@
       <Custom Action="UnregisterUserHelperTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 
-    <Feature Id="MainFeature" Title="Breeze Agent" Level="1">
-      <ComponentRef Id="cmpBreezeAgentExe" />
-      <ComponentRef Id="cmpBreezeBackupExe" />
-      <ComponentRef Id="cmpBreezeUserHelperExe" />
-      <ComponentRef Id="cmpBreezeWatchdogExe" />
+    <Feature Id="MainFeature" Title="BL4CK Agent" Level="1">
+      <ComponentRef Id="cmpBl4ckAgentExe" />
+      <ComponentRef Id="cmpBL4CKBackupExe" />
+      <ComponentRef Id="cmpBL4CKUserHelperExe" />
+      <ComponentRef Id="cmpBl4ckWatchdogExe" />
       <ComponentRef Id="cmpSafeBootNetworkReg" />
       <ComponentRef Id="cmpUserTaskXml" />
       <ComponentRef Id="cmpInstallWindowsPs1" />

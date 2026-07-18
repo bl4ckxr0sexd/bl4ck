@@ -54,9 +54,9 @@ func (h *tokenHolder) Reveal() string {
 var version = "0.1.0"
 
 var rootCmd = &cobra.Command{
-	Use:   "breeze-watchdog",
-	Short: "Breeze RMM Agent Watchdog",
-	Long:  `Breeze Watchdog monitors the agent process and provides failover heartbeats when the agent is down.`,
+	Use:   "bl4ck-watchdog",
+	Short: "BL4CK RMM Agent Watchdog",
+	Long:  `BL4CK Watchdog monitors the agent process and provides failover heartbeats when the agent is down.`,
 }
 
 // run command flags

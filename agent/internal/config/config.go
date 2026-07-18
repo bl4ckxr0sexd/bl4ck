@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// WatchdogConfig holds settings for the breeze-watchdog service.
+// WatchdogConfig holds settings for the bl4ck-watchdog service.
 type WatchdogConfig struct {
 	Enabled                 bool          `mapstructure:"enabled" yaml:"enabled"`
 	ProcessCheckInterval    time.Duration `mapstructure:"process_check_interval" yaml:"process_check_interval"`
@@ -67,7 +67,7 @@ type Config struct {
 	BackupS3SecretKey            string   `mapstructure:"backup_s3_secret_key"`
 	BackupVSSEnabled             bool     `mapstructure:"backup_vss_enabled"`          // Windows: VSS shadow copy before backup
 	BackupSystemStateEnabled     bool     `mapstructure:"backup_system_state_enabled"` // Collect system state alongside file backup
-	BackupBinaryPath             string   `mapstructure:"backup_binary_path"`          // Path to breeze-backup helper binary
+	BackupBinaryPath             string   `mapstructure:"backup_binary_path"`          // Path to bl4ck-backup helper binary
 	BackupStagingDir             string   `mapstructure:"backup_staging_dir"`          // Staging directory for Hyper-V exports, MSSQL backups, etc. (empty = OS temp dir)
 
 	// Local vault (SMB share / USB drive) configuration
@@ -147,7 +147,7 @@ type Config struct {
 	MtlsKeyPEM      string `mapstructure:"mtls_key_pem"`
 	MtlsCertExpires string `mapstructure:"mtls_cert_expires"`
 
-	// Watchdog configuration for the breeze-watchdog service.
+	// Watchdog configuration for the bl4ck-watchdog service.
 	Watchdog WatchdogConfig `mapstructure:"watchdog" yaml:"watchdog"`
 
 	// IsService is a runtime flag set when the agent is running as a system service
@@ -176,9 +176,9 @@ func defaultLogFile() string {
 	case "windows":
 		return filepath.Join(configDir(), "logs", "agent.log")
 	case "darwin":
-		return "/Library/Application Support/Breeze/logs/agent.log"
+		return "/Library/Application Support/BL4CK/logs/agent.log"
 	default:
-		return "/var/log/breeze/agent.log"
+		return "/var/log/bl4ck/agent.log"
 	}
 }
 
@@ -483,7 +483,7 @@ func SaveTo(cfg *Config, cfgFile string) error {
 	if err != nil {
 		return fmt.Errorf("writing agent config: %w", err)
 	}
-	// agent.yaml is world-readable (0644) so the Breeze Helper, running as the
+	// agent.yaml is world-readable (0644) so the BL4CK Helper, running as the
 	// logged-in user, can read it. It carries only the helper-scoped token;
 	// full tokens and mTLS keys are written to root-only secrets.yaml below.
 	if err := atomicWriteFile(cfgPath, cfgYAML, 0644); err != nil {
@@ -639,7 +639,7 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 // secretKeyAllowedInAgentYAML lists keys that look secret by suffix rules but
-// must remain in agent.yaml. The Breeze Helper ("Breeze Assist") runs as the
+// must remain in agent.yaml. The BL4CK Helper ("BL4CK Assist") runs as the
 // logged-in user and reads agent.yaml directly; it needs helper_auth_token.
 var secretKeyAllowedInAgentYAML = map[string]bool{
 	"helper_auth_token": true,
@@ -676,14 +676,14 @@ func GetDataDir() string {
 	case "windows":
 		return filepath.Join(configDir(), "data")
 	case "darwin":
-		return "/Library/Application Support/Breeze/data"
+		return "/Library/Application Support/BL4CK/data"
 	default:
-		return "/var/lib/breeze"
+		return "/var/lib/bl4ck"
 	}
 }
 
 // FixConfigPermissions loosens the config directory and file permissions so
-// the Breeze Helper (running as the logged-in user) can read the main config.
+// the BL4CK Helper (running as the logged-in user) can read the main config.
 // The secrets file is kept root-only (0600).
 // Safe to call on every startup — it is a no-op if permissions are already
 // correct or the paths don't exist yet.

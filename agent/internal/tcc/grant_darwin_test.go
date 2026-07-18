@@ -14,7 +14,7 @@ func TestSqlStr(t *testing.T) {
 	}{
 		{"hello", "'hello'"},
 		{"it's", "'it''s'"},
-		{"/usr/local/bin/breeze-agent", "'/usr/local/bin/breeze-agent'"},
+		{"/usr/local/bin/bl4ck-agent", "'/usr/local/bin/bl4ck-agent'"},
 		{"", "''"},
 		{"O'Brien's", "'O''Brien''s'"},
 		{"path/with;semicolon", "'path/with;semicolon'"},
@@ -88,12 +88,12 @@ func TestConstants(t *testing.T) {
 	if systemTCCDBPath != "/Library/Application Support/com.apple.TCC/TCC.db" {
 		t.Errorf("unexpected TCC DB path: %s", systemTCCDBPath)
 	}
-	if agentBinaryPath != "/usr/local/bin/breeze-agent" {
+	if agentBinaryPath != "/usr/local/bin/bl4ck-agent" {
 		t.Errorf("unexpected agent binary path: %s", agentBinaryPath)
 	}
 	// Helper path must match service_cmd_darwin.go's darwinDesktopHelperBinaryPath
 	// and the LaunchAgent plist entries.
-	if helperBinaryPath != "/usr/local/bin/breeze-desktop-helper" {
+	if helperBinaryPath != "/usr/local/bin/bl4ck-desktop-helper" {
 		t.Errorf("unexpected helper binary path: %s", helperBinaryPath)
 	}
 }

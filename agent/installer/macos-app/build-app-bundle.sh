@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # agent/installer/macos-app/build-app-bundle.sh
 #
-# Assembles Breeze Installer.app from the SPM-built executable.
+# Assembles BL4CK Installer.app from the SPM-built executable.
 # Produces a universal (arm64 + x86_64) .app bundle.
 #
 # Usage:
 #   ./build-app-bundle.sh \
-#     --pkg-amd64 /path/to/breeze-agent-darwin-amd64.pkg \
-#     --pkg-arm64 /path/to/breeze-agent-darwin-arm64.pkg \
-#     --output    /path/to/output/Breeze\ Installer.app
+#     --pkg-amd64 /path/to/bl4ck-agent-darwin-amd64.pkg \
+#     --pkg-arm64 /path/to/bl4ck-agent-darwin-arm64.pkg \
+#     --output    /path/to/output/BL4CK\ Installer.app
 #
 # Requires Swift 5.9+ toolchain and macOS 13+ SDK (matches Package.swift target).
 set -euo pipefail
@@ -54,11 +54,11 @@ cd "$SCRIPT_DIR"
 echo "-> Building universal binary..."
 swift build -c release --arch arm64
 swift build -c release --arch x86_64
-ARM_BIN=".build/arm64-apple-macosx/release/BreezeInstaller"
-X86_BIN=".build/x86_64-apple-macosx/release/BreezeInstaller"
+ARM_BIN=".build/arm64-apple-macosx/release/Bl4ckInstaller"
+X86_BIN=".build/x86_64-apple-macosx/release/Bl4ckInstaller"
 [[ -f "$ARM_BIN" && -f "$X86_BIN" ]] || { echo "SPM build did not produce expected binaries" >&2; exit 1; }
 
-UNIVERSAL_BIN="$(mktemp -d)/BreezeInstaller"
+UNIVERSAL_BIN="$(mktemp -d)/Bl4ckInstaller"
 lipo -create "$ARM_BIN" "$X86_BIN" -output "$UNIVERSAL_BIN"
 file "$UNIVERSAL_BIN"
 
@@ -67,16 +67,16 @@ rm -rf "$OUTPUT"
 mkdir -p "$OUTPUT/Contents/MacOS"
 mkdir -p "$OUTPUT/Contents/Resources"
 
-cp "$UNIVERSAL_BIN" "$OUTPUT/Contents/MacOS/BreezeInstaller"
-chmod 755 "$OUTPUT/Contents/MacOS/BreezeInstaller"
+cp "$UNIVERSAL_BIN" "$OUTPUT/Contents/MacOS/Bl4ckInstaller"
+chmod 755 "$OUTPUT/Contents/MacOS/Bl4ckInstaller"
 
 cp Resources/Info.plist "$OUTPUT/Contents/Info.plist"
 if [[ -f Resources/AppIcon.icns ]]; then
     cp Resources/AppIcon.icns "$OUTPUT/Contents/Resources/AppIcon.icns"
 fi
 
-cp "$PKG_AMD64" "$OUTPUT/Contents/Resources/breeze-agent-amd64.pkg"
-cp "$PKG_ARM64" "$OUTPUT/Contents/Resources/breeze-agent-arm64.pkg"
+cp "$PKG_AMD64" "$OUTPUT/Contents/Resources/bl4ck-agent-amd64.pkg"
+cp "$PKG_ARM64" "$OUTPUT/Contents/Resources/bl4ck-agent-arm64.pkg"
 
 echo "-> .app bundle assembled:"
 ls -la "$OUTPUT/Contents/"

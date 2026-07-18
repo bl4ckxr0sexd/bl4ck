@@ -13,12 +13,12 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-const windowsWatchdogServiceName = "BreezeWatchdog"
+const windowsWatchdogServiceName = "Bl4ckWatchdog"
 
 func serviceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
-		Short: "Manage the Breeze Watchdog Windows service",
+		Short: "Manage the BL4CK Watchdog Windows service",
 	}
 	cmd.AddCommand(serviceInstallCmd())
 	cmd.AddCommand(serviceUninstallCmd())
@@ -34,7 +34,7 @@ func serviceInstallCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to determine executable path: %w", err)
 			}
-			serviceExePath, copied, err := serviceinstall.InstallProtectedBinary(exePath, "breeze-watchdog.exe")
+			serviceExePath, copied, err := serviceinstall.InstallProtectedBinary(exePath, "bl4ck-watchdog.exe")
 			if err != nil {
 				return fmt.Errorf("failed to install service binary in protected Program Files location: %w", err)
 			}
@@ -49,8 +49,8 @@ func serviceInstallCmd() *cobra.Command {
 			defer m.Disconnect()
 
 			s, err := m.CreateService(windowsWatchdogServiceName, serviceExePath, mgr.Config{
-				DisplayName:  "Breeze RMM Watchdog",
-				Description:  "Breeze Agent Watchdog - monitors and recovers the agent process",
+				DisplayName:  "BL4CK RMM Watchdog",
+				Description:  "BL4CK Agent Watchdog - monitors and recovers the agent process",
 				StartType:    mgr.StartAutomatic,
 				ErrorControl: mgr.ErrorNormal,
 			}, "run")
@@ -206,5 +206,5 @@ func restartWatchdogService() error {
 
 // agentBinaryPath returns the platform-specific agent binary path.
 func agentBinaryPath() string {
-	return os.Getenv("ProgramFiles") + `\Breeze\breeze-agent.exe`
+	return os.Getenv("ProgramFiles") + `\BL4CK\bl4ck-agent.exe`
 }

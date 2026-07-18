@@ -33,7 +33,7 @@ func (f *fakeRegKey) ReadValueNames(int) ([]string, error)  { return f.valueName
 func (f *fakeRegKey) ReadSubKeyNames(int) ([]string, error) { return f.subKeys, f.subKeysErr }
 
 func TestExecuteRevert(t *testing.T) {
-	t.Run("deletes all managed values and removes a confirmed-empty Breeze-created key", func(t *testing.T) {
+	t.Run("deletes all managed values and removes a confirmed-empty BL4CK-created key", func(t *testing.T) {
 		k := &fakeRegKey{valueNames: []string{}, subKeys: []string{}}
 		removeKey, err := executeRevert(k, true, fakeIsNotExist)
 		if err != nil {
@@ -136,7 +136,7 @@ func TestPlanAction(t *testing.T) {
 			wantEnforced:  true,
 		},
 		{
-			name:         "enforce re-asserts when already Breeze-managed",
+			name:         "enforce re-asserts when already BL4CK-managed",
 			enforce:      true,
 			st:           regState{keyExists: true, noAutoUpdatePresent: true, noAutoUpdateValue: 1, breezeManaged: true},
 			wantWrite:    true,
@@ -149,7 +149,7 @@ func TestPlanAction(t *testing.T) {
 			st:           regState{keyExists: true, noAutoUpdatePresent: true, noAutoUpdateValue: 1, breezeManaged: false},
 			wantWrite:    false,
 			wantManaged:  false,
-			wantEnforced: true, // reflects the admin's value, Breeze did not set it
+			wantEnforced: true, // reflects the admin's value, BL4CK did not set it
 		},
 		{
 			name:         "enforce leaves a pre-existing admin NoAutoUpdate=0 as-found",
@@ -160,7 +160,7 @@ func TestPlanAction(t *testing.T) {
 			wantEnforced: false,
 		},
 		{
-			name:          "revert removes Breeze enforcement and deletes a Breeze-created key",
+			name:          "revert removes BL4CK enforcement and deletes a BL4CK-created key",
 			enforce:       false,
 			st:            regState{keyExists: true, noAutoUpdatePresent: true, noAutoUpdateValue: 1, breezeManaged: true, breezeCreatedKey: true},
 			wantRevert:    true,
@@ -170,7 +170,7 @@ func TestPlanAction(t *testing.T) {
 			wantEnforced:  false,
 		},
 		{
-			name:          "revert keeps a pre-existing key Breeze did not create",
+			name:          "revert keeps a pre-existing key BL4CK did not create",
 			enforce:       false,
 			st:            regState{keyExists: true, noAutoUpdatePresent: true, noAutoUpdateValue: 1, breezeManaged: true, breezeCreatedKey: false},
 			wantRevert:    true,
@@ -178,7 +178,7 @@ func TestPlanAction(t *testing.T) {
 			wantReverted:  true,
 		},
 		{
-			name:        "revert is a no-op when not Breeze-managed",
+			name:        "revert is a no-op when not BL4CK-managed",
 			enforce:     false,
 			st:          regState{keyExists: true, noAutoUpdatePresent: true, noAutoUpdateValue: 1, breezeManaged: false},
 			wantRevert:  false,

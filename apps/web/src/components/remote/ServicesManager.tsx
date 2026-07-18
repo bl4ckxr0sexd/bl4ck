@@ -64,7 +64,7 @@ const startupTypeOptions: StartupType[] = ['Automatic', 'Automatic (Delayed)', '
 // The BL4CK agent's own service name per platform
 export const AGENT_SERVICE_NAMES = new Set([
   'breezeagent',       // Windows (case-insensitive match)
-  'breeze-agent',      // Linux systemd
+  'bl4ck-agent',      // Linux systemd
   'com.breeze.agent',  // macOS launchd
 ]);
 

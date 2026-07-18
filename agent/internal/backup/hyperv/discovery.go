@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 // psVMPayload is the JSON shape returned by Get-VM | ConvertTo-Json.
@@ -197,6 +199,7 @@ func vmStateString(state int) string {
 // runPS executes a PowerShell command and returns stdout.
 func runPS(command string) (string, error) {
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command)
+	oscmd.Hide(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("powershell failed: %w: %s", err, string(out))

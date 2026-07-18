@@ -1,4 +1,4 @@
-// agent/installer/macos-app/Sources/BreezeInstaller/InstallerApp.swift
+// agent/installer/macos-app/Sources/Bl4ckInstaller/InstallerApp.swift
 import SwiftUI
 
 enum InstallState {
@@ -27,7 +27,7 @@ final class InstallController: ObservableObject {
             parsed = try FilenameTokenParser.load(bundleURL: Bundle.main.bundleURL)
         } catch {
             state = .error(
-                message: "This installer needs its original filename. Please re-download from your Breeze web console.",
+                message: "This installer needs its original filename. Please re-download from your BL4CK web console.",
                 recoverable: false
             )
             return
@@ -91,11 +91,11 @@ final class InstallController: ObservableObject {
 }
 
 @main
-struct BreezeInstallerApp: App {
+struct Bl4ckInstallerApp: App {
     @StateObject private var controller = InstallController()
 
     var body: some Scene {
-        WindowGroup("Breeze Installer") {
+        WindowGroup("BL4CK Installer") {
             RootView(controller: controller)
                 .frame(width: 480, height: 320)
                 .onAppear { controller.start() }
