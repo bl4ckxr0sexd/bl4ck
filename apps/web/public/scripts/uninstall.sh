@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AGENT_BINARY="/usr/local/bin/breeze-agent"
-WATCHDOG_BINARY="/usr/local/bin/breeze-watchdog"
+AGENT_BINARY="/usr/local/bin/bl4ck-agent"
+WATCHDOG_BINARY="/usr/local/bin/bl4ck-watchdog"
 
 fatal() {
   echo "Error: $*" >&2
@@ -46,28 +46,28 @@ uninstall_macos() {
 }
 
 uninstall_linux() {
-  local agent_service="/etc/systemd/system/breeze-agent.service"
-  local watchdog_service="/etc/systemd/system/breeze-watchdog.service"
-  local user_service="/usr/lib/systemd/user/breeze-agent-user.service"
-  local xdg_autostart="/etc/xdg/autostart/breeze-agent-user.desktop"
+  local agent_service="/etc/systemd/system/bl4ck-agent.service"
+  local watchdog_service="/etc/systemd/system/bl4ck-watchdog.service"
+  local user_service="/usr/lib/systemd/user/bl4ck-agent-user.service"
+  local xdg_autostart="/etc/xdg/autostart/bl4ck-agent-user.desktop"
   local ipc_dir="/var/run/breeze"
 
   echo "Uninstalling Breeze Agent for Linux..."
 
   if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-active --quiet breeze-agent 2>/dev/null; then
-      systemctl stop breeze-agent
+    if systemctl is-active --quiet bl4ck-agent 2>/dev/null; then
+      systemctl stop bl4ck-agent
       echo "Service stopped."
     fi
-    if systemctl is-enabled --quiet breeze-agent 2>/dev/null; then
-      systemctl disable breeze-agent
+    if systemctl is-enabled --quiet bl4ck-agent 2>/dev/null; then
+      systemctl disable bl4ck-agent
     fi
-    if systemctl is-active --quiet breeze-watchdog 2>/dev/null; then
-      systemctl stop breeze-watchdog
+    if systemctl is-active --quiet bl4ck-watchdog 2>/dev/null; then
+      systemctl stop bl4ck-watchdog
       echo "Watchdog service stopped."
     fi
-    if systemctl is-enabled --quiet breeze-watchdog 2>/dev/null; then
-      systemctl disable breeze-watchdog
+    if systemctl is-enabled --quiet bl4ck-watchdog 2>/dev/null; then
+      systemctl disable bl4ck-watchdog
     fi
   else
     warn "systemctl not found; skipping service stop and disable"

@@ -68,7 +68,7 @@ describe('RecoveryBootstrapTab', () => {
                 helperBinaryVersion: 'workspace-local',
                 helperBinaryDigestVerified: true,
                 helperBinarySourceType: 'local',
-                helperBinarySourceRef: 'agent/bin/breeze-backup',
+                helperBinarySourceRef: 'agent/bin/bl4ck-backup',
                 helperBinaryManifestVersion: '1',
               },
               downloadPath: '/backup/bmr/media/media-verified/download',
@@ -124,7 +124,7 @@ describe('RecoveryBootstrapTab', () => {
             minHelperVersion: '0.5.0',
             serverUrl: window.location.origin,
             releaseUrl: 'https://github.com/lanternops/breeze/releases/latest',
-            commandTemplate: `breeze-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
+            commandTemplate: `bl4ck-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
             prerequisites: ['Boot into a recovery environment.'],
           },
         }, true, 201);
@@ -142,7 +142,7 @@ describe('RecoveryBootstrapTab', () => {
             minHelperVersion: '0.5.0',
             serverUrl: window.location.origin,
             releaseUrl: 'https://github.com/lanternops/breeze/releases/latest',
-            commandTemplate: `breeze-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
+            commandTemplate: `bl4ck-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
             prerequisites: ['Boot into a recovery environment.'],
             providerType: 's3',
             backupConfig: {
@@ -187,7 +187,7 @@ describe('RecoveryBootstrapTab', () => {
             minHelperVersion: '0.5.0',
             serverUrl: window.location.origin,
             releaseUrl: 'https://github.com/lanternops/breeze/releases/latest',
-            commandTemplate: `breeze-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
+            commandTemplate: `bl4ck-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
             prerequisites: ['Boot into a recovery environment.'],
           },
         });
@@ -208,7 +208,7 @@ describe('RecoveryBootstrapTab', () => {
             minHelperVersion: '0.5.0',
             serverUrl: window.location.origin,
             releaseUrl: 'https://github.com/lanternops/breeze/releases/latest',
-            commandTemplate: `breeze-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
+            commandTemplate: `bl4ck-backup bmr-recover --token <recovery-token> --server "${window.location.origin}"`,
             prerequisites: ['Boot into a recovery environment.'],
           },
         });
@@ -291,7 +291,7 @@ describe('RecoveryBootstrapTab', () => {
       );
     });
 
-    const expectedCommand = `breeze-backup bmr-recover --token brz_rec_123 --server ${window.location.origin}`;
+    const expectedCommand = `bl4ck-backup bmr-recover --token brz_rec_123 --server ${window.location.origin}`;
     expect(await screen.findByText(expectedCommand)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /Preview bootstrap bundle/i }));
@@ -318,7 +318,7 @@ describe('RecoveryBootstrapTab', () => {
 
   it('filters the browser-local token catalog and revokes a token', async () => {
     window.localStorage.setItem(
-      'breeze-backup-recovery-bootstrap-catalog',
+      'bl4ck-backup-recovery-bootstrap-catalog',
       JSON.stringify([
         {
           id: 'token-active',

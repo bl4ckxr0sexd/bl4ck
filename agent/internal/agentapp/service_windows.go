@@ -103,7 +103,7 @@ func runAsService(cfgFile string) error {
 	h := &breezeService{
 		cfgFile: cfgFile,
 	}
-	return svc.Run("BreezeAgent", h)
+	return svc.Run("Bl4ckAgent", h)
 }
 
 // Execute is the SCM callback. It loads config synchronously, then

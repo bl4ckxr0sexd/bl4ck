@@ -51,7 +51,7 @@ func isOurProcess(pid int, binaryPath string) bool {
 	return strings.EqualFold(filepath.Clean(exePath), filepath.Clean(binaryPath))
 }
 
-// isHelperRunningInSession checks whether a breeze-helper.exe process is
+// isHelperRunningInSession checks whether a bl4ck-helper.exe process is
 // running in the given Windows session by scanning the process table.
 // This is the reliable fallback — PID tracking can fail when the helper
 // re-execs, the status file isn't written, or the spawn wrapper returns

@@ -8,18 +8,18 @@ import (
 func migrateLegacyPlatform() {
 	stopHelperLegacy()
 
-	// Remove old registry autostart key ("BreezeHelper", not "BreezeAssist")
+	// Remove old registry autostart key ("BL4CKHelper", not "BL4CKAssist")
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, registryKey, registry.SET_VALUE)
 	if err != nil {
 		return
 	}
 	defer key.Close()
-	_ = key.DeleteValue("BreezeHelper")
+	_ = key.DeleteValue("BL4CKHelper")
 }
 
 func stopHelperLegacy() {
-	_ = runHelperCommand("taskkill", "/F", "/IM", "Breeze Helper.exe")
-	_ = runHelperCommand("taskkill", "/F", "/IM", "breeze-helper.exe")
+	_ = runHelperCommand("taskkill", "/F", "/IM", "BL4CK Helper.exe")
+	_ = runHelperCommand("taskkill", "/F", "/IM", "bl4ck-helper.exe")
 }
 
 func migrationTargets() ([]string, error) {

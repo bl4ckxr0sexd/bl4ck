@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 
 $taskName = "AgentUserHelper"
-$taskPath = "\\Breeze\\"
+$taskPath = "\\BL4CK\\"
 
 try {
     $existing = Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue

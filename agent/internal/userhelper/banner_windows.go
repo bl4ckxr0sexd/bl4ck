@@ -148,7 +148,7 @@ func registerBannerClass() {
 	bannerClassReg.Do(func() {
 		hInst, _, _ := procGetModuleHandleW.Call(0)
 		brush, _, _ := procCreateSolidBrush.Call(bannerBgColor)
-		className, _ := syscall.UTF16PtrFromString("BreezeSessionBanner")
+		className, _ := syscall.UTF16PtrFromString("BL4CKSessionBanner")
 		wc := bannerWndClassEx{
 			cbSize:        uint32(unsafe.Sizeof(bannerWndClassEx{})),
 			lpfnWndProc:   syscall.NewCallback(bannerWndProc),
@@ -230,7 +230,7 @@ func bannerWindowLoop(ready chan<- uintptr, abandoned <-chan struct{}) {
 	if x < 0 {
 		x = 0
 	}
-	className, _ := syscall.UTF16PtrFromString("BreezeSessionBanner")
+	className, _ := syscall.UTF16PtrFromString("BL4CKSessionBanner")
 	title, _ := syscall.UTF16PtrFromString("Remote session active")
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	hwnd, _, _ := procCreateWindowExW.Call(

@@ -140,7 +140,7 @@ async function probeLocalConfig(details: Record<string, unknown>): Promise<void>
 
   await mkdir(rootPath, { recursive: true });
   const probePath = join(rootPath, `.breeze-probe-${randomUUID()}`);
-  await writeFile(probePath, 'breeze-backup-probe');
+  await writeFile(probePath, 'bl4ck-backup-probe');
   await rm(probePath, { force: true });
 }
 
@@ -170,7 +170,7 @@ async function probeS3Config(details: Record<string, unknown>): Promise<void> {
   await client.send(new PutObjectCommand({
     Bucket: bucket,
     Key: key,
-    Body: 'breeze-backup-probe',
+    Body: 'bl4ck-backup-probe',
   }));
   await client.send(new DeleteObjectCommand({
     Bucket: bucket,

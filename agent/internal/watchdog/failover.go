@@ -68,6 +68,8 @@ func (c *FailoverClient) UpdateToken(token string) {
 func (c *FailoverClient) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	// Wire-protocol contract with the server, which is NOT rebranded. This header
+	// name must stay "Breeze" — do not rename it during branding sweeps.
 	req.Header.Set("X-Breeze-Role", "watchdog")
 }
 

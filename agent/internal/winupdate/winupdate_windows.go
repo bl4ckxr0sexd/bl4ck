@@ -40,8 +40,8 @@ func readState() (regState, error) {
 }
 
 // Apply converges the endpoint to the desired Windows Update suppression state.
-// enforce=true sets NoAutoUpdate=1 (managed by Breeze); enforce=false reverts
-// any enforcement Breeze previously applied. Caller logs the Result.
+// enforce=true sets NoAutoUpdate=1 (managed by BL4CK); enforce=false reverts
+// any enforcement BL4CK previously applied. Caller logs the Result.
 func Apply(enforce bool) (Result, error) {
 	st, err := readState()
 	if err != nil {
@@ -62,7 +62,7 @@ func Apply(enforce bool) (Result, error) {
 		if e := k.SetDWordValue(breezeManagedValue, 1); e != nil {
 			// Without the ownership sentinel a future revert would refuse to act
 			// (it can't tell our value from an admin's). Surface it.
-			return Result{Supported: true, Enforced: true}, fmt.Errorf("set Breeze ownership sentinel: %w", e)
+			return Result{Supported: true, Enforced: true}, fmt.Errorf("set BL4CK ownership sentinel: %w", e)
 		}
 		if p.recordKeyCreated && !existed {
 			// Best-effort: a missing created-key sentinel only means revert won't
@@ -94,7 +94,7 @@ func Apply(enforce bool) (Result, error) {
 		if rerr != nil {
 			return Result{Supported: true}, rerr
 		}
-		// If Breeze created the key and it is confirmed empty, remove it to fully
+		// If BL4CK created the key and it is confirmed empty, remove it to fully
 		// restore the prior state. A leftover empty key is harmless, so a delete
 		// failure here is non-fatal.
 		if removeKey {

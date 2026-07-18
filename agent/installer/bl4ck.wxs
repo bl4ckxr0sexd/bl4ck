@@ -1,0 +1,503 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?ifndef Version?>
+<?define Version=0.1.0?>
+<?endif?>
+<?ifndef AgentExePath?>
+<?define AgentExePath=..\bl4ck-agent-windows-amd64.exe?>
+<?endif?>
+<?ifndef BackupExePath?>
+<?define BackupExePath=..\bl4ck-backup-windows-amd64.exe?>
+<?endif?>
+<?ifndef WatchdogExePath?>
+<?define WatchdogExePath=..\bl4ck-watchdog-windows-amd64.exe?>
+<?endif?>
+<?ifndef UserHelperExePath?>
+<?define UserHelperExePath=..\bl4ck-user-helper-windows-amd64.exe?>
+<?endif?>
+<?ifndef UserTaskXmlPath?>
+<?define UserTaskXmlPath=..\service\windows\bl4ck-agent-user-task.xml?>
+<?endif?>
+<?ifndef InstallUserHelperScriptPath?>
+<?define InstallUserHelperScriptPath=..\scripts\install\install-windows.ps1?>
+<?endif?>
+<?ifndef RemoveUserHelperScriptPath?>
+<?define RemoveUserHelperScriptPath=remove-windows-task.ps1?>
+<?endif?>
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="BL4CK Agent"
+    Manufacturer="BL4CK RMM"
+    Version="$(var.Version)"
+    UpgradeCode="{70A57B7A-4F72-4E18-B8D3-7D2783C2C1A9}"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Language="1033">
+
+    <SummaryInformation Description="BL4CK RMM endpoint agent" />
+    <!-- CompressionLevel="high" = LZX (vs the default mszip) for a smaller
+         embedded CAB. Fully supported by Windows Installer; only trade-off is
+         slightly slower build/decompress. Pairs with the stripped (-s -w) Go
+         binaries built by the Makefile. -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of BL4CK Agent is already installed."
+      Schedule="afterInstallExecute" />
+
+    <Launch Condition="VersionNT64" Message="BL4CK Agent requires 64-bit Windows." />
+    <Launch Condition="(NOT SERVER_URL AND NOT ENROLLMENT_KEY) OR (SERVER_URL AND ENROLLMENT_KEY)" Message="SERVER_URL and ENROLLMENT_KEY must be provided together." />
+
+    <?ifdef ServerUrlDefault ?>
+    <Property Id="SERVER_URL" Secure="yes" Value="$(var.ServerUrlDefault)" />
+    <?else?>
+    <Property Id="SERVER_URL" Secure="yes" />
+    <?endif?>
+
+    <?ifdef EnrollmentKeyDefault ?>
+    <Property Id="ENROLLMENT_KEY" Secure="yes" Hidden="yes" Value="$(var.EnrollmentKeyDefault)" />
+    <?else?>
+    <Property Id="ENROLLMENT_KEY" Secure="yes" Hidden="yes" />
+    <?endif?>
+
+    <?ifdef EnrollmentSecretDefault ?>
+    <Property Id="ENROLLMENT_SECRET" Secure="yes" Hidden="yes" Value="$(var.EnrollmentSecretDefault)" />
+    <?else?>
+    <Property Id="ENROLLMENT_SECRET" Secure="yes" Hidden="yes" />
+    <?endif?>
+    <Property Id="BOOTSTRAP_TOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- Every shell custom action below runs via the WiX Util extension's
+         WixQuietExec64 / WixSilentExec64 (BinaryRef="Wix4UtilCA_X64"), which
+         launches the child process with CREATE_NO_WINDOW so there is never a
+         console flash — the whole point of this conversion. A deferred quiet/
+         silent-exec CA takes its command line from CustomActionData, and MSI
+         delivers CustomActionData from a property whose NAME equals the CA Id.
+         So each deferred CA "Foo" is paired with an immediate SetProperty CA
+         "SetFooCmd" that formats the command (resolving [Directory], [#File],
+         secrets, etc. at schedule time) into property "Foo". The lone immediate
+         CA (KillBL4CKProcesses) instead reads the fixed WixQuietExec64CmdLine
+         property, since immediate quiet-exec CAs have no CustomActionData.
+
+         EnrollAgent and BootstrapEnroll assemble a command that embeds secrets
+         (enrollment key/secret, bootstrap token), so:
+           * they use WixSilentExec64, which — unlike WixQuietExec64 — does NOT
+             echo the command line or its output to the installer log;
+           * their CustomActionData-carrier properties are declared Hidden here,
+             which lists them in MsiHiddenProperties so the assembled value is
+             masked in verbose (/l*v) logs even at the SetProperty step;
+           * the deferred CAs additionally set HideTarget="yes".
+         The carriers are private (mixed-case, not Secure): CustomActionData
+         delivery needs the property name to match the mixed-case CA Id exactly,
+         and Secure="yes" would force an all-uppercase name. -->
+    <Property Id="EnrollAgent" Hidden="yes" />
+    <Property Id="BootstrapEnroll" Hidden="yes" />
+
+    <!-- Kill any running BL4CK processes before InstallValidate so file
+         replacement isn't blocked by locked exes.
+         ServiceControl stops Bl4ckAgent and Bl4ckWatchdog below, but the
+         user-session desktop helper (spawned via CreateProcessAsUser) is not a
+         service and would otherwise survive an in-place upgrade — causing the
+         sessionbroker binary hash check to fail on the next remote-desktop
+         connection. The CA runs on EVERY install path (fresh install, major
+         upgrade, repair) because a fresh install can land on top of a binary
+         left behind by a previous uninstall or a non-MSI deployment — the
+         MSI install log line we kept seeing was:
+            File: ...\bl4ck-agent.exe; Won't Overwrite;
+            Existing file is unversioned but modified
+         even on a "first-time" MSI install where the agent was previously
+         dropped onto the box by another mechanism. Skipping the kill on
+         REMOVE is fine because ServiceControl handles service shutdown on
+         uninstall and the user-helper exits cleanly when its tray menu
+         exits. The taskkill /F is idempotent: `& exit /b 0` swallows the
+         "process not found" error so a fresh box with nothing to kill
+         still returns success (#944). Admin token (required by the MSI)
+         is sufficient for cross-session SeDebugPrivilege-backed
+         termination. Runs as an IMMEDIATE WixQuietExec64 (reads the fixed
+         WixQuietExec64CmdLine property), so it can still run before
+         InstallValidate — which is where a deferred CA could not go. taskkill's
+         non-zero "process not found" exit on a fresh box is swallowed by
+         Return="ignore" (#944). -->
+    <CustomAction Id="SetKillBL4CKCmd" Property="WixQuietExec64CmdLine"
+      Value="&quot;[System64Folder]taskkill.exe&quot; /F /T /IM bl4ck-agent.exe /IM bl4ck-user-helper.exe /IM bl4ck-watchdog.exe /IM bl4ck-desktop-helper.exe /IM bl4ck-backup.exe"
+      Execute="immediate" />
+    <CustomAction
+      Id="KillBL4CKProcesses"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="immediate"
+      Return="ignore" />
+    <!-- MUST be deferred + non-impersonated so it runs as LocalSystem.
+         #609/#613 fixed the "folders don't exist yet" facet (added the mkdir
+         guards) but left this Execute="immediate". Immediate CAs impersonate
+         the installing user, and on an interactive double-click + UAC-consent
+         install that token is the *filtered* one (Administrators is DENY_ONLY).
+         icacls /inheritance:r needs WRITE_DAC, which the filtered token lacks,
+         so the action returned ACCESS_DENIED (5) -> 1722 -> rollback -> 1603.
+         Deferred + Impersonate="no" runs as LocalSystem (full rights). It is
+         sequenced After CreateFolders below, which now (unlike the immediate
+         case) actually runs first in the in-script, so the dirs already exist
+         and the mkdir guards are belt-and-suspenders. Return="ignore" mirrors
+         ConfigureBL4CKFailureActions: ACL hardening that is blocked by an
+         external control (Controlled Folder Access / ASR / EDR / GPO) must
+         never roll back an otherwise-good install — the folders are still
+         created by CreateFolders with default ProgramData ACLs, and the agent
+         re-applies PROTECTED DACLs to the config dir and (fail-closed) to
+         secrets.yaml at runtime on first config write (see
+         agent/internal/config/permissions_windows.go), so a skipped/blocked
+         icacls here self-heals and never leaves tokens world-readable. -->
+    <CustomAction Id="SetHardenProgramDataAclCmd" Property="HardenProgramDataAcl"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;New-Item -ItemType Directory -Force '[ProgramDataBL4CKDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBL4CKDataDir]' | Out-Null; New-Item -ItemType Directory -Force '[ProgramDataBL4CKLogsDir]' | Out-Null; icacls '[ProgramDataBL4CKDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBL4CKDataDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; icacls '[ProgramDataBL4CKLogsDir]' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="HardenProgramDataAcl"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <!-- Set SCM failure-action recovery on both services after they're
+         installed. Mirrors agent/cmd/bl4ck-agent/service_cmd_windows.go:72-79
+         and agent/cmd/bl4ck-watchdog/service_cmd_windows.go:63-67 (5s/10s/30s
+         restart escalation with 24-hour counter reset).
+
+         Without this, MSI-installed services have no SCM-driven auto-restart;
+         only `bl4ck-agent.exe service install` (the manual subcommand)
+         applied the recovery actions before. So every MSI deployment was
+         missing this hardening.
+
+         `sc failure` syntax: spaces after each `=` are mandatory; actions are
+         a slash-separated list of (actionType/delayMs) pairs. `Return="ignore"`
+         (below) is what prevents a transient sc-error from rolling back the
+         install — keep both the static ExeCommand and Return="ignore" in
+         sync if either is ever edited. -->
+    <CustomAction Id="SetConfigureBL4CKFailureActionsCmd" Property="ConfigureBL4CKFailureActions"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;sc.exe failure Bl4ckAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000; sc.exe failure Bl4ckWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="ConfigureBL4CKFailureActions"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="BL4CK">
+        <Component Id="cmpBl4ckAgentExe" Guid="*">
+          <File Id="filBl4ckAgentExe" Name="bl4ck-agent.exe" Source="$(var.AgentExePath)" KeyPath="yes" />
+          <ServiceInstall
+            Id="svcInstallBl4ckAgent"
+            Name="Bl4ckAgent"
+            DisplayName="BL4CK Agent"
+            Description="BL4CK RMM endpoint agent"
+            Type="ownProcess"
+            Arguments="run"
+            Start="auto"
+            ErrorControl="normal"
+            Vital="yes" />
+          <ServiceControl
+            Id="svcControlBl4ckAgent"
+            Name="Bl4ckAgent"
+            Start="install"
+            Stop="both"
+            Remove="uninstall"
+            Wait="yes" />
+        </Component>
+
+        <Component Id="cmpBL4CKBackupExe" Guid="*">
+          <File Id="filBL4CKBackupExe" Name="bl4ck-backup.exe"
+                Source="$(var.BackupExePath)" KeyPath="yes" />
+        </Component>
+
+        <Component Id="cmpBL4CKUserHelperExe" Guid="*">
+          <!-- GUI-subsystem sibling of bl4ck-agent.exe (same Go source, -H windowsgui).
+               Launched by the AgentUserHelper scheduled task at user logon and by the
+               SYSTEM-context sessionbroker spawn paths. GUI subsystem prevents the
+               Windows kernel from allocating a console window for the helper. -->
+          <File Id="filBL4CKUserHelperExe" Name="bl4ck-user-helper.exe"
+                Source="$(var.UserHelperExePath)" KeyPath="yes" />
+        </Component>
+
+        <Component Id="cmpBl4ckWatchdogExe" Guid="*">
+          <File Id="filBl4ckWatchdogExe" Name="bl4ck-watchdog.exe"
+                Source="$(var.WatchdogExePath)" KeyPath="yes" />
+          <ServiceInstall Id="svcInstallWatchdog"
+                          Name="Bl4ckWatchdog"
+                          DisplayName="BL4CK RMM Watchdog"
+                          Description="Monitors and recovers the BL4CK RMM Agent"
+                          Start="auto"
+                          Type="ownProcess"
+                          ErrorControl="normal"
+                          Arguments="run" />
+          <ServiceControl Id="svcControlWatchdog"
+                          Name="Bl4ckWatchdog"
+                          Start="install"
+                          Stop="both"
+                          Remove="uninstall"
+                          Wait="yes" />
+        </Component>
+
+        <!-- Register Bl4ckAgent to run in Safe Mode with Networking. Without this,
+             the SCM won't start the service in safe mode, preventing the agent from
+             auto-clearing the BCD safeboot flag and reconnecting to the server. -->
+        <Component Id="cmpSafeBootNetworkReg" Guid="*">
+          <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\SafeBoot\Network\Bl4ckAgent">
+            <RegistryValue Type="string" Value="Service" />
+          </RegistryKey>
+        </Component>
+
+        <Directory Id="INSTALL_SERVICE_DIR" Name="service">
+          <Directory Id="INSTALL_SERVICE_WINDOWS_DIR" Name="windows">
+            <Component Id="cmpUserTaskXml" Guid="*">
+              <File Id="filUserTaskXml" Source="$(var.UserTaskXmlPath)" KeyPath="yes" />
+            </Component>
+          </Directory>
+        </Directory>
+
+        <Directory Id="INSTALL_SCRIPTS_DIR" Name="scripts">
+          <Directory Id="INSTALL_SCRIPTS_INSTALL_DIR" Name="install">
+            <Component Id="cmpInstallWindowsPs1" Guid="*">
+              <File Id="filInstallWindowsPs1" Source="$(var.InstallUserHelperScriptPath)" KeyPath="yes" />
+            </Component>
+            <Component Id="cmpRemoveWindowsTaskPs1" Guid="*">
+              <File Id="filRemoveWindowsTaskPs1" Source="$(var.RemoveUserHelperScriptPath)" KeyPath="yes" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="ProgramDataBL4CKDir" Name="BL4CK">
+        <Component Id="cmpProgramDataRoot" Guid="{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}" Permanent="yes">
+          <CreateFolder />
+        </Component>
+        <Component Id="cmpCleanConfigOnUninstall" Guid="{D4E5F6A7-B8C9-0123-DEFA-456789012345}">
+          <RegistryValue Root="HKLM" Key="SOFTWARE\BL4CK" Name="ConfigCleanup" Type="integer" Value="1" KeyPath="yes" />
+          <RemoveFile Id="rmfAgentYaml" Name="agent.yaml" On="uninstall" />
+          <RemoveFile Id="rmfAgentYamlBak" Name="agent.yaml.bak" On="uninstall" />
+          <!-- secrets.yaml holds the agent auth token and mTLS private key
+               (see internal/config/config.go). Remove on uninstall so a
+               decommissioned machine doesn't leave credentials on disk. The
+               logs/ and data/ directories are intentionally preserved (their
+               components are Permanent="yes") for post-uninstall forensics. -->
+          <RemoveFile Id="rmfSecretsYaml" Name="secrets.yaml" On="uninstall" />
+        </Component>
+        <Directory Id="ProgramDataBL4CKDataDir" Name="data">
+          <Component Id="cmpProgramDataData" Guid="{B2C3D4E5-F6A7-8901-BCDE-F12345678901}" Permanent="yes">
+            <CreateFolder />
+          </Component>
+        </Directory>
+        <Directory Id="ProgramDataBL4CKLogsDir" Name="logs">
+          <Component Id="cmpProgramDataLogs" Guid="{C3D4E5F6-A7B8-9012-CDEF-123456789012}" Permanent="yes">
+            <CreateFolder />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- The user-helper scheduled-task register/rollback/unregister CAs all run
+         a bundled PS script (-File). Converted to WixQuietExec64 too so the
+         uninstall and rollback paths are also console-flash free — the register
+         path is one of the six the request named, and leaving its siblings on
+         the old ExeCommand mechanism would defeat "zero popups" on uninstall. -->
+    <CustomAction Id="SetRegisterUserHelperTaskCmd" Property="RegisterUserHelperTask"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filInstallWindowsPs1]&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="RegisterUserHelperTask"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+
+    <CustomAction Id="SetRollbackRegisterUserHelperTaskCmd" Property="RollbackRegisterUserHelperTask"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filRemoveWindowsTaskPs1]&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="RollbackRegisterUserHelperTask"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="rollback"
+      Impersonate="no"
+      Return="ignore" />
+
+    <CustomAction Id="SetUnregisterUserHelperTaskCmd" Property="UnregisterUserHelperTask"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filRemoveWindowsTaskPs1]&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="UnregisterUserHelperTask"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <!-- Enrollment via WixSilentExec64 (deferred). The command launches
+         powershell.exe (a fixed, space-free System64 path) which in turn runs
+         the installed agent exe. Two historical MSI failures stay avoided:
+           * type 18 (FileRef) -> "2753: The File 'filBl4ckAgentExe' is not
+             marked for installation" — never used here; the agent path is a
+             plain formatted string, not a File token.
+           * type 50 (Property holding the exe path) -> "1721: a program
+             required for this install could not be run" — the install path
+             C:\Program Files\BL4CK\bl4ck-agent.exe contains a space; here the
+             exe WixQuietExec launches is powershell.exe (no space), and the
+             agent path rides inside powershell's own single quotes, so the
+             space is handled by PowerShell, not the MSI engine.
+         The SetEnrollAgentCmd SetProperty CA formats [INSTALLFOLDER] and the
+         secret properties at schedule time into the (Hidden) EnrollAgent
+         property, which MSI delivers as this deferred CA's CustomActionData.
+         WixSilentExec64 keeps the secret-bearing command out of the log;
+         HideTarget="yes" masks the CustomActionData line too. Return="check"
+         still rolls the install back on a non-zero agent exit. -->
+    <CustomAction Id="SetEnrollAgentCmd" Property="EnrollAgent"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]bl4ck-agent.exe' enroll '[ENROLLMENT_KEY]' --server '[SERVER_URL]' --enrollment-secret '[ENROLLMENT_SECRET]' --quiet; exit $LASTEXITCODE&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="EnrollAgent"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixSilentExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check"
+      HideTarget="yes" />
+
+    <!-- Pass the launched MSI path (which carries the bootstrap token in its
+         filename — BL4CK Agent (TOKEN@HOST).msi) to the agent on the deferred
+         CA's command line, via [OriginalDatabase] referenced DIRECTLY.
+
+         MSI formats a deferred CA's Target at SCHEDULE time (the immediate
+         execute-sequence pass), where OriginalDatabase still points at the user's
+         downloaded file — the (TOKEN@HOST) name is intact and is baked into the
+         script. (By deferred EXECUTION time the package is cached to
+         C:\Windows\Installer and OriginalDatabase would be tokenless, but the
+         Target has already been formatted by then.) Verified on the shipped
+         v0.86.0 MSI: the formatted Target carries the full path with the token.
+
+         Do NOT revert this to "[CustomActionData]". For a deferred EXE custom
+         action, [CustomActionData] in the ExeCommand formats to an EMPTY string
+         at schedule time (CustomActionData only exists at deferred-execution time,
+         and only DLL/script CAs can read it — an EXE CA gets nothing on its
+         command line). So the agent received an empty install-data argument and
+         silently skipped enrollment on EVERY install ("no bootstrap token
+         present" then unenrolled). That was the real cause of the field reports.
+         It was misattributed to #1956's bracket-stripping — a real but separate
+         bug that just wasn't the cause of non-enrollment; the prior
+         SetBootstrapData then CustomActionData indirection never delivered the
+         token at all.
+
+         The token rides in PARENTHESES — BL4CK Agent (TOKEN@HOST).msi — not
+         square brackets, because "[...]" is MSI's Formatted-field delimiter and a
+         bracketed substring is stripped; parens are literal and survive. The
+         agent parser (installer_filename.go) accepts both. The pipe-delimited
+         <OriginalDatabase>|<BOOTSTRAP_TOKEN>|<SERVER_URL> shape mirrors the
+         agent's resolveBootstrapInputs payload (an explicitly-supplied token +
+         server take precedence; both are empty on the filename-bootstrap path).
+         HideTarget keeps the token out of the verbose log, and WixSilentExec64
+         (vs WixQuietExec64) keeps the command itself unlogged.
+
+         The SetBootstrapEnrollCmd SetProperty CA formats [OriginalDatabase] at
+         SCHEDULE time — it is an immediate CA sequenced right before this
+         deferred CA in the same immediate InstallExecuteSequence pass, exactly
+         when the prior Directory-based (type 34) CA formatted its Target — so
+         OriginalDatabase still names the downloaded (TOKEN@HOST) file, not the
+         tokenless cached copy. The formatted string is delivered as this CA's
+         CustomActionData. (Do NOT reintroduce "[CustomActionData]" inside the
+         command: an EXE/quiet-exec CA reads CustomActionData as its whole
+         command, it is not a substitutable field.) -->
+    <CustomAction Id="SetBootstrapEnrollCmd" Property="BootstrapEnroll"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;&amp; '[INSTALLFOLDER]bl4ck-agent.exe' bootstrap --install-data '[OriginalDatabase]|[BOOTSTRAP_TOKEN]|[SERVER_URL]' --quiet; exit $LASTEXITCODE&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="BootstrapEnroll"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixSilentExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check"
+      HideTarget="yes" />
+
+    <InstallExecuteSequence>
+      <!-- Run on every install path EXCEPT uninstall. Broadened from the
+           original `WIX_UPGRADE_DETECTED OR Installed` (which skipped fresh
+           installs over a pre-existing non-MSI binary) — see comment at the
+           CA definition above and issue #944. -->
+      <Custom Action="SetKillBL4CKCmd" Before="KillBL4CKProcesses" Condition="NOT REMOVE" />
+      <Custom Action="KillBL4CKProcesses" Before="InstallValidate" Condition="NOT REMOVE" />
+      <Custom Action="SetHardenProgramDataAclCmd" Before="HardenProgramDataAcl" Condition="NOT REMOVE" />
+      <Custom Action="HardenProgramDataAcl" After="CreateFolders" Condition="NOT REMOVE" />
+      <!-- Rollback rolls back the FIRST-install case only; on upgrade or
+           repair the existing task is valid prior state and shouldn't be
+           wiped by a rolled-back inner install. -->
+      <Custom Action="SetRollbackRegisterUserHelperTaskCmd" Before="RollbackRegisterUserHelperTask" Condition="NOT Installed AND NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="RollbackRegisterUserHelperTask" Before="RegisterUserHelperTask" Condition="NOT Installed AND NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
+      <!-- RegisterUserHelperTask runs on EVERY install path that isn't
+           uninstall: first install, major upgrade, and `msiexec /fa` repair.
+           The PS script's Register-ScheduledTask -Force is idempotent, so
+           re-registering on repair just refreshes the action to the current
+           XML (the binary path may have changed across versions) — which is
+           the entire point. The previous `NOT Installed AND NOT REMOVE`
+           gate skipped repair, leaving repaired installs with stale task
+           pointers. -->
+      <Custom Action="SetRegisterUserHelperTaskCmd" Before="RegisterUserHelperTask" Condition="NOT REMOVE" />
+      <Custom Action="RegisterUserHelperTask" After="InstallServices" Condition="NOT REMOVE" />
+      <!-- Apply SCM recovery actions immediately after the services are
+           registered. Deferred + non-impersonated so it runs as LocalSystem
+           (which sc.exe needs for SERVICE_CHANGE_CONFIG). -->
+      <Custom Action="SetConfigureBL4CKFailureActionsCmd" Before="ConfigureBL4CKFailureActions" Condition="NOT REMOVE" />
+      <Custom Action="ConfigureBL4CKFailureActions" After="InstallServices" Condition="NOT REMOVE" />
+      <!-- Enrollment runs after file copy but before InstallServices.
+
+           Return="check" on the EnrollAgent CA means a non-zero exit
+           from bl4ck-agent.exe enroll rolls back the install cleanly.
+           Admins see a specific cause in four places:
+
+             1. install.log (captured from the CA's stderr)
+             2. C:\ProgramData\BL4CK\logs\agent.log (slog structured)
+             3. C:\ProgramData\BL4CK\logs\enroll-last-error.txt
+                (single-line timestamped, survives rollback because
+                CA-written files are opaque to MSI)
+             4. Event Viewer, Application, Bl4ckAgent (Error)
+
+           Installs without ENROLLMENT_KEY skip this CA entirely
+           (condition below requires both SERVER_URL and ENROLLMENT_KEY).
+           The service starts anyway and idles in a wait-for-enrollment
+           loop (see waitForEnrollment in cmd/bl4ck-agent/main.go), so
+           a later manual enrollment (running bl4ck-agent.exe enroll
+           with the key and the server URL flag, same arguments used
+           by the CA above) is picked up live without a service
+           restart. This is the intended flow for imaged/sysprep'd
+           deployments. -->
+      <Custom Action="SetEnrollAgentCmd" Before="EnrollAgent" Condition="NOT Installed AND SERVER_URL AND ENROLLMENT_KEY" />
+      <Custom Action="EnrollAgent" Before="InstallServices" Condition="NOT Installed AND SERVER_URL AND ENROLLMENT_KEY" />
+      <!-- Filename/property bootstrap enrollment: only when explicit
+           SERVER_URL+ENROLLMENT_KEY were NOT supplied (those take the
+           EnrollAgent path above). The deferred CA references [OriginalDatabase]
+           directly (baked at schedule time, here, while it still names the
+           downloaded file) — no immediate capture CA is needed. -->
+      <Custom Action="SetBootstrapEnrollCmd" Before="BootstrapEnroll" Condition="NOT Installed AND NOT (SERVER_URL AND ENROLLMENT_KEY)" />
+      <Custom Action="BootstrapEnroll" Before="InstallServices" Condition="NOT Installed AND NOT (SERVER_URL AND ENROLLMENT_KEY)" />
+      <Custom Action="SetUnregisterUserHelperTaskCmd" Before="UnregisterUserHelperTask" Condition="REMOVE=&quot;ALL&quot;" />
+      <Custom Action="UnregisterUserHelperTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <Feature Id="MainFeature" Title="BL4CK Agent" Level="1">
+      <ComponentRef Id="cmpBl4ckAgentExe" />
+      <ComponentRef Id="cmpBL4CKBackupExe" />
+      <ComponentRef Id="cmpBL4CKUserHelperExe" />
+      <ComponentRef Id="cmpBl4ckWatchdogExe" />
+      <ComponentRef Id="cmpSafeBootNetworkReg" />
+      <ComponentRef Id="cmpUserTaskXml" />
+      <ComponentRef Id="cmpInstallWindowsPs1" />
+      <ComponentRef Id="cmpRemoveWindowsTaskPs1" />
+      <ComponentRef Id="cmpProgramDataRoot" />
+      <ComponentRef Id="cmpCleanConfigOnUninstall" />
+      <ComponentRef Id="cmpProgramDataData" />
+      <ComponentRef Id="cmpProgramDataLogs" />
+    </Feature>
+  </Package>
+</Wix>

@@ -4,10 +4,10 @@ import type { PostureSummary } from '../types/postureReport';
 import type { ExecutiveSummary } from '../types/executiveSummaryReport';
 
 /**
- * Branded PDF design system for Breeze reports.
+ * Branded PDF design system for BL4CK reports.
  *
  * One visual language for every exported report: a partner-branded header band
- * (partner logo when uploaded, Breeze wordmark otherwise), a running footer with
+ * (partner logo when uploaded, BL4CK wordmark otherwise), a running footer with
  * page numbers and a confidentiality marker, a posture scorecard cover for the
  * security & compliance report, and a humanized, colour-coded data table.
  *
@@ -38,9 +38,9 @@ const C = {
 } satisfies Record<string, RGB>;
 
 export type ReportBranding = {
-  /** Partner display name; falls back to "Breeze" when null. */
+  /** Partner display name; falls back to "BL4CK" when null. */
   name: string | null;
-  /** Partner logo as a raster data URL (PNG/JPEG). Null → vector Breeze mark. */
+  /** Partner logo as a raster data URL (PNG/JPEG). Null → vector BL4CK mark. */
   logoDataUrl: string | null;
   /** Logo intrinsic aspect ratio (width / height); used to size without distortion. */
   logoAspect: number | null;
@@ -106,29 +106,16 @@ function humanizeHeader(key: string): string {
 // Brand chrome: header band + footer, drawn on every page via didDrawPage.
 // ----------------------------------------------------------------------------
 
-// The Breeze wind mark — three gust strokes with curled tails, transcribed from
-// the product logo (apps/web/public/favicon.svg, 32-unit art space). Each path
-// is a start point plus relative cubic-bezier segments for jsPDF `lines()`.
-type MarkPath = { start: [number, number]; curves: [number, number, number, number, number, number][] };
-const BREEZE_MARK_PATHS: MarkPath[] = [
-  { start: [6, 11], curves: [[0, 0, 4, 0, 8, 0], [4, 0, 6, -3, 10, -3], [2, 0, 3, 1, 3, 2], [0, 1, -1, 2, -3, 2], [-2, 0, -3, -1, -3, -1]] },
-  { start: [4, 17], curves: [[0, 0, 5, 0, 11, 0], [6, 0, 8, -3, 11, -3], [1.5, 0, 2.5, 1, 2.5, 2], [0, 1, -1, 2, -2.5, 2], [-2, 0, -3, -1, -3, -1]] },
-  { start: [7, 23], curves: [[0, 0, 4, 0, 9, 0], [4, 0, 6, -3, 9, -3], [1.5, 0, 2.5, 1, 2.5, 2], [0, 1, -1, 2, -2.5, 2], [-2, 0, -3, -1, -3, -1]] },
-];
-
-/** The Breeze logo as it appears in the product: dark rounded chip + teal gusts. */
-function drawBreezeMark(doc: jsPDF, x: number, yMid: number, size = 9): void {
+/** The BL4CK logo mark: dark rounded chip + bold "B" monogram. Placeholder
+ *  until a raster brand asset is supplied (mirror apps/web/public/favicon.svg). */
+function drawBrandMark(doc: jsPDF, x: number, yMid: number, size = 9): void {
   const s = size / 32; // favicon art space is 32 units square
   set.fill(doc, C.ink);
   doc.roundedRect(x, yMid - size / 2, size, size, 8 * s, 8 * s, 'F');
-  set.draw(doc, C.teal);
-  doc.setLineCap('round');
-  doc.setLineJoin('round');
-  doc.setLineWidth(2 * s);
-  const y0 = yMid - size / 2;
-  for (const p of BREEZE_MARK_PATHS) {
-    doc.lines(p.curves, x + p.start[0] * s, y0 + p.start[1] * s, [s, s], 'S', false);
-  }
+  set.text(doc, C.teal);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(size * 0.72);
+  doc.text('B', x + size / 2, yMid, { align: 'center', baseline: 'middle' });
 }
 
 function drawHeaderBand(doc: jsPDF, opts: BuildOpts): void {
@@ -139,11 +126,11 @@ function drawHeaderBand(doc: jsPDF, opts: BuildOpts): void {
   set.fill(doc, C.teal);
   doc.rect(0, PAGE.bandH, PAGE.w, 0.7, 'F');
 
-  const name = branding?.name?.trim() || 'Breeze';
+  const name = branding?.name?.trim() || 'BL4CK';
   const yMid = PAGE.bandH / 2;
 
-  // Partner logo when uploaded (carries its own wordmark); otherwise the Breeze
-  // vector mark + partner/Breeze name. A failed embed degrades to the mark+name.
+  // Partner logo when uploaded (carries its own wordmark); otherwise the BL4CK
+  // vector mark + partner/BL4CK name. A failed embed degrades to the mark+name.
   let drewLogo = false;
   if (branding?.logoDataUrl) {
     const logoH = 9;
@@ -161,7 +148,7 @@ function drawHeaderBand(doc: jsPDF, opts: BuildOpts): void {
       doc.addImage(branding.logoDataUrl, 'PNG', PAGE.mx + pad, chipY + pad, logoW, logoH, undefined, 'FAST');
       drewLogo = true;
     } catch {
-      // Erase the empty chip and fall back to the Breeze mark + name.
+      // Erase the empty chip and fall back to the BL4CK mark + name.
       set.fill(doc, C.primary);
       doc.rect(0, 0, PAGE.mx + chipW + 2, PAGE.bandH, 'F');
       drewLogo = false;
@@ -169,13 +156,13 @@ function drawHeaderBand(doc: jsPDF, opts: BuildOpts): void {
   }
   if (!drewLogo) {
     // Partner-branded but no usable logo: the partner's name IS the letterhead —
-    // pairing it with the Breeze mark would brand the deliverable with the
-    // tooling instead of the MSP. The Breeze mark appears only when there is no
+    // pairing it with the BL4CK mark would brand the deliverable with the
+    // tooling instead of the MSP. The BL4CK mark appears only when there is no
     // partner context at all.
     const isPartnerBranded = Boolean(branding?.name?.trim());
     let textX = PAGE.mx;
     if (!isPartnerBranded) {
-      drawBreezeMark(doc, PAGE.mx, yMid);
+      drawBrandMark(doc, PAGE.mx, yMid);
       textX = PAGE.mx + 12;
     }
     set.text(doc, C.white);
@@ -206,9 +193,9 @@ function drawFooter(doc: jsPDF, opts: BuildOpts): void {
   // wrong once a cover page precedes the table).
   const pageNumber = doc.getCurrentPageInfo().pageNumber;
   // White-label attribution: this is the partner's deliverable, so their name
-  // signs it. Breeze appears only when there is no partner context.
+  // signs it. BL4CK appears only when there is no partner context.
   const partnerName = opts.branding?.name?.trim();
-  doc.text(partnerName ? `Prepared by ${partnerName}` : 'Generated by Breeze RMM', PAGE.mx, y);
+  doc.text(partnerName ? `Prepared by ${partnerName}` : 'Generated by BL4CK RMM', PAGE.mx, y);
   doc.text('Confidential', PAGE.w / 2, y, { align: 'center' });
   doc.text(`Page ${pageNumber} of ${TOTAL_TOKEN}`, PAGE.w - PAGE.mx, y, { align: 'right' });
 }
@@ -738,7 +725,7 @@ function drawRecommendedActions(
   if (all.length > recs.length) {
     set.text(doc, C.muted);
     doc.setFontSize(7.5);
-    doc.text(`+ ${all.length - recs.length} further recommendation${all.length - recs.length === 1 ? '' : 's'} available in Breeze`, PAGE.mx + 6.5, y);
+    doc.text(`+ ${all.length - recs.length} further recommendation${all.length - recs.length === 1 ? '' : 's'} available in BL4CK`, PAGE.mx + 6.5, y);
     y += 4;
   }
   return y;

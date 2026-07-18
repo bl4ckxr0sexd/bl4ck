@@ -1,4 +1,4 @@
-// Package winupdate enforces "Breeze as the sole patch source" on Windows
+// Package winupdate enforces "BL4CK as the sole patch source" on Windows
 // endpoints (issue #1872). When enabled, it disables the native Windows Update
 // automatic-install channel by setting the documented Group Policy registry
 // value NoAutoUpdate=1 under
@@ -7,11 +7,11 @@
 //
 // NoAutoUpdate=1 stops the unattended, OS-initiated Automatic Updates client
 // only. It does NOT block the Windows Update Agent COM API
-// (Microsoft.Update.Session / IUpdateInstaller) that Breeze's own patch
-// installer drives — so Breeze's scan/approve/install path keeps working.
+// (Microsoft.Update.Session / IUpdateInstaller) that BL4CK's own patch
+// installer drives — so BL4CK's scan/approve/install path keeps working.
 //
-// Enforcement is fully reversible. Breeze records its own ownership with
-// sentinel values in the same key, and revert only touches state Breeze
+// Enforcement is fully reversible. BL4CK records its own ownership with
+// sentinel values in the same key, and revert only touches state BL4CK
 // created: a pre-existing admin Group Policy is detected and left as-found.
 //
 // The platform-independent decision logic (planAction) lives here so it can be
@@ -23,14 +23,14 @@ import "fmt"
 
 const (
 	// noAutoUpdateValue=1 disables the unattended Automatic Updates install
-	// channel (does not affect Breeze's WUA COM-driven installs).
+	// channel (does not affect BL4CK's WUA COM-driven installs).
 	noAutoUpdateValue = "NoAutoUpdate"
-	// breezeManagedValue marks the NoAutoUpdate value as Breeze-owned so revert
+	// breezeManagedValue marks the NoAutoUpdate value as BL4CK-owned so revert
 	// never clobbers a pre-existing admin GPO.
-	breezeManagedValue = "BreezeManagedNoAutoUpdate"
-	// breezeCreatedKeyValue marks that Breeze created the AU key itself, so a
+	breezeManagedValue = "BL4CKManagedNoAutoUpdate"
+	// breezeCreatedKeyValue marks that BL4CK created the AU key itself, so a
 	// revert can remove the key again if nothing else remains.
-	breezeCreatedKeyValue = "BreezeCreatedAUKey"
+	breezeCreatedKeyValue = "BL4CKCreatedAUKey"
 )
 
 // regKey is the subset of registry key operations the revert path needs. It is
@@ -43,7 +43,7 @@ type regKey interface {
 	ReadSubKeyNames(n int) ([]string, error)
 }
 
-// executeRevert deletes Breeze's managed value + ownership sentinels from an
+// executeRevert deletes BL4CK's managed value + ownership sentinels from an
 // already-open AU key, then reports whether the caller should delete the key
 // itself. It is pure registry-sequence logic with two safety guarantees:
 //
@@ -66,10 +66,10 @@ func executeRevert(k regKey, deleteKeyIfEmpty bool, isNotExist func(error) bool)
 		return false, fmt.Errorf("delete NoAutoUpdate: %w", e)
 	}
 	if e := del(breezeManagedValue); e != nil {
-		return false, fmt.Errorf("delete Breeze ownership sentinel: %w", e)
+		return false, fmt.Errorf("delete BL4CK ownership sentinel: %w", e)
 	}
 	if e := del(breezeCreatedKeyValue); e != nil {
-		return false, fmt.Errorf("delete Breeze created-key sentinel: %w", e)
+		return false, fmt.Errorf("delete BL4CK created-key sentinel: %w", e)
 	}
 
 	if !deleteKeyIfEmpty {
@@ -88,13 +88,13 @@ func executeRevert(k regKey, deleteKeyIfEmpty bool, isNotExist func(error) bool)
 type Result struct {
 	// Supported is false on non-Windows platforms (Apply is a no-op there).
 	Supported bool
-	// Managed is true when Breeze owns the NoAutoUpdate policy value after this
+	// Managed is true when BL4CK owns the NoAutoUpdate policy value after this
 	// call (its sentinel is present). False when a pre-existing admin GPO was
 	// left as-found, or after a revert.
 	Managed bool
 	// Enforced reports whether NoAutoUpdate is effectively 1 after the call.
 	Enforced bool
-	// Reverted is true when this call removed Breeze's prior enforcement.
+	// Reverted is true when this call removed BL4CK's prior enforcement.
 	Reverted bool
 	// Reason is a human-readable detail for slog.
 	Reason string
@@ -105,9 +105,9 @@ type regState struct {
 	keyExists           bool
 	noAutoUpdatePresent bool
 	noAutoUpdateValue   uint32
-	// breezeManaged is true when Breeze's NoAutoUpdate ownership sentinel is set.
+	// breezeManaged is true when BL4CK's NoAutoUpdate ownership sentinel is set.
 	breezeManaged bool
-	// breezeCreatedKey is true when Breeze created the AU key itself (so revert
+	// breezeCreatedKey is true when BL4CK created the AU key itself (so revert
 	// may remove it again if it ends up empty).
 	breezeCreatedKey bool
 }
@@ -115,14 +115,14 @@ type regState struct {
 // plan is the set of registry mutations needed to converge to the desired state.
 type plan struct {
 	// writeEnforcement: (create the key path as needed and) set NoAutoUpdate=1
-	// plus Breeze's ownership sentinel.
+	// plus BL4CK's ownership sentinel.
 	writeEnforcement bool
 	// recordKeyCreated: the AU key did not exist, so after creating it set the
-	// "Breeze created this key" sentinel for a clean revert later.
+	// "BL4CK created this key" sentinel for a clean revert later.
 	recordKeyCreated bool
-	// revert: delete NoAutoUpdate and Breeze's sentinels.
+	// revert: delete NoAutoUpdate and BL4CK's sentinels.
 	revert bool
-	// deleteKeyIfEmpty: after reverting, delete the AU key if Breeze created it
+	// deleteKeyIfEmpty: after reverting, delete the AU key if BL4CK created it
 	// and nothing else remains.
 	deleteKeyIfEmpty bool
 	// result is the Result to surface once the plan executes successfully.
@@ -133,14 +133,14 @@ type plan struct {
 // currently observed registry state. It is pure and side-effect free.
 func planAction(enforce bool, st regState) plan {
 	if enforce {
-		// A NoAutoUpdate value Breeze never set means a pre-existing admin Group
+		// A NoAutoUpdate value BL4CK never set means a pre-existing admin Group
 		// Policy owns this key. Leave it as-found rather than clobber it.
 		if st.noAutoUpdatePresent && !st.breezeManaged {
 			return plan{result: Result{
 				Supported: true,
 				Managed:   false,
 				Enforced:  st.noAutoUpdateValue == 1,
-				Reason:    "pre-existing Windows Update policy detected (NoAutoUpdate already set by another GPO); left as-found, not managed by Breeze",
+				Reason:    "pre-existing Windows Update policy detected (NoAutoUpdate already set by another GPO); left as-found, not managed by BL4CK",
 			}}
 		}
 		reason := "Windows Update suppression applied (NoAutoUpdate=1)"
@@ -159,13 +159,13 @@ func planAction(enforce bool, st regState) plan {
 		}
 	}
 
-	// Revert path: only undo what Breeze itself set.
+	// Revert path: only undo what BL4CK itself set.
 	if !st.keyExists || !st.breezeManaged {
 		return plan{result: Result{
 			Supported: true,
 			Managed:   false,
 			Enforced:  st.keyExists && st.noAutoUpdatePresent && st.noAutoUpdateValue == 1,
-			Reason:    "no Breeze-managed Windows Update suppression to revert; left as-found",
+			Reason:    "no BL4CK-managed Windows Update suppression to revert; left as-found",
 		}}
 	}
 	return plan{
@@ -176,7 +176,7 @@ func planAction(enforce bool, st regState) plan {
 			Managed:   false,
 			Enforced:  false,
 			Reverted:  true,
-			Reason:    "reverted Breeze Windows Update suppression (deleted NoAutoUpdate)",
+			Reason:    "reverted BL4CK Windows Update suppression (deleted NoAutoUpdate)",
 		},
 	}
 }

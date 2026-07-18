@@ -31,13 +31,13 @@ const AGENT_TARGETS = [
 ] as const;
 
 const HELPER_TARGETS = [
-  { goos: "windows", goarch: "amd64", assetName: "breeze-helper-windows.msi" },
-  { goos: "darwin", goarch: "amd64", assetName: "breeze-helper-macos.dmg" },
-  { goos: "darwin", goarch: "arm64", assetName: "breeze-helper-macos.dmg" },
-  { goos: "linux", goarch: "amd64", assetName: "breeze-helper-linux.AppImage" },
+  { goos: "windows", goarch: "amd64", assetName: "bl4ck-helper-windows.msi" },
+  { goos: "darwin", goarch: "amd64", assetName: "bl4ck-helper-macos.dmg" },
+  { goos: "darwin", goarch: "arm64", assetName: "bl4ck-helper-macos.dmg" },
+  { goos: "linux", goarch: "amd64", assetName: "bl4ck-helper-linux.AppImage" },
 ] as const;
 
-// Issue #816: breeze-user-helper is the GUI-subsystem Windows sibling of
+// Issue #816: bl4ck-user-helper is the GUI-subsystem Windows sibling of
 // breeze-agent that the sessionbroker spawns into interactive user sessions.
 // It's signed by the same Azure Trusted Signing pipeline as the agent and
 // shipped as its own GitHub release asset so the agent's in-place auto-upgrade
@@ -46,7 +46,7 @@ const USER_HELPER_TARGETS = [
   {
     goos: "windows",
     goarch: "amd64",
-    assetName: "breeze-user-helper-windows-amd64.exe",
+    assetName: "bl4ck-user-helper-windows-amd64.exe",
   },
 ] as const;
 
@@ -57,7 +57,7 @@ const USER_HELPER_TARGETS = [
 // touched it, and the watchdog component was never registered here). Registering
 // it lets the server drive watchdog upgrades (heartbeat.ts watchdogUpgradeTo)
 // and lets the agent's handleWatchdogUpgrade self-heal fetch the matching binary.
-// Same asset-name shape as the agent: breeze-watchdog-{goos}-{goarch}[.exe].
+// Same asset-name shape as the agent: bl4ck-watchdog-{goos}-{goarch}[.exe].
 const WATCHDOG_TARGETS = AGENT_TARGETS;
 
 interface BinaryInfo {
@@ -95,7 +95,7 @@ function parseBinaryFilename(
   // Expected format: breeze-{component}-{os}-{arch}[.exe]
   const match = filename.match(
     new RegExp(
-      `^breeze-${component}-(linux|darwin|windows)-(amd64|arm64)(\\.exe)?$`,
+      `^bl4ck-${component}-(linux|darwin|windows)-(amd64|arm64)(\\.exe)?$`,
     ),
   );
   if (!match) return null;
@@ -446,7 +446,7 @@ export async function syncBinaries(): Promise<void> {
   }
 
   // Scan and register agent binaries in DB. The watchdog ships in the same
-  // directory as its per-arch sibling (breeze-watchdog-{os}-{arch}[.exe]) and is
+  // directory as its per-arch sibling (bl4ck-watchdog-{os}-{arch}[.exe]) and is
   // served by the same /download/watchdog route.
   const binaries = await scanBinaryDir(agentBinaryDir);
   const watchdogBinaries = await scanBinaryDir(agentBinaryDir, "watchdog");
@@ -591,7 +591,7 @@ export async function syncFromGitHub(
   // Sync agent binaries
   for (const target of AGENT_TARGETS) {
     const suffix = target.goos === "windows" ? ".exe" : "";
-    const assetName = `breeze-agent-${target.goos}-${target.goarch}${suffix}`;
+    const assetName = `bl4ck-agent-${target.goos}-${target.goarch}${suffix}`;
     const asset = release.assets.find((a) => a.name === assetName);
     if (!asset) continue;
     const metadata = await getReleaseAssetMetadata({
@@ -721,7 +721,7 @@ export async function syncFromGitHub(
   // `release.assets.find` returns undefined and the loop body short-circuits.
   for (const target of WATCHDOG_TARGETS) {
     const suffix = target.goos === "windows" ? ".exe" : "";
-    const assetName = `breeze-watchdog-${target.goos}-${target.goarch}${suffix}`;
+    const assetName = `bl4ck-watchdog-${target.goos}-${target.goarch}${suffix}`;
     const asset = release.assets.find((a) => a.name === assetName);
     if (!asset) continue;
     const metadata = await getReleaseAssetMetadata({

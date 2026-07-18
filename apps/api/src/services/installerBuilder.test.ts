@@ -237,8 +237,8 @@ describe('assertMacosInstallerPkgsReachable', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(assertMacosInstallerPkgsReachable()).resolves.toBeUndefined();
-    expect(seen.some((u) => u.endsWith('breeze-agent-darwin-amd64.pkg'))).toBe(true);
-    expect(seen.some((u) => u.endsWith('breeze-agent-darwin-arm64.pkg'))).toBe(true);
+    expect(seen.some((u) => u.endsWith('bl4ck-agent-darwin-amd64.pkg'))).toBe(true);
+    expect(seen.some((u) => u.endsWith('bl4ck-agent-darwin-arm64.pkg'))).toBe(true);
   });
 
   it('github mode: throws when an architecture is unreachable (Intel-only outage guard)', async () => {
@@ -246,7 +246,7 @@ describe('assertMacosInstallerPkgsReachable', () => {
     process.env.BINARY_VERSION = '1.2.3';
 
     const fetchMock = vi.fn(async (url: string) => {
-      if (url.endsWith('breeze-agent-darwin-amd64.pkg')) {
+      if (url.endsWith('bl4ck-agent-darwin-amd64.pkg')) {
         return new Response(null, { status: 404 });
       }
       return new Response(null, { status: 200 });
@@ -262,8 +262,8 @@ describe('assertMacosInstallerPkgsReachable', () => {
       process.env.BINARY_SOURCE = 'local';
       delete process.env.S3_BUCKET; // force the disk path, not the S3 early-return
       process.env.AGENT_BINARY_DIR = dir;
-      writeFileSync(join(dir, 'breeze-agent-darwin-amd64.pkg'), 'x');
-      writeFileSync(join(dir, 'breeze-agent-darwin-arm64.pkg'), 'x');
+      writeFileSync(join(dir, 'bl4ck-agent-darwin-amd64.pkg'), 'x');
+      writeFileSync(join(dir, 'bl4ck-agent-darwin-arm64.pkg'), 'x');
 
       await expect(assertMacosInstallerPkgsReachable()).resolves.toBeUndefined();
     } finally {
@@ -277,7 +277,7 @@ describe('assertMacosInstallerPkgsReachable', () => {
       process.env.BINARY_SOURCE = 'local';
       delete process.env.S3_BUCKET; // force the disk path, not the S3 early-return
       process.env.AGENT_BINARY_DIR = dir;
-      writeFileSync(join(dir, 'breeze-agent-darwin-arm64.pkg'), 'x'); // amd64 missing
+      writeFileSync(join(dir, 'bl4ck-agent-darwin-arm64.pkg'), 'x'); // amd64 missing
 
       await expect(assertMacosInstallerPkgsReachable()).rejects.toThrow();
     } finally {

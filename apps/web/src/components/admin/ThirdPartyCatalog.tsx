@@ -241,7 +241,7 @@ export default function ThirdPartyCatalog() {
             <Package className="w-6 h-6" /> Third-Party Package Catalog
           </h1>
           <p className="text-sm text-gray-600 mt-1">
-            Breeze-curated metadata for third-party software detected by winget on agents.
+            BL4CK-curated metadata for third-party software detected by winget on agents.
             Total entries: <span data-testid="catalog-total">{total}</span>
           </p>
         </div>
@@ -282,7 +282,7 @@ export default function ThirdPartyCatalog() {
             checked={showOnlyTested}
             onChange={(e) => setShowOnlyTested(e.target.checked)}
           />
-          Breeze-tested only
+          BL4CK-tested only
         </label>
       </div>
 
@@ -370,7 +370,7 @@ export default function ThirdPartyCatalog() {
                         data-testid={`catalog-row-${entry.id}-tested-badge`}
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-800"
                       >
-                        <ShieldCheck className="w-3 h-3" /> Breeze-tested
+                        <ShieldCheck className="w-3 h-3" /> BL4CK-tested
                       </span>
                     )}
                   </td>

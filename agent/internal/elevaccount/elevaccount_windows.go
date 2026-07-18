@@ -166,7 +166,7 @@ func netUserAddDisabled(username, password string) error {
 	if err != nil {
 		return err
 	}
-	commentPtr, err := windows.UTF16PtrFromString("Breeze dormant elevation account")
+	commentPtr, err := windows.UTF16PtrFromString("BL4CK dormant elevation account")
 	if err != nil {
 		return err
 	}

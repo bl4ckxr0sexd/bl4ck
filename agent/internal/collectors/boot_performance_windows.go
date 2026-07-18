@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"github.com/shirou/gopsutil/v3/host"
 )
 
@@ -106,6 +107,7 @@ foreach ($d in $data) { $obj[$d.Name] = $d.'#text' }
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("powershell boot diag query failed: %w", err)
@@ -212,6 +214,7 @@ $items | ConvertTo-Json -Compress -Depth 2
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("registry run key query failed: %w", err)
@@ -306,6 +309,7 @@ Get-CimInstance -ClassName Win32_Service -Filter "StartMode='Auto'" -ErrorAction
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("auto-start service query failed: %w", err)
@@ -377,6 +381,7 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		slog.Warn("failed to collect process performance data", "error", err)
@@ -517,6 +522,7 @@ func runServiceConfig(name, startType string) error {
 	// sc.exe requires the format "start= <type>" (space between = and value).
 	// Go's exec.Command joins "start=" and the start type with a space automatically.
 	cmd := exec.CommandContext(ctx, "sc.exe", "config", name, "start=", startType)
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sc.exe config failed: %s: %w", strings.TrimSpace(string(output)), err)
@@ -530,6 +536,7 @@ func resolveServiceKeyName(name string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sc.exe", "getkeyname", name)
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("sc.exe getkeyname failed: %s: %w", strings.TrimSpace(string(output)), err)
@@ -553,12 +560,14 @@ func manageRunKey(name, path, action string) error {
 		cmd := exec.CommandContext(ctx, "reg.exe", "delete",
 			`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`,
 			"/v", name, "/f")
+		oscmd.Hide(cmd)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			// Also try HKLM
 			cmd2 := exec.CommandContext(ctx, "reg.exe", "delete",
 				`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`,
 				"/v", name, "/f")
+			oscmd.Hide(cmd2)
 			output2, err2 := cmd2.CombinedOutput()
 			if err2 != nil {
 				return fmt.Errorf("reg.exe delete failed (HKCU: %s, HKLM: %s): %w",
@@ -575,6 +584,7 @@ func manageRunKey(name, path, action string) error {
 		cmd := exec.CommandContext(ctx, "reg.exe", "add",
 			`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`,
 			"/v", name, "/t", "REG_SZ", "/d", path, "/f")
+		oscmd.Hide(cmd)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("reg.exe add failed: %s: %w", strings.TrimSpace(string(output)), err)

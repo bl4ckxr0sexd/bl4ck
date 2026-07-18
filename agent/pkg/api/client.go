@@ -124,7 +124,7 @@ type AgentConfig struct {
 // Merely stripping the headers is not enough: following the redirect would still
 // hand the request body (during enroll: hostname, hardware serial, OS info) to
 // the attacker and let it forge the response the agent parses and persists
-// (e.g. authToken / mTLS cert). A legitimate Breeze server never redirects an
+// (e.g. authToken / mTLS cert). A legitimate BL4CK server never redirects an
 // agent to a different host, so refuse the redirect outright and surface it to
 // the caller (which wraps the resulting error). Trusted redirects on the same
 // endpoint — a different path, or an http->https upgrade — are still followed.

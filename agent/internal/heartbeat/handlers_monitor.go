@@ -198,7 +198,7 @@ func handleNetworkHttpCheck(_ *Heartbeat, cmd Command) tools.CommandResult {
 		}, time.Since(start).Milliseconds())
 	}
 
-	req.Header.Set("User-Agent", "BreezeRMM-Monitor/1.0")
+	req.Header.Set("User-Agent", "BL4CKRMM-Monitor/1.0")
 
 	reqStart := time.Now()
 	resp, err := client.Do(req)

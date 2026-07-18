@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"os/exec"
 	"strings"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 type wmiPnPEntity struct {
@@ -26,6 +28,7 @@ func DetectPeripherals() ([]DetectedPeripheral, error) {
 		`ConvertTo-Json -Compress`
 
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps)
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err

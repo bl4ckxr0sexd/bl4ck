@@ -5,11 +5,15 @@ package collectors
 import (
 	"os/exec"
 	"strings"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 // getChassisType reads chassis type via WMIC on Windows.
 func getChassisType() string {
-	out, err := exec.Command("wmic", "systemenclosure", "get", "ChassisTypes", "/format:list").Output()
+	c := exec.Command("wmic", "systemenclosure", "get", "ChassisTypes", "/format:list")
+	oscmd.Hide(c)
+	out, err := c.Output()
 	if err != nil {
 		return ""
 	}

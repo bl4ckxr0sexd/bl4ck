@@ -32,7 +32,7 @@ function generateWindowsInstallScript(enrollmentKey: string): string {
 setlocal EnableDelayedExpansion
 
 REM This installer runs msiexec, which requires elevation. Run unelevated it
-REM silently fails, the agent binary never lands in %ProgramFiles%\\Breeze, and
+REM silently fails, the agent binary never lands in %ProgramFiles%\\BL4CK, and
 REM the enroll step below then errors with a confusing "path not found" -- yet
 REM the script used to still print "installed successfully" (#1832). Fail fast
 REM with a clear message instead.
@@ -45,14 +45,14 @@ if errorlevel 1 (
 
 set "SCRIPT_DIR=%~dp0"
 set "ENROLLMENT_JSON=%SCRIPT_DIR%enrollment.json"
-set "MSI_PATH=%SCRIPT_DIR%breeze-agent.msi"
+set "MSI_PATH=%SCRIPT_DIR%bl4ck-agent.msi"
 
 if not exist "%ENROLLMENT_JSON%" (
     echo Error: enrollment.json not found
     exit /b 1
 )
 
-echo Installing Breeze Agent...
+echo Installing BL4CK Agent...
 msiexec /i "%MSI_PATH%" /quiet /norestart
 REM msiexec: 0 = success, 3010 = success but reboot pending; anything else failed.
 set "MSI_RC=!errorlevel!"
@@ -78,7 +78,7 @@ for /f "usebackq tokens=1,* delims=:" %%a in (\`type "%ENROLLMENT_JSON%"\`) do (
 )
 
 set ENROLLMENT_KEY="${enrollmentKey}"
-set ENROLL_CMD="%ProgramFiles%\\Breeze\\breeze-agent.exe" enroll "%ENROLLMENT_KEY%" --server "%SERVER_URL%"
+set ENROLL_CMD="%ProgramFiles%\\BL4CK\\bl4ck-agent.exe" enroll "%ENROLLMENT_KEY%" --server "%SERVER_URL%"
 if defined ENROLLMENT_SECRET if not "%ENROLLMENT_SECRET%"=="" (
     set ENROLL_CMD=%ENROLL_CMD% --enrollment-secret "%ENROLLMENT_SECRET%"
 )
@@ -95,7 +95,7 @@ if not "!ENROLL_RC!"=="0" (
     exit /b 1
 )
 
-echo Breeze agent installed and enrolled successfully.
+echo BL4CK agent installed and enrolled successfully.
 `;
 }
 
@@ -119,7 +119,7 @@ export async function buildWindowsInstallerZip(
     archive.on('end', () => resolve(Buffer.concat(chunks)));
     archive.on('error', reject);
 
-    archive.append(msiBuffer, { name: 'breeze-agent.msi' });
+    archive.append(msiBuffer, { name: 'bl4ck-agent.msi' });
 
     const enrollmentJson = JSON.stringify(
       {
@@ -176,9 +176,9 @@ esac
 PKG_URL="\${SERVER_URL}/api/v1/agents/download/darwin/\${ARCH}/pkg"
 TMPPKG_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMPPKG_DIR"; rm -f "$ENROLLMENT_JSON"' EXIT
-TMPPKG="$TMPPKG_DIR/breeze-agent.pkg"
+TMPPKG="$TMPPKG_DIR/bl4ck-agent.pkg"
 
-echo "Downloading Breeze Agent installer (\${ARCH})..."
+echo "Downloading BL4CK Agent installer (\${ARCH})..."
 HTTP_CODE="$(curl -fsSL -w '%{http_code}' -o "$TMPPKG" "$PKG_URL" 2>/dev/null)" || true
 if [ "$HTTP_CODE" != "200" ]; then
   echo "Error: failed to download installer package (HTTP $HTTP_CODE) from $PKG_URL"
@@ -199,7 +199,7 @@ if ! spctl --assess --type install "$TMPPKG" >/dev/null 2>&1; then
 fi
 
 # Install the PKG
-echo "Installing Breeze Agent..."
+echo "Installing BL4CK Agent..."
 sudo installer -pkg "$TMPPKG" -target /
 
 # Build enrollment command
@@ -208,7 +208,7 @@ ENROLL_ARGS=("$ENROLLMENT_KEY" --server "$SERVER_URL")
 [ -n "$SITE_ID" ] && ENROLL_ARGS+=(--site-id "$SITE_ID")
 
 echo "Enrolling agent..."
-sudo /usr/local/bin/breeze-agent enroll "\${ENROLL_ARGS[@]}"
+sudo /usr/local/bin/bl4ck-agent enroll "\${ENROLL_ARGS[@]}"
 
 # Restart the service so it picks up the new enrollment config. Surface a failure
 # rather than swallowing it — a silent kickstart failure leaves an enrolled
@@ -218,7 +218,7 @@ if ! sudo launchctl kickstart -k system/com.breeze.agent 2>/dev/null; then
 fi
 
 # Credentials are removed by the EXIT trap above.
-echo "Breeze agent installed and enrolled successfully."
+echo "BL4CK agent installed and enrolled successfully."
 `;
 
 interface MacosZipValues {
@@ -275,7 +275,7 @@ export async function fetchRegularMsi(): Promise<Buffer> {
     if (!resp.ok) throw new Error(`Failed to fetch regular MSI: ${resp.status}`);
     const buffer = Buffer.from(await resp.arrayBuffer());
     await verifyGithubReleaseArtifactBuffer({
-      assetName: 'breeze-agent.msi',
+      assetName: 'bl4ck-agent.msi',
       assetBuffer: buffer,
       manifestUrl: getGithubReleaseArtifactManifestUrl(),
       signatureUrl: getGithubReleaseArtifactManifestSignatureUrl(),
@@ -286,7 +286,7 @@ export async function fetchRegularMsi(): Promise<Buffer> {
     return buffer;
   }
   const binaryDir = resolve(process.env.AGENT_BINARY_DIR || './agent/bin');
-  return readFile(join(binaryDir, 'breeze-agent.msi'));
+  return readFile(join(binaryDir, 'bl4ck-agent.msi'));
 }
 
 /**
@@ -315,12 +315,12 @@ export async function assertMacosInstallerPkgsReachable(): Promise<void> {
   if (isS3Configured()) return;
   const binaryDir = resolve(process.env.AGENT_BINARY_DIR || './agent/bin');
   for (const arch of arches) {
-    await stat(join(binaryDir, `breeze-agent-darwin-${arch}.pkg`));
+    await stat(join(binaryDir, `bl4ck-agent-darwin-${arch}.pkg`));
   }
 }
 
 /**
- * Fetches the notarized Breeze Installer.app.zip from the GitHub release.
+ * Fetches the notarized BL4CK Installer.app.zip from the GitHub release.
  * Returns null if the asset is not available (e.g. first release after
  * Plan B merged but before the next tag is cut). Caller falls back to
  * the legacy install.sh zip in that case.
@@ -333,7 +333,7 @@ export async function fetchMacosInstallerAppZip(): Promise<Buffer | null> {
     if (!resp.ok) throw new Error(`Failed to fetch installer app zip: ${resp.status}`);
     const buffer = Buffer.from(await resp.arrayBuffer());
     await verifyGithubReleaseArtifactBuffer({
-      assetName: 'Breeze Installer.app.zip',
+      assetName: 'BL4CK Installer.app.zip',
       assetBuffer: buffer,
       manifestUrl: getGithubReleaseArtifactManifestUrl(),
       signatureUrl: getGithubReleaseArtifactManifestSignatureUrl(),
@@ -344,7 +344,7 @@ export async function fetchMacosInstallerAppZip(): Promise<Buffer | null> {
     return buffer;
   }
   const binaryDir = resolve(process.env.AGENT_BINARY_DIR || './agent/bin');
-  const path = join(binaryDir, 'Breeze Installer.app.zip');
+  const path = join(binaryDir, 'BL4CK Installer.app.zip');
   try {
     return await readFile(path);
   } catch (err) {
@@ -377,7 +377,7 @@ export async function probeMacosInstallerApp(): Promise<boolean> {
   }
   const binaryDir = resolve(process.env.AGENT_BINARY_DIR || './agent/bin');
   try {
-    await stat(join(binaryDir, 'Breeze Installer.app.zip'));
+    await stat(join(binaryDir, 'BL4CK Installer.app.zip'));
     return true;
   } catch (err) {
     console.warn('[installer] probeMacosInstallerApp: filesystem stat failed, treating as unavailable', {

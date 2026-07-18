@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"github.com/breeze-rmm/agent/internal/remote/tools"
 )
 
@@ -77,33 +78,45 @@ func performSelfUninstall(removeConfig bool) error {
 // selfUninstallDarwin removes the launchd service, plists, and binary on macOS.
 func selfUninstallDarwin(removeConfig bool) error {
 	const (
-		label            = "com.breeze.agent"
-		userLabel        = "com.breeze.agent-user"
-		watchdogLabel    = "com.breeze.watchdog"
-		plistDst         = "/Library/LaunchDaemons/com.breeze.agent.plist"
-		userPlistDst     = "/Library/LaunchAgents/com.breeze.agent-user.plist"
-		watchdogPlistDst = "/Library/LaunchDaemons/com.breeze.watchdog.plist"
-		binaryPath       = "/usr/local/bin/breeze-agent"
-		watchdogBinary   = "/usr/local/bin/breeze-watchdog"
-		configDir        = "/Library/Application Support/Breeze"
+		label            = "com.bl4ck.agent"
+		userLabel        = "com.bl4ck.agent-user"
+		watchdogLabel    = "com.bl4ck.watchdog"
+		plistDst         = "/Library/LaunchDaemons/com.bl4ck.agent.plist"
+		userPlistDst     = "/Library/LaunchAgents/com.bl4ck.agent-user.plist"
+		watchdogPlistDst = "/Library/LaunchDaemons/com.bl4ck.watchdog.plist"
+		binaryPath       = "/usr/local/bin/bl4ck-agent"
+		watchdogBinary   = "/usr/local/bin/bl4ck-watchdog"
+		configDir        = "/Library/Application Support/BL4CK"
 	)
 
 	var errs []string
 
 	// Bootout the daemon (this will kill us, but we try anyway)
-	if err := exec.Command("launchctl", "bootout", "system/"+label).Run(); err != nil {
+	bootoutDaemon := exec.Command("launchctl", "bootout", "system/"+label)
+	oscmd.Hide(bootoutDaemon)
+	if err := bootoutDaemon.Run(); err != nil {
 		log.Warn("launchctl bootout failed, trying legacy unload", "error", err.Error())
-		if err2 := exec.Command("launchctl", "unload", plistDst).Run(); err2 != nil {
+		unloadDaemon := exec.Command("launchctl", "unload", plistDst)
+		oscmd.Hide(unloadDaemon)
+		if err2 := unloadDaemon.Run(); err2 != nil {
 			errs = append(errs, fmt.Sprintf("daemon unload: %s", err2.Error()))
 		}
 	}
 
 	// Remove user helper
-	if err := exec.Command("launchctl", "bootout", "system/"+userLabel).Run(); err != nil {
-		_ = exec.Command("launchctl", "unload", userPlistDst).Run()
+	bootoutUser := exec.Command("launchctl", "bootout", "system/"+userLabel)
+	oscmd.Hide(bootoutUser)
+	if err := bootoutUser.Run(); err != nil {
+		unloadUser := exec.Command("launchctl", "unload", userPlistDst)
+		oscmd.Hide(unloadUser)
+		_ = unloadUser.Run()
 	}
-	if err := exec.Command("launchctl", "bootout", "system/"+watchdogLabel).Run(); err != nil {
-		_ = exec.Command("launchctl", "unload", watchdogPlistDst).Run()
+	bootoutWatchdog := exec.Command("launchctl", "bootout", "system/"+watchdogLabel)
+	oscmd.Hide(bootoutWatchdog)
+	if err := bootoutWatchdog.Run(); err != nil {
+		unloadWatchdog := exec.Command("launchctl", "unload", watchdogPlistDst)
+		oscmd.Hide(unloadWatchdog)
+		_ = unloadWatchdog.Run()
 	}
 
 	// Remove plists
@@ -141,30 +154,38 @@ func selfUninstallDarwin(removeConfig bool) error {
 // selfUninstallLinux removes the systemd service, unit files, and binary on Linux.
 func selfUninstallLinux(removeConfig bool) error {
 	const (
-		serviceName     = "breeze-agent"
-		watchdogService = "breeze-watchdog"
-		unitDst         = "/etc/systemd/system/breeze-agent.service"
-		watchdogUnitDst = "/etc/systemd/system/breeze-watchdog.service"
-		userUnitDst     = "/usr/lib/systemd/user/breeze-agent-user.service"
-		binaryPath      = "/usr/local/bin/breeze-agent"
-		watchdogBinary  = "/usr/local/bin/breeze-watchdog"
-		configDir       = "/etc/breeze"
+		serviceName     = "bl4ck-agent"
+		watchdogService = "bl4ck-watchdog"
+		unitDst         = "/etc/systemd/system/bl4ck-agent.service"
+		watchdogUnitDst = "/etc/systemd/system/bl4ck-watchdog.service"
+		userUnitDst     = "/usr/lib/systemd/user/bl4ck-agent-user.service"
+		binaryPath      = "/usr/local/bin/bl4ck-agent"
+		watchdogBinary  = "/usr/local/bin/bl4ck-watchdog"
+		configDir       = "/etc/bl4ck"
 	)
 
 	var errs []string
 
 	// Stop and disable the service
-	if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
+	stopSvc := exec.Command("systemctl", "stop", serviceName)
+	oscmd.Hide(stopSvc)
+	if err := stopSvc.Run(); err != nil {
 		log.Warn("systemctl stop failed", "error", err.Error())
 		errs = append(errs, fmt.Sprintf("stop service: %s", err.Error()))
 	}
-	if err := exec.Command("systemctl", "disable", serviceName).Run(); err != nil {
+	disableSvc := exec.Command("systemctl", "disable", serviceName)
+	oscmd.Hide(disableSvc)
+	if err := disableSvc.Run(); err != nil {
 		log.Warn("systemctl disable failed", "error", err.Error())
 	}
-	if err := exec.Command("systemctl", "stop", watchdogService).Run(); err != nil {
+	stopWatchdog := exec.Command("systemctl", "stop", watchdogService)
+	oscmd.Hide(stopWatchdog)
+	if err := stopWatchdog.Run(); err != nil {
 		log.Warn("systemctl stop watchdog failed", "error", err.Error())
 	}
-	if err := exec.Command("systemctl", "disable", watchdogService).Run(); err != nil {
+	disableWatchdog := exec.Command("systemctl", "disable", watchdogService)
+	oscmd.Hide(disableWatchdog)
+	if err := disableWatchdog.Run(); err != nil {
 		log.Warn("systemctl disable watchdog failed", "error", err.Error())
 	}
 
@@ -180,7 +201,9 @@ func selfUninstallLinux(removeConfig bool) error {
 	}
 
 	// Reload systemd
-	_ = exec.Command("systemctl", "daemon-reload").Run()
+	daemonReload := exec.Command("systemctl", "daemon-reload")
+	oscmd.Hide(daemonReload)
+	_ = daemonReload.Run()
 
 	// Remove binary
 	if err := os.Remove(binaryPath); err != nil && !os.IsNotExist(err) {
@@ -208,28 +231,36 @@ func selfUninstallLinux(removeConfig bool) error {
 // to avoid the complexity of deleting a service from within its own process context.
 func selfUninstallWindows(removeConfig bool) error {
 	const (
-		serviceName         = "BreezeAgent"
-		watchdogServiceName = "BreezeWatchdog"
+		serviceName         = "Bl4ckAgent"
+		watchdogServiceName = "Bl4ckWatchdog"
 	)
 
 	var errs []string
 
 	// Stop the service via sc.exe
-	if err := exec.Command("sc.exe", "stop", serviceName).Run(); err != nil {
+	stopSvc := exec.Command("sc.exe", "stop", serviceName)
+	oscmd.Hide(stopSvc)
+	if err := stopSvc.Run(); err != nil {
 		log.Warn("sc.exe stop failed", "error", err.Error())
 		errs = append(errs, fmt.Sprintf("stop service: %s", err.Error()))
 	}
 	time.Sleep(2 * time.Second)
 
 	// Delete the service registration
-	if err := exec.Command("sc.exe", "delete", serviceName).Run(); err != nil {
+	deleteSvc := exec.Command("sc.exe", "delete", serviceName)
+	oscmd.Hide(deleteSvc)
+	if err := deleteSvc.Run(); err != nil {
 		log.Warn("sc.exe delete failed", "error", err.Error())
 		errs = append(errs, fmt.Sprintf("delete service: %s", err.Error()))
 	}
-	if err := exec.Command("sc.exe", "stop", watchdogServiceName).Run(); err != nil {
+	stopWatchdog := exec.Command("sc.exe", "stop", watchdogServiceName)
+	oscmd.Hide(stopWatchdog)
+	if err := stopWatchdog.Run(); err != nil {
 		log.Warn("sc.exe stop watchdog failed", "error", err.Error())
 	}
-	if err := exec.Command("sc.exe", "delete", watchdogServiceName).Run(); err != nil {
+	deleteWatchdog := exec.Command("sc.exe", "delete", watchdogServiceName)
+	oscmd.Hide(deleteWatchdog)
+	if err := deleteWatchdog.Run(); err != nil {
 		log.Warn("sc.exe delete watchdog failed", "error", err.Error())
 	}
 
@@ -240,7 +271,9 @@ func selfUninstallWindows(removeConfig bool) error {
 		// Pass the entire command as a single string so cmd.exe interprets the
 		// shell operators (>, &) correctly.
 		delCmd := fmt.Sprintf(`ping 127.0.0.1 -n 3 >NUL & del /f "%s"`, exePath)
-		if err := exec.Command("cmd", "/C", delCmd).Start(); err != nil {
+		cleanupCmd := exec.Command("cmd", "/C", delCmd)
+		oscmd.Hide(cleanupCmd)
+		if err := cleanupCmd.Start(); err != nil {
 			log.Warn("failed to schedule binary cleanup", "path", exePath, "error", err.Error())
 		}
 	}
@@ -249,7 +282,7 @@ func selfUninstallWindows(removeConfig bool) error {
 	if removeConfig {
 		configDir := os.Getenv("ProgramData")
 		if configDir != "" {
-			if err := os.RemoveAll(configDir + "\\Breeze"); err != nil {
+			if err := os.RemoveAll(configDir + "\\BL4CK"); err != nil {
 				errs = append(errs, fmt.Sprintf("remove config: %s", err.Error()))
 			}
 		}

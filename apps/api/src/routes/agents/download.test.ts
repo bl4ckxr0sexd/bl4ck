@@ -17,9 +17,9 @@ vi.mock('../../services/binarySource', () => ({
   getGithubUserHelperUrl: vi.fn(),
   getGithubWatchdogUrl: vi.fn(),
   HELPER_FILENAMES: {
-    linux: 'breeze-desktop-helper-linux-amd64',
-    darwin: 'breeze-desktop-helper-darwin',
-    windows: 'breeze-desktop-helper-windows.exe',
+    linux: 'bl4ck-desktop-helper-linux-amd64',
+    darwin: 'bl4ck-desktop-helper-darwin',
+    windows: 'bl4ck-desktop-helper-windows.exe',
   },
 }));
 
@@ -60,7 +60,7 @@ describe('public agent binary downloads', () => {
     expect(body).not.toContain('AGENT_BINARY_DIR');
     expect(console.warn).toHaveBeenCalledWith(
       '[agent-download] Local binary missing',
-      { filename: 'breeze-agent-linux-amd64' },
+      { filename: 'bl4ck-agent-linux-amd64' },
     );
   });
 
@@ -73,7 +73,7 @@ describe('public agent binary downloads', () => {
     expect(body).not.toContain('HELPER_BINARY_DIR');
     expect(console.warn).toHaveBeenCalledWith(
       '[helper-download] Local binary missing',
-      { filename: 'breeze-desktop-helper-linux-amd64' },
+      { filename: 'bl4ck-desktop-helper-linux-amd64' },
     );
   });
 
@@ -87,7 +87,7 @@ describe('public agent binary downloads', () => {
     expect(body).not.toContain('/tmp/breeze-secret-agent-binaries');
     expect(console.warn).toHaveBeenCalledWith(
       '[watchdog-download] Local binary missing',
-      { filename: 'breeze-watchdog-linux-amd64' },
+      { filename: 'bl4ck-watchdog-linux-amd64' },
     );
   });
 
@@ -132,7 +132,7 @@ describe('public agent binary downloads', () => {
     expect(body).not.toContain('/tmp/breeze-secret-agent-binaries');
     expect(console.warn).toHaveBeenCalledWith(
       '[user-helper-download] Local binary missing',
-      { filename: 'breeze-user-helper-windows-amd64.exe' },
+      { filename: 'bl4ck-user-helper-windows-amd64.exe' },
     );
   });
 
@@ -170,7 +170,7 @@ describe('public agent binary downloads', () => {
     expect(body).not.toContain('/tmp/breeze-secret-agent-binaries');
     expect(console.warn).toHaveBeenCalledWith(
       '[pkg-download] Local package missing',
-      { filename: 'breeze-agent-darwin-amd64.pkg' },
+      { filename: 'bl4ck-agent-darwin-amd64.pkg' },
     );
   });
 
@@ -290,16 +290,16 @@ describe('public agent .pkg downloads — per-arch serving', () => {
   it('serves amd64 and arm64 as DISTINCT packages (the Bad CPU type regression guard)', async () => {
     // The whole point of the fix: each arch must resolve to its OWN file, never
     // a hardcoded one. Write distinct bodies and prove they come back distinct.
-    writeFileSync(join(tmp, 'breeze-agent-darwin-amd64.pkg'), 'AMD64-PKG-BODY');
-    writeFileSync(join(tmp, 'breeze-agent-darwin-arm64.pkg'), 'ARM64-PKG-BODY');
+    writeFileSync(join(tmp, 'bl4ck-agent-darwin-amd64.pkg'), 'AMD64-PKG-BODY');
+    writeFileSync(join(tmp, 'bl4ck-agent-darwin-arm64.pkg'), 'ARM64-PKG-BODY');
 
     const amd = await downloadRoutes.request('/download/darwin/amd64/pkg');
     const arm = await downloadRoutes.request('/download/darwin/arm64/pkg');
 
     expect(amd.status).toBe(200);
     expect(arm.status).toBe(200);
-    expect(amd.headers.get('content-disposition')).toContain('breeze-agent-darwin-amd64.pkg');
-    expect(arm.headers.get('content-disposition')).toContain('breeze-agent-darwin-arm64.pkg');
+    expect(amd.headers.get('content-disposition')).toContain('bl4ck-agent-darwin-amd64.pkg');
+    expect(arm.headers.get('content-disposition')).toContain('bl4ck-agent-darwin-arm64.pkg');
 
     const amdBody = await amd.text();
     const armBody = await arm.text();
@@ -311,13 +311,13 @@ describe('public agent .pkg downloads — per-arch serving', () => {
   it('redirects to the GitHub release asset in github mode', async () => {
     vi.mocked(getBinarySource).mockReturnValue('github');
     vi.mocked(getGithubAgentPkgUrl).mockReturnValue(
-      'https://github.test/breeze-agent-darwin-amd64.pkg',
+      'https://github.test/bl4ck-agent-darwin-amd64.pkg',
     );
 
     const res = await downloadRoutes.request('/download/darwin/amd64/pkg');
 
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('https://github.test/breeze-agent-darwin-amd64.pkg');
+    expect(res.headers.get('location')).toBe('https://github.test/bl4ck-agent-darwin-amd64.pkg');
     expect(getGithubAgentPkgUrl).toHaveBeenCalledWith('darwin', 'amd64');
   });
 
@@ -329,7 +329,7 @@ describe('public agent .pkg downloads — per-arch serving', () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('https://s3.test/presigned-arm64');
-    expect(getPresignedUrl).toHaveBeenCalledWith('agent/breeze-agent-darwin-arm64.pkg');
+    expect(getPresignedUrl).toHaveBeenCalledWith('agent/bl4ck-agent-darwin-arm64.pkg');
   });
 
   it('falls back to disk (and warns) when the S3 object is missing', async () => {

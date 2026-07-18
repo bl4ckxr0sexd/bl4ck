@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 // windowsRestorer applies Windows-specific system state during BMR.
@@ -45,6 +47,7 @@ func (r *windowsRestorer) InjectDrivers(driverDir string) (int, error) {
 
 	pattern := filepath.Join(driverDir, "*.inf")
 	cmd := exec.Command("pnputil", "/add-driver", pattern, "/install", "/subdirs")
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Warn("bmr: pnputil driver injection had errors",
@@ -76,6 +79,7 @@ func (r *windowsRestorer) importRegistryHives(stagingDir string) error {
 	for regKey, fileName := range hives {
 		hivePath := filepath.Join(stagingDir, fileName)
 		cmd := exec.Command("reg", "restore", regKey, hivePath)
+		oscmd.Hide(cmd)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			slog.Warn("bmr: registry restore failed",
@@ -95,6 +99,7 @@ func (r *windowsRestorer) importRegistryHives(stagingDir string) error {
 func (r *windowsRestorer) restoreBootConfig(stagingDir string) error {
 	bcdPath := filepath.Join(stagingDir, "boot_bcd")
 	cmd := exec.Command("bcdedit", "/import", bcdPath)
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("bcdedit import: %s: %w", string(output), err)
@@ -107,6 +112,7 @@ func (r *windowsRestorer) restoreBootConfig(stagingDir string) error {
 func (r *windowsRestorer) restoreCertificates(stagingDir string) error {
 	certDBPath := filepath.Join(stagingDir, "certificates")
 	cmd := exec.Command("certutil", "-restoreDB", certDBPath)
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("certutil restore: %s: %w", string(output), err)
@@ -119,6 +125,7 @@ func (r *windowsRestorer) restoreCertificates(stagingDir string) error {
 func (r *windowsRestorer) restoreFirewall(stagingDir string) error {
 	fwPath := filepath.Join(stagingDir, "firewall.wfw")
 	cmd := exec.Command("netsh", "advfirewall", "import", fwPath)
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("firewall import: %s: %w", string(output), err)

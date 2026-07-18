@@ -16,28 +16,28 @@ import (
 )
 
 const (
-	linuxBinaryPath  = "/usr/local/bin/breeze-agent"
-	linuxUnitDst     = "/etc/systemd/system/breeze-agent.service"
-	linuxUserUnitDst = "/usr/lib/systemd/user/breeze-agent-user.service"
-	linuxConfigDir   = "/etc/breeze"
-	linuxDataDir     = "/var/lib/breeze"
-	linuxLogDir      = "/var/log/breeze"
-	linuxServiceName = "breeze-agent"
+	linuxBinaryPath  = "/usr/local/bin/bl4ck-agent"
+	linuxUnitDst     = "/etc/systemd/system/bl4ck-agent.service"
+	linuxUserUnitDst = "/usr/lib/systemd/user/bl4ck-agent-user.service"
+	linuxConfigDir   = "/etc/bl4ck"
+	linuxDataDir     = "/var/lib/bl4ck"
+	linuxLogDir      = "/var/log/bl4ck"
+	linuxServiceName = "bl4ck-agent"
 
-	linuxWatchdogBinaryPath  = "/usr/local/bin/breeze-watchdog"
-	linuxWatchdogUnitDst     = "/etc/systemd/system/breeze-watchdog.service"
-	linuxWatchdogServiceName = "breeze-watchdog"
+	linuxWatchdogBinaryPath  = "/usr/local/bin/bl4ck-watchdog"
+	linuxWatchdogUnitDst     = "/etc/systemd/system/bl4ck-watchdog.service"
+	linuxWatchdogServiceName = "bl4ck-watchdog"
 )
 
 // Embedded user-helper unit
 const linuxUserUnit = `[Unit]
-Description=Breeze RMM User Helper
+Description=BL4CK RMM User Helper
 Documentation=https://github.com/breeze-rmm/breeze
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/breeze-agent user-helper
+ExecStart=/usr/local/bin/bl4ck-agent user-helper
 Restart=on-failure
 RestartSec=5
 
@@ -47,7 +47,7 @@ WantedBy=default.target
 
 var serviceCmd = &cobra.Command{
 	Use:   "service",
-	Short: "Manage the Breeze Agent system service (systemd)",
+	Short: "Manage the BL4CK Agent system service (systemd)",
 }
 
 var withUserHelper bool
@@ -76,7 +76,7 @@ func reconcileServiceUnitIfNeeded() {
 				fmt.Fprintf(os.Stderr,
 					"Warning: could not read %s to check for an outdated systemd unit: %v. "+
 						"If the remote terminal/scripts hit privilege errors, run: "+
-						"sudo breeze-agent service install\n", linuxUnitDst, err)
+						"sudo bl4ck-agent service install\n", linuxUnitDst, err)
 				recordReconcileFailure(fmt.Sprintf("could not read unit file %s: %v", linuxUnitDst, err))
 			}
 			return
@@ -86,9 +86,9 @@ func reconcileServiceUnitIfNeeded() {
 		}
 		if _, err := exec.LookPath("systemd-run"); err != nil {
 			fmt.Fprintf(os.Stderr,
-				"Warning: breeze-agent systemd unit is outdated (pre-v%d) and systemd-run is "+
+				"Warning: bl4ck-agent systemd unit is outdated (pre-v%d) and systemd-run is "+
 					"unavailable to auto-heal it. The remote terminal/scripts may hit privilege "+
-					"errors (e.g. apt). Fix: sudo breeze-agent service install\n", currentUnitVersion)
+					"errors (e.g. apt). Fix: sudo bl4ck-agent service install\n", currentUnitVersion)
 			recordReconcileFailure(fmt.Sprintf(
 				"systemd-run unavailable to auto-heal outdated unit (pre-v%d)", currentUnitVersion))
 			return
@@ -106,7 +106,7 @@ func reconcileServiceUnitIfNeeded() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: failed to auto-heal outdated systemd unit via systemd-run: %s. "+
-					"Fix: sudo breeze-agent service install\n", strings.TrimSpace(string(out)))
+					"Fix: sudo bl4ck-agent service install\n", strings.TrimSpace(string(out)))
 			recordReconcileFailure(fmt.Sprintf("systemd-run launch failed: %s", strings.TrimSpace(string(out))))
 		}
 	})
@@ -129,7 +129,7 @@ var serviceInstallCmd = &cobra.Command{
 	Short: "Install the agent as a systemd service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service install)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service install)")
 		}
 
 		// Create directories
@@ -149,7 +149,7 @@ var serviceInstallCmd = &cobra.Command{
 			if stopErr := exec.Command("systemctl", "stop", linuxServiceName).Run(); stopErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to stop existing service: %v\n", stopErr)
 			} else {
-				fmt.Println("Stopped existing Breeze Agent service.")
+				fmt.Println("Stopped existing BL4CK Agent service.")
 			}
 		}
 
@@ -212,7 +212,7 @@ var serviceInstallCmd = &cobra.Command{
 		}
 
 		// Create IPC socket directory
-		ipcDir := "/var/run/breeze"
+		ipcDir := "/var/run/bl4ck"
 		if err := os.MkdirAll(ipcDir, 0770); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to create IPC directory %s: %v\n", ipcDir, err)
 		}
@@ -221,7 +221,7 @@ var serviceInstallCmd = &cobra.Command{
 		}
 
 		fmt.Println()
-		fmt.Println("Breeze Agent service installed and enabled.")
+		fmt.Println("BL4CK Agent service installed and enabled.")
 
 		// Show contextual next steps based on enrollment and service state.
 		existingCfg, _ := config.Load(cfgFile)
@@ -237,22 +237,22 @@ var serviceInstallCmd = &cobra.Command{
 			statusCmd.Run() // best-effort; ignore error
 
 			fmt.Println("\nHelpful Commands:")
-			fmt.Println("  Logs:    journalctl -u breeze-agent -f")
-			fmt.Println("  Status:  sudo breeze-agent service status")
-			fmt.Println("  Restart: sudo breeze-agent service start")
+			fmt.Println("  Logs:    journalctl -u bl4ck-agent -f")
+			fmt.Println("  Status:  sudo bl4ck-agent service status")
+			fmt.Println("  Restart: sudo bl4ck-agent service start")
 		} else if enrolled {
 			fmt.Println()
 			fmt.Println("Next steps:")
-			fmt.Printf("  1. Start:   sudo breeze-agent service start\n")
-			fmt.Printf("  2. Status:  sudo breeze-agent service status\n")
-			fmt.Println("  3. Logs:    journalctl -u breeze-agent -f")
+			fmt.Printf("  1. Start:   sudo bl4ck-agent service start\n")
+			fmt.Printf("  2. Status:  sudo bl4ck-agent service status\n")
+			fmt.Println("  3. Logs:    journalctl -u bl4ck-agent -f")
 		} else {
 			fmt.Println()
 			fmt.Println("Next steps:")
-			fmt.Printf("  1. Enroll:  sudo breeze-agent enroll <key> --server https://your-server\n")
-			fmt.Printf("  2. Start:   sudo breeze-agent service start\n")
-			fmt.Printf("  3. Status:  sudo breeze-agent service status\n")
-			fmt.Println("  4. Logs:    journalctl -u breeze-agent -f")
+			fmt.Printf("  1. Enroll:  sudo bl4ck-agent enroll <key> --server https://your-server\n")
+			fmt.Printf("  2. Start:   sudo bl4ck-agent service start\n")
+			fmt.Printf("  3. Status:  sudo bl4ck-agent service status\n")
+			fmt.Println("  4. Logs:    journalctl -u bl4ck-agent -f")
 		}
 
 		if !noWatchdog {
@@ -267,9 +267,9 @@ var serviceInstallCmd = &cobra.Command{
 					"Warning: watchdog bootstrap failed: %v\n"+
 						"The agent service is installed and running. The watchdog is NOT installed.\n"+
 						"To retry, choose one of:\n"+
-						"  1. Re-run `sudo breeze-agent service install` (will retry the download).\n"+
-						"  2. Download %s manually, place it next to breeze-agent,\n"+
-						"     then run `sudo breeze-watchdog service install`.\n"+
+						"  1. Re-run `sudo bl4ck-agent service install` (will retry the download).\n"+
+						"  2. Download %s manually, place it next to bl4ck-agent,\n"+
+						"     then run `sudo bl4ck-watchdog service install`.\n"+
 						"  3. To skip the watchdog entirely, use `--no-watchdog`.\n",
 					err, watchdogDownloadURL(version, runtime.GOOS, runtime.GOARCH))
 			}
@@ -284,7 +284,7 @@ var serviceUninstallCmd = &cobra.Command{
 	Short: "Uninstall the agent systemd service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service uninstall)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service uninstall)")
 		}
 
 		// Stop the service
@@ -317,7 +317,7 @@ var serviceUninstallCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Warning: failed to remove %s: %v\n", linuxBinaryPath, err)
 		}
 
-		fmt.Println("Breeze Agent service uninstalled.")
+		fmt.Println("BL4CK Agent service uninstalled.")
 		fmt.Printf("Config at %s was preserved.\n", linuxConfigDir)
 		fmt.Printf("To remove config: sudo rm -rf %s\n", linuxConfigDir)
 		return nil
@@ -344,11 +344,11 @@ var serviceStartCmd = &cobra.Command{
 	Short: "Start the agent service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service start)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service start)")
 		}
 
 		if _, err := os.Stat(linuxUnitDst); os.IsNotExist(err) {
-			return fmt.Errorf("service not installed — run 'sudo breeze-agent service install' first")
+			return fmt.Errorf("service not installed — run 'sudo bl4ck-agent service install' first")
 		}
 
 		// Reload systemd so any updated unit file on disk is recognized before enabling.
@@ -364,8 +364,8 @@ var serviceStartCmd = &cobra.Command{
 			return fmt.Errorf("failed to start service: %s", strings.TrimSpace(string(out)))
 		}
 
-		fmt.Println("Breeze Agent service started and enabled for auto-start.")
-		fmt.Println("Logs: journalctl -u breeze-agent -f")
+		fmt.Println("BL4CK Agent service started and enabled for auto-start.")
+		fmt.Println("Logs: journalctl -u bl4ck-agent -f")
 		return nil
 	},
 }
@@ -375,7 +375,7 @@ var serviceStopCmd = &cobra.Command{
 	Short: "Stop the agent service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("must run as root (sudo breeze-agent service stop)")
+			return fmt.Errorf("must run as root (sudo bl4ck-agent service stop)")
 		}
 
 		out, err := exec.Command("systemctl", "stop", linuxServiceName).CombinedOutput()
@@ -383,7 +383,7 @@ var serviceStopCmd = &cobra.Command{
 			return fmt.Errorf("failed to stop service: %s", strings.TrimSpace(string(out)))
 		}
 
-		fmt.Println("Breeze Agent service stopped.")
+		fmt.Println("BL4CK Agent service stopped.")
 		return nil
 	},
 }

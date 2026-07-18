@@ -7,16 +7,17 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
 const registryKey = `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-const registryValue = "BreezeHelper"
+const registryValue = "BL4CKHelper"
 
 func packageExtension() string { return ".msi" }
 
-const helperDisplayName = "Breeze Helper"
+const helperDisplayName = "BL4CK Helper"
 
 // uninstallPackage finds the MSI ProductCode in the registry and runs
 // msiexec /x to uninstall it. Idempotent: returns nil if not installed.
@@ -30,6 +31,7 @@ func uninstallPackage() error {
 	}
 
 	cmd := exec.Command("msiexec", "/x", productCode, "/qn", "/norestart")
+	oscmd.Hide(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 3010 {
@@ -81,6 +83,7 @@ func findHelperProductCode(displayName string) (string, error) {
 // Exit code 3010 means success but reboot required — treated as success.
 func installPackage(msiPath, _ string) error {
 	cmd := exec.Command("msiexec", "/i", msiPath, "/qn", "/norestart")
+	oscmd.Hide(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// Exit code 3010 = ERROR_SUCCESS_REBOOT_REQUIRED
@@ -110,15 +113,15 @@ func installAutoStart(binaryPath string) error {
 }
 
 func isHelperRunning() bool {
-	out, err := outputHelperCommand("tasklist", "/FI", "IMAGENAME eq breeze-helper.exe", "/NH")
+	out, err := outputHelperCommand("tasklist", "/FI", "IMAGENAME eq bl4ck-helper.exe", "/NH")
 	if err != nil {
 		return false
 	}
-	return strings.Contains(strings.ToLower(string(out)), "breeze-helper.exe")
+	return strings.Contains(strings.ToLower(string(out)), "bl4ck-helper.exe")
 }
 
 func stopHelper() error {
-	return runHelperCommand("taskkill", "/F", "/IM", "breeze-helper.exe")
+	return runHelperCommand("taskkill", "/F", "/IM", "bl4ck-helper.exe")
 }
 
 func removeAutoStart() error {
@@ -163,7 +166,7 @@ func spawnWithConfig(binaryPath, sessionKey, configPath string) (int, error) {
 		defer windows.DestroyEnvironmentBlock(envBlock)
 	}
 
-	// Launch breeze-helper.exe directly so we get the real PID back.
+	// Launch bl4ck-helper.exe directly so we get the real PID back.
 	// Previously this used cmd.exe /c start "" which returned cmd.exe's PID
 	// instead of the helper's PID, causing isOurProcess() to always return
 	// false and the watcher to respawn infinitely.

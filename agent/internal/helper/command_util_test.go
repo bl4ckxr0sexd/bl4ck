@@ -31,11 +31,11 @@ func TestParseConsoleUIDOutput(t *testing.T) {
 func TestParseProcessPathOutput(t *testing.T) {
 	t.Parallel()
 
-	path, err := parseProcessPathOutput([]byte("/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper\n"))
+	path, err := parseProcessPathOutput([]byte("/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper\n"))
 	if err != nil {
 		t.Fatalf("parseProcessPathOutput(valid) error = %v", err)
 	}
-	if path != "/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper" {
+	if path != "/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper" {
 		t.Fatalf("path = %q", path)
 	}
 

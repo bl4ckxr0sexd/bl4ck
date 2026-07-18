@@ -41,7 +41,7 @@ import (
 )
 
 // unifiAuthTransport injects the agent's bearer token into requests to the
-// Breeze API for the UniFi telemetry collector. It reveals the token per-request
+// BL4CK API for the UniFi telemetry collector. It reveals the token per-request
 // (preserving secmem semantics) and clones the request rather than mutating the
 // caller's. Redirect-following is disabled on the owning http.Client so the
 // token can never leak to another host (mirrors pkg/api's redirect guard).
@@ -59,7 +59,7 @@ func (t *unifiAuthTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.base.RoundTrip(req)
 }
 
-// newUnifiAPIClient builds an http.Client that authenticates to the Breeze API
+// newUnifiAPIClient builds an http.Client that authenticates to the BL4CK API
 // as this agent and refuses redirects (token-leak guard).
 func newUnifiAPIClient(token *secmem.SecureString, tlsCfg *tls.Config) *http.Client {
 	tr := &http.Transport{}
@@ -138,16 +138,16 @@ func initBootstrapLogging(cfg *config.Config) {
 // before enrollment completes.
 //
 // Intended for post-MSI-install scenarios where the service starts
-// before a later `breeze-agent enroll` call populates the config. The
+// before a later `bl4ck-agent enroll` call populates the config. The
 // ctx allows the caller to cancel the wait on shutdown (SIGINT/SIGTERM
 // via signal.NotifyContext in runAgent, or SCM Stop in the Windows
 // service wrapper).
 func waitForEnrollment(ctx context.Context, cfgFile string) *config.Config {
 	log.Warn("agent not enrolled — waiting for enrollment. "+
-		"Run 'breeze-agent enroll <key> --server <url>' to complete setup.",
+		"Run 'bl4ck-agent enroll <key> --server <url>' to complete setup.",
 		"pollInterval", waitForEnrollmentPollInterval)
-	eventlog.Info("BreezeAgent",
-		"Waiting for enrollment. Run 'breeze-agent enroll <key> --server <url>'.")
+	eventlog.Info("Bl4ckAgent",
+		"Waiting for enrollment. Run 'bl4ck-agent enroll <key> --server <url>'.")
 
 	ticker := time.NewTicker(waitForEnrollmentPollInterval)
 	defer ticker.Stop()
@@ -174,9 +174,9 @@ func waitForEnrollment(ctx context.Context, cfgFile string) *config.Config {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "breeze-agent",
-	Short: "Breeze RMM Agent",
-	Long:  `Breeze Agent - Remote Monitoring and Management agent for Windows, macOS, and Linux`,
+	Use:   "bl4ck-agent",
+	Short: "BL4CK RMM Agent",
+	Long:  `BL4CK Agent - Remote Monitoring and Management agent for Windows, macOS, and Linux`,
 }
 
 var startCmd = &cobra.Command{
@@ -202,7 +202,7 @@ var runCmd = &cobra.Command{
 
 var enrollCmd = &cobra.Command{
 	Use:   "enroll [enrollment-key]",
-	Short: "Enroll this device with the Breeze server",
+	Short: "Enroll this device with the BL4CK server",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		enrollDevice(args[0])
@@ -222,7 +222,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version number",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("Breeze Agent v%s\n", version)
+		fmt.Printf("BL4CK Agent v%s\n", version)
 	},
 }
 
@@ -255,8 +255,8 @@ var desktopHelperCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/breeze/agent.yaml)")
-	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "Breeze server URL")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/bl4ck/agent.yaml)")
+	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "BL4CK server URL")
 	enrollCmd.Flags().StringVar(&enrollmentSecret, "enrollment-secret", "", "Enrollment secret (AGENT_ENROLLMENT_SECRET on the server)")
 	enrollCmd.Flags().StringVar(&enrollSiteID, "site-id", "", "Site ID to enroll into (optional, overrides enrollment key default)")
 	enrollCmd.Flags().StringVar(&enrollDeviceRole, "device-role", "", "Device role override (e.g. workstation, server)")
@@ -277,10 +277,10 @@ func init() {
 	rootCmd.AddCommand(desktopHelperCmd)
 }
 
-// Main is the shared entrypoint for both the breeze-agent and
-// breeze-user-helper binaries. They build the same program from the same code
+// Main is the shared entrypoint for both the bl4ck-agent and
+// bl4ck-user-helper binaries. They build the same program from the same code
 // but live in separate cmd/ packages so each can embed a different Windows
-// manifest: breeze-agent ships requireAdministrator, breeze-user-helper ships
+// manifest: bl4ck-agent ships requireAdministrator, bl4ck-user-helper ships
 // asInvoker (it is spawned into the interactive user's non-elevated session).
 // version is injected by each cmd wrapper via -X main.version.
 func Main(v string) {
@@ -306,7 +306,7 @@ func Main(v string) {
 		panic("sentry-go-smoke: BREEZE_SMOKE_PANIC=1")
 	}
 
-	if filepath.Base(os.Args[0]) == "breeze-desktop-helper" {
+	if filepath.Base(os.Args[0]) == "bl4ck-desktop-helper" {
 		for i := 1; i < len(os.Args)-1; i++ {
 			if os.Args[i] == "--context" {
 				desktopContext = os.Args[i+1]
@@ -362,7 +362,7 @@ type agentComponents struct {
 	secureToken *secmem.SecureString
 
 	// etwluaCancel cancels the ETW LUA subscriber goroutine and tears
-	// down the Breeze-LUA-Discovery real-time ETW session. nil on
+	// down the BL4CK-LUA-Discovery real-time ETW session. nil on
 	// non-Windows or when ETW init was skipped/failed.
 	etwluaCancel context.CancelFunc
 	// etwluaDone closes after the ETW subscriber goroutine has fully
@@ -399,7 +399,7 @@ func shutdownAgent(comps *agentComponents) {
 
 	// Cancel the ETW LUA subscriber FIRST so the kernel-side ETW
 	// session is closed before any later teardown can time out and
-	// orphan it. Otherwise Breeze-LUA-Discovery stays registered with
+	// orphan it. Otherwise BL4CK-LUA-Discovery stays registered with
 	// the kernel and the next agent restart hits the
 	// "two callers on the same machine would conflict" failure from
 	// NewETWSubscriber's doc comment.
@@ -535,8 +535,8 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 	// Auto-clear Safe Mode BCD flag on startup to prevent reboot loops.
 	// If the agent triggered a safe mode reboot, the safeboot BCD entry
 	// persists until explicitly removed. Clear it so the next reboot is normal.
-	// NOTE: Requires BreezeAgent to be registered under SafeBoot\Network in the
-	// registry (see breeze.wxs) — otherwise the service won't start in safe mode.
+	// NOTE: Requires Bl4ckAgent to be registered under SafeBoot\Network in the
+	// registry (see bl4ck.wxs) — otherwise the service won't start in safe mode.
 	if safemode.IsSafeMode() {
 		log.Warn("system is in Safe Mode — clearing safeboot BCD flag for normal reboot")
 		if err := safemode.ClearSafeBootFlag(); err != nil {
@@ -755,7 +755,7 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 	hb.SetStatePath(statePath)
 
 	// Mutual supervision: on Windows, when running as the SCM service this
-	// agent process supervises BreezeWatchdog the same way BreezeWatchdog
+	// agent process supervises Bl4ckWatchdog the same way Bl4ckWatchdog
 	// supervises us. On macOS/Linux the OS service managers (launchd
 	// KeepAlive, systemd Restart=always) already do this — and although
 	// LaunchDaemons report cfg.IsService=true via service_unix.go:21-26,
@@ -886,11 +886,11 @@ func runAgent() {
 			fmt.Fprintln(os.Stderr, "Check service status with:")
 			switch runtime.GOOS {
 			case "darwin":
-				fmt.Fprintln(os.Stderr, "  sudo breeze-agent status")
+				fmt.Fprintln(os.Stderr, "  sudo bl4ck-agent status")
 				fmt.Fprintln(os.Stderr, "  sudo launchctl list | grep breeze")
 			case "linux":
-				fmt.Fprintln(os.Stderr, "  sudo breeze-agent status")
-				fmt.Fprintln(os.Stderr, "  sudo systemctl status breeze-agent")
+				fmt.Fprintln(os.Stderr, "  sudo bl4ck-agent status")
+				fmt.Fprintln(os.Stderr, "  sudo systemctl status bl4ck-agent")
 			default:
 				fmt.Fprintln(os.Stderr, "  Try running with elevated privileges (e.g. sudo).")
 			}
@@ -903,7 +903,7 @@ func runAgent() {
 
 	// Wait for ctx to be cancelled — SIGINT or SIGTERM via
 	// signal.NotifyContext above. Behaviour change: console-mode
-	// breeze-agent now treats SIGINT as shutdown instead of ignoring
+	// bl4ck-agent now treats SIGINT as shutdown instead of ignoring
 	// it. The Windows service path is unaffected (SCM signals arrive
 	// via the request channel, not Unix signals).
 	<-ctx.Done()
@@ -914,7 +914,7 @@ func runAgent() {
 }
 
 // enrollDevice handles the enrollment process to register this agent with
-// the Breeze server. Respects --force (re-enroll over existing config) and
+// the BL4CK server. Respects --force (re-enroll over existing config) and
 // --quiet (suppress stdout progress, errors still go to stderr). Writes
 // structured logs to the agent log file so MSI-initiated enrollments leave
 // the same diagnostic trail as service-initiated ones.
@@ -1210,11 +1210,11 @@ func enrollDevice(enrollmentKey string) {
 	} else if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 		if !quietEnroll {
 			fmt.Println("Start the agent with:")
-			fmt.Println("  sudo breeze-agent service start")
+			fmt.Println("  sudo bl4ck-agent service start")
 		}
 	} else {
 		if !quietEnroll {
-			fmt.Println("Run 'breeze-agent start' to start the agent.")
+			fmt.Println("Run 'bl4ck-agent start' to start the agent.")
 		}
 	}
 }
@@ -1271,12 +1271,12 @@ func checkStatus() {
 			switch runtime.GOOS {
 			case "darwin":
 				fmt.Println("  The agent runs as a system service. Check status with:")
-				fmt.Println("    sudo breeze-agent status")
+				fmt.Println("    sudo bl4ck-agent status")
 				fmt.Println("    sudo launchctl list | grep breeze")
 			case "linux":
 				fmt.Println("  The agent runs as a system service. Check status with:")
-				fmt.Println("    sudo breeze-agent status")
-				fmt.Println("    sudo systemctl status breeze-agent")
+				fmt.Println("    sudo bl4ck-agent status")
+				fmt.Println("    sudo systemctl status bl4ck-agent")
 			default:
 				fmt.Println("  Try running with elevated privileges (e.g. sudo).")
 			}
@@ -1326,17 +1326,17 @@ func runHelperProcess(name, role, context, binaryKind string) {
 	// every helper role — user-helper, desktop-helper, and any future
 	// helper subcommand routed through runHelperProcess — because all of
 	// them risk inheriting a console window when the parent path uses the
-	// legacy console-subsystem breeze-agent.exe (e.g. operators running
+	// legacy console-subsystem bl4ck-agent.exe (e.g. operators running
 	// the helper manually from cmd.exe, or partially-upgraded installs
 	// where the new MSI hasn't repointed the scheduled task at
-	// breeze-user-helper.exe yet). The GUI-subsystem sibling built per
+	// bl4ck-user-helper.exe yet). The GUI-subsystem sibling built per
 	// agent/Makefile build-windows-user-helper has no console to free, so
 	// the call is a documented no-op there. Cross-platform stub on
 	// macOS/Linux.
 	detachHelperConsole()
 
 	// Log to file in the same logs folder as the main agent
-	logDir := filepath.Dir(config.Default().LogFile) // e.g. C:\ProgramData\Breeze\logs
+	logDir := filepath.Dir(config.Default().LogFile) // e.g. C:\ProgramData\BL4CK\logs
 	os.MkdirAll(logDir, 0700)
 	logFileName := "user-helper.log"
 	if binaryKind == ipc.HelperBinaryDesktopHelper {

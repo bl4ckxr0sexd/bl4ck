@@ -4,7 +4,7 @@ package config
 
 import "os"
 
-// The Breeze Helper ("Breeze Assist") runs as the logged-in user, while the
+// The BL4CK Helper ("BL4CK Assist") runs as the logged-in user, while the
 // agent writes these files as root. The user is neither the owner (root) nor in
 // the owning group (wheel), so the config dir must be traversable (0755) and
 // agent.yaml world-readable (0644) for the Helper to read its server URL,

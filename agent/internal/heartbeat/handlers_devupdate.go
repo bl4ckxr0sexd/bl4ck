@@ -23,13 +23,13 @@ const (
 )
 
 // windowsUserHelperInstallPath is the installed location of the GUI-subsystem
-// user-helper sibling binary on Windows. Must match the breeze.wxs File entry
+// user-helper sibling binary on Windows. Must match the bl4ck.wxs File entry
 // and the AgentUserHelper scheduled task XML.
-const windowsUserHelperInstallPath = `C:\Program Files\Breeze\breeze-user-helper.exe`
+const windowsUserHelperInstallPath = `C:\Program Files\BL4CK\bl4ck-user-helper.exe`
 
 // darwinDesktopHelperInstallPath is the installed location of the desktop
 // helper binary on macOS. Must match service_cmd_darwin.go.
-const darwinDesktopHelperInstallPath = "/usr/local/bin/breeze-desktop-helper"
+const darwinDesktopHelperInstallPath = "/usr/local/bin/bl4ck-desktop-helper"
 
 func init() {
 	handlerRegistry[tools.CmdDevUpdate] = handleDevUpdate
@@ -95,13 +95,13 @@ func handleDevUpdate(h *Heartbeat, cmd Command) tools.CommandResult {
 }
 
 // handleDevUpdateUserHelper replaces the Windows user-helper binary
-// (breeze-user-helper.exe) on disk. The new binary is picked up at the next
+// (bl4ck-user-helper.exe) on disk. The new binary is picked up at the next
 // scheduled-task firing (user logon) or the next SYSTEM-context broker spawn.
 // The scheduled task respawns the helper automatically; operators do not need
 // to manually restart anything.
 //
 // macOS and Linux do not have a user-helper sibling binary; the user-helper
-// runs as a subcommand of breeze-agent on those platforms.
+// runs as a subcommand of bl4ck-agent on those platforms.
 func handleDevUpdateUserHelper(h *Heartbeat, start time.Time, downloadURL, checksum, version string) tools.CommandResult {
 	if runtime.GOOS != "windows" {
 		return tools.NewErrorResult(fmt.Errorf("user-helper dev push is only implemented on windows"), time.Since(start).Milliseconds())
@@ -122,7 +122,7 @@ func handleDevUpdateUserHelper(h *Heartbeat, start time.Time, downloadURL, check
 	defer os.Remove(tempPath)
 
 	// Resolve the install path relative to the running agent rather than the
-	// hardcoded C:\Program Files\Breeze constant. The broker's hash allowlist is
+	// hardcoded C:\Program Files\BL4CK constant. The broker's hash allowlist is
 	// derived from the agent's own directory, so for a non-standard install
 	// (e.g. direct-exe enrollment) the executable-relative path is the one the
 	// broker will actually admit. Fall back to the canonical constant only if
@@ -132,7 +132,7 @@ func handleDevUpdateUserHelper(h *Heartbeat, start time.Time, downloadURL, check
 		if resolved, symErr := filepath.EvalSymlinks(exe); symErr == nil {
 			exe = resolved
 		}
-		installPath = filepath.Join(filepath.Dir(exe), "breeze-user-helper.exe")
+		installPath = filepath.Join(filepath.Dir(exe), "bl4ck-user-helper.exe")
 	}
 
 	refreshed, err := h.installUserHelperBinary(tempPath, installPath, version)
@@ -152,7 +152,7 @@ func handleDevUpdateUserHelper(h *Heartbeat, start time.Time, downloadURL, check
 	return tools.NewSuccessResult(result, time.Since(start).Milliseconds())
 }
 
-// installUserHelperBinary places a freshly-downloaded breeze-user-helper.exe at
+// installUserHelperBinary places a freshly-downloaded bl4ck-user-helper.exe at
 // installPath and makes it usable: it backs up any existing binary, stops a
 // running helper so the copy can't hit a sharing violation, copies the new bytes
 // into place, and refreshes the broker's binary-hash allowlist so the next
@@ -181,7 +181,7 @@ func (h *Heartbeat) installUserHelperBinary(tempPath, installPath, version strin
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return false, fmt.Errorf("failed to create backup directory %s: %w", backupDir, err)
 	}
-	backupPath := filepath.Join(backupDir, "breeze-user-helper.backup.exe")
+	backupPath := filepath.Join(backupDir, "bl4ck-user-helper.backup.exe")
 	if _, statErr := os.Stat(installPath); statErr == nil {
 		if err := copyFile(installPath, backupPath); err != nil {
 			log.Warn("failed to back up existing user helper binary — proceeding anyway (rollback unavailable if the install fails)",
@@ -191,23 +191,23 @@ func (h *Heartbeat) installUserHelperBinary(tempPath, installPath, version strin
 		}
 	}
 
-	// Stop any running breeze-user-helper.exe before the copy so the install
+	// Stop any running bl4ck-user-helper.exe before the copy so the install
 	// doesn't fail with ERROR_SHARING_VIOLATION. Windows holds an exclusive
 	// lock on a running .exe for its process lifetime. The AgentUserHelper
 	// scheduled task respawns the helper on next user logon (or operators can
-	// run `schtasks /run /tn "\Breeze\AgentUserHelper"`). taskkill exit 128
+	// run `schtasks /run /tn "\BL4CK\AgentUserHelper"`). taskkill exit 128
 	// ("process not found") is the benign no-helper-running case; any other
 	// non-zero (access denied, could-not-terminate) predicts an imminent
 	// sharing-violation on copy, so log it at WARN rather than hiding it.
-	killCmd := exec.Command("taskkill", "/F", "/IM", "breeze-user-helper.exe")
+	killCmd := exec.Command("taskkill", "/F", "/IM", "bl4ck-user-helper.exe")
 	killOut, killErr := killCmd.CombinedOutput()
 	switch {
 	case killErr == nil:
-		log.Info("stopped running breeze-user-helper.exe before install", "output", string(killOut))
+		log.Info("stopped running bl4ck-user-helper.exe before install", "output", string(killOut))
 	case taskkillProcessNotFound(killOut, killErr):
-		log.Debug("no running breeze-user-helper.exe to stop", "output", string(killOut))
+		log.Debug("no running bl4ck-user-helper.exe to stop", "output", string(killOut))
 	default:
-		log.Warn("taskkill breeze-user-helper.exe failed unexpectedly; the install copy may hit a sharing violation",
+		log.Warn("taskkill bl4ck-user-helper.exe failed unexpectedly; the install copy may hit a sharing violation",
 			"output", string(killOut), "error", killErr.Error())
 	}
 
@@ -288,7 +288,7 @@ func handleDevUpdateAgent(h *Heartbeat, start time.Time, downloadURL, checksum, 
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return tools.NewErrorResult(fmt.Errorf("failed to create backup directory %s: %w", backupDir, err), time.Since(start).Milliseconds())
 	}
-	backupPath := filepath.Join(backupDir, "breeze-agent.backup")
+	backupPath := filepath.Join(backupDir, "bl4ck-agent.backup")
 
 	updaterCfg := &updater.Config{
 		ServerURL:             h.config.ServerURL,
@@ -353,7 +353,7 @@ func handleDevUpdateDesktopHelper(h *Heartbeat, start time.Time, downloadURL, ch
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return tools.NewErrorResult(fmt.Errorf("failed to create backup directory %s: %w", backupDir, err), time.Since(start).Milliseconds())
 	}
-	backupPath := filepath.Join(backupDir, "breeze-desktop-helper.backup")
+	backupPath := filepath.Join(backupDir, "bl4ck-desktop-helper.backup")
 	if _, statErr := os.Stat(installPath); statErr == nil {
 		if err := copyFile(installPath, backupPath); err != nil {
 			log.Warn("failed to back up existing desktop helper binary — proceeding anyway",
@@ -392,7 +392,7 @@ func handleDevUpdateDesktopHelper(h *Heartbeat, start time.Time, downloadURL, ch
 	// Also kickstart any other helpers that may be loaded but weren't hit by
 	// the post-update kickstart routine above (e.g. a helper running in a
 	// disconnected user session).
-	_ = exec.Command("launchctl", "kickstart", "-k", "loginwindow/com.breeze.desktop-helper-loginwindow").Run()
+	_ = exec.Command("launchctl", "kickstart", "-k", "loginwindow/com.bl4ck.desktop-helper-loginwindow").Run()
 
 	return tools.NewSuccessResult(map[string]any{
 		"message":   "desktop helper replaced and kickstarted",

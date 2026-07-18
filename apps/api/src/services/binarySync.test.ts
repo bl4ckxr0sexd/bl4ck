@@ -154,7 +154,7 @@ describe("binarySync", () => {
   });
 
   it("syncs GitHub agent versions from the signed release artifact manifest", async () => {
-    const assetName = "breeze-agent-linux-amd64";
+    const assetName = "bl4ck-agent-linux-amd64";
     const asset = Buffer.from("trusted linux agent");
     const signed = makeSignedReleaseManifest(assetName, asset);
     process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
@@ -234,7 +234,7 @@ describe("binarySync", () => {
     process.env.BINARY_VERSION_FILE = "/fake/version";
     delete process.env.BREEZE_VERSION;
 
-    fsMocks.readdir.mockResolvedValue(["breeze-agent-linux-amd64"] as any);
+    fsMocks.readdir.mockResolvedValue(["bl4ck-agent-linux-amd64"] as any);
     fsMocks.stat.mockResolvedValue({ isFile: () => true, size: 4096 } as any);
     fsMocks.readFile.mockResolvedValue("0.65.9" as any);
 
@@ -276,7 +276,7 @@ describe("binarySync", () => {
 
   // #1802: the local-binary path historically registered ONLY the agent
   // component, so self-hosters on BINARY_SOURCE=local never got watchdog
-  // auto-update. It now also scans + registers breeze-watchdog-* siblings.
+  // auto-update. It now also scans + registers bl4ck-watchdog-* siblings.
   describe("local-binary watchdog registration (#1802)", () => {
     function setLocalEnv() {
       process.env.BINARY_SOURCE = "local";
@@ -290,8 +290,8 @@ describe("binarySync", () => {
     it("registers a component=watchdog row alongside the agent when the binary is present", async () => {
       setLocalEnv();
       fsMocks.readdir.mockResolvedValue([
-        "breeze-agent-linux-amd64",
-        "breeze-watchdog-linux-amd64",
+        "bl4ck-agent-linux-amd64",
+        "bl4ck-watchdog-linux-amd64",
       ] as any);
 
       await syncBinaries();
@@ -332,8 +332,8 @@ describe("binarySync", () => {
       // fleet-wide. Assert each component's demote carries its own component eq.
       setLocalEnv();
       fsMocks.readdir.mockResolvedValue([
-        "breeze-agent-linux-amd64",
-        "breeze-watchdog-linux-amd64",
+        "bl4ck-agent-linux-amd64",
+        "bl4ck-watchdog-linux-amd64",
       ] as any);
 
       await syncBinaries();
@@ -365,7 +365,7 @@ describe("binarySync", () => {
 
     it("warns and skips watchdog registration when no watchdog binary is present", async () => {
       setLocalEnv();
-      fsMocks.readdir.mockResolvedValue(["breeze-agent-linux-amd64"] as any);
+      fsMocks.readdir.mockResolvedValue(["bl4ck-agent-linux-amd64"] as any);
 
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       await syncBinaries();
@@ -480,11 +480,11 @@ describe("binarySync", () => {
 
     it("registers component=user-helper when both agent and user-helper assets are present", async () => {
       const agentAsset = {
-        name: "breeze-agent-windows-amd64.exe",
+        name: "bl4ck-agent-windows-amd64.exe",
         buffer: Buffer.from("trusted windows agent bytes"),
       };
       const userHelperAsset = {
-        name: "breeze-user-helper-windows-amd64.exe",
+        name: "bl4ck-user-helper-windows-amd64.exe",
         buffer: Buffer.from("trusted user-helper bytes"),
       };
       const signed = makeSignedReleaseManifestMulti([
@@ -535,7 +535,7 @@ describe("binarySync", () => {
       // The loop MUST short-circuit silently — anything else would block all
       // historical releases from syncing.
       const agentAsset = {
-        name: "breeze-agent-windows-amd64.exe",
+        name: "bl4ck-agent-windows-amd64.exe",
         buffer: Buffer.from("pre-816 agent bytes"),
       };
       const signed = makeSignedReleaseManifestMulti([agentAsset]);
@@ -563,11 +563,11 @@ describe("binarySync", () => {
       // logs to console.error and continues with the next target. A
       // user-helper insert failure MUST NOT abort the agent insert.
       const agentAsset = {
-        name: "breeze-agent-windows-amd64.exe",
+        name: "bl4ck-agent-windows-amd64.exe",
         buffer: Buffer.from("agent bytes"),
       };
       const userHelperAsset = {
-        name: "breeze-user-helper-windows-amd64.exe",
+        name: "bl4ck-user-helper-windows-amd64.exe",
         buffer: Buffer.from("user-helper bytes"),
       };
       const signed = makeSignedReleaseManifestMulti([
@@ -684,11 +684,11 @@ describe("binarySync", () => {
 
     it("registers component=watchdog when the watchdog asset is present", async () => {
       const agentAsset = {
-        name: "breeze-agent-linux-amd64",
+        name: "bl4ck-agent-linux-amd64",
         buffer: Buffer.from("trusted linux agent bytes"),
       };
       const watchdogAsset = {
-        name: "breeze-watchdog-linux-amd64",
+        name: "bl4ck-watchdog-linux-amd64",
         buffer: Buffer.from("trusted linux watchdog bytes"),
       };
       const signed = makeSignedReleaseManifestMulti([agentAsset, watchdogAsset]);
@@ -724,7 +724,7 @@ describe("binarySync", () => {
 
     it("succeeds without a watchdog row when the asset is missing (backward-compat)", async () => {
       const agentAsset = {
-        name: "breeze-agent-linux-amd64",
+        name: "bl4ck-agent-linux-amd64",
         buffer: Buffer.from("agent only bytes"),
       };
       const signed = makeSignedReleaseManifestMulti([agentAsset]);
@@ -758,7 +758,7 @@ describe("binarySync", () => {
       process.env.AGENT_AUTO_PROMOTE = "false";
       delete process.env.BREEZE_VERSION;
 
-      fsMocks.readdir.mockResolvedValue(["breeze-agent-linux-amd64"] as any);
+      fsMocks.readdir.mockResolvedValue(["bl4ck-agent-linux-amd64"] as any);
       fsMocks.stat.mockResolvedValue({ isFile: () => true, size: 4096 } as any);
       fsMocks.readFile.mockResolvedValue("0.70.0" as any);
 
@@ -796,7 +796,7 @@ describe("binarySync", () => {
       delete process.env.AGENT_AUTO_PROMOTE;
       delete process.env.BREEZE_VERSION;
 
-      fsMocks.readdir.mockResolvedValue(["breeze-agent-linux-amd64"] as any);
+      fsMocks.readdir.mockResolvedValue(["bl4ck-agent-linux-amd64"] as any);
       fsMocks.stat.mockResolvedValue({ isFile: () => true, size: 4096 } as any);
       fsMocks.readFile.mockResolvedValue("0.70.0" as any);
 
@@ -822,7 +822,7 @@ describe("binarySync", () => {
 
     it("GitHub path: AGENT_AUTO_PROMOTE=false registers isLatest:false and does NOT demote", async () => {
       process.env.AGENT_AUTO_PROMOTE = "false";
-      const assetName = "breeze-agent-linux-amd64";
+      const assetName = "bl4ck-agent-linux-amd64";
       const asset = Buffer.from("trusted linux agent");
       const signed = makeSignedReleaseManifest(assetName, asset);
       process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
@@ -898,7 +898,7 @@ describe("binarySync", () => {
     process.env.BINARY_VERSION_FILE = "/fake/version";
     delete process.env.BREEZE_VERSION;
 
-    fsMocks.readdir.mockResolvedValue(["breeze-agent-linux-amd64"] as any);
+    fsMocks.readdir.mockResolvedValue(["bl4ck-agent-linux-amd64"] as any);
     fsMocks.stat.mockResolvedValue({ isFile: () => true, size: 1234 } as any);
     fsMocks.readFile.mockResolvedValue("0.65.7" as any);
 

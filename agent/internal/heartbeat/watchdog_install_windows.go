@@ -14,13 +14,13 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-const windowsWatchdogServiceName = "BreezeWatchdog"
+const windowsWatchdogServiceName = "Bl4ckWatchdog"
 
 // watchdogBinaryPath returns the on-disk path of the installed watchdog binary
 // (the protected Program Files location) so the agent can read its version for
 // heartbeat telemetry.
 func watchdogBinaryPath() (string, error) {
-	return serviceinstall.ProtectedBinaryPath("breeze-watchdog.exe")
+	return serviceinstall.ProtectedBinaryPath("bl4ck-watchdog.exe")
 }
 
 // installAndRestartWatchdog downloads the verified watchdog binary and swaps it
@@ -35,7 +35,7 @@ func (h *Heartbeat) installAndRestartWatchdog(targetVersion string) error {
 	}
 	defer func() { _ = os.Remove(tempPath) }()
 
-	dest, err := serviceinstall.ProtectedBinaryPath("breeze-watchdog.exe")
+	dest, err := serviceinstall.ProtectedBinaryPath("bl4ck-watchdog.exe")
 	if err != nil {
 		return fmt.Errorf("resolve protected watchdog path: %w", err)
 	}
@@ -111,7 +111,7 @@ func replaceWatchdogBinaryWindows(srcTemp, dest string) error {
 	}
 	defer src.Close()
 
-	staging, err := os.CreateTemp(filepath.Dir(dest), "breeze-watchdog-*.new")
+	staging, err := os.CreateTemp(filepath.Dir(dest), "bl4ck-watchdog-*.new")
 	if err != nil {
 		return fmt.Errorf("create staging file: %w", err)
 	}

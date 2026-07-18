@@ -83,7 +83,7 @@ func TestCollectConfigStateRejectsUnsafeProbesBeforeRead(t *testing.T) {
 	}
 
 	entries, err := collector.CollectConfigState([]ConfigProbe{
-		{FilePath: "/etc/breeze/agent.yaml", ConfigKey: "auth_token"},
+		{FilePath: "/etc/bl4ck/agent.yaml", ConfigKey: "auth_token"},
 		{FilePath: "/root/.ssh/config", ConfigKey: "IdentityFile"},
 		{FilePath: "/etc/ssh/sshd_config", ConfigKey: "ApiToken"},
 		{FilePath: "/etc/../etc/shadow", ConfigKey: "root"},

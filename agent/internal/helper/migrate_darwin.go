@@ -15,7 +15,7 @@ func stopHelperLegacy() {
 	if uid != "" && uid != "0" {
 		_ = runHelperCommand("launchctl", "bootout", "gui/"+uid, plistPath)
 	}
-	_ = runHelperCommand("pkill", "-f", "breeze-helper")
+	_ = runHelperCommand("pkill", "-f", "bl4ck-helper")
 }
 
 func migrationTargets() ([]string, error) {

@@ -10,7 +10,7 @@ import (
 	"github.com/breeze-rmm/agent/internal/secmem"
 )
 
-// The UniFi collector's Breeze-API client must (1) inject the agent bearer token
+// The UniFi collector's BL4CK-API client must (1) inject the agent bearer token
 // and (2) refuse to follow redirects, so the fleet credential can never be
 // replayed to an attacker-controlled Location host. Regression guard for the
 // token-injecting, redirect-guarded transport wiring.

@@ -1,4 +1,4 @@
-// Package observability wires the Breeze agent to Sentry for unattended
+// Package observability wires the BL4CK agent to Sentry for unattended
 // error reporting. All exported functions are safe to call when
 // BREEZE_SENTRY_DSN is unset — they degrade to no-ops so self-hosted
 // deployments without a DSN run unchanged.

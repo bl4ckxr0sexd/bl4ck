@@ -107,7 +107,7 @@ func TestExecuteRejectsDangerousContent(t *testing.T) {
 	}
 }
 
-func TestBuildEnvironmentIncludesBreezeMetadataAndParameters(t *testing.T) {
+func TestBuildEnvironmentIncludesBL4CKMetadataAndParameters(t *testing.T) {
 	e := newTestExecutor()
 	env := e.buildEnvironment(ScriptExecution{
 		ID:       "exec-env",

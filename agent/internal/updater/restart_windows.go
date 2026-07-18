@@ -10,11 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-const serviceName = "BreezeAgent"
+const serviceName = "Bl4ckAgent"
 
 // Restart restarts the Windows service via SCM.
 // Used for non-update restarts where no binary swap is needed.
@@ -85,10 +86,10 @@ func Restart() error {
 // a *BinaryPair, nil means "no helper to swap", and a non-nil value carries
 // both paths together. Issue #816, #845 follow-up.
 type restartScriptOptions struct {
-	// Agent is the freshly-downloaded breeze-agent.exe temp file plus its
+	// Agent is the freshly-downloaded bl4ck-agent.exe temp file plus its
 	// final install location. Required.
 	Agent BinaryPair
-	// UserHelper, when non-nil, is the freshly-downloaded breeze-user-helper.exe
+	// UserHelper, when non-nil, is the freshly-downloaded bl4ck-user-helper.exe
 	// temp file plus its final install location (typically the same directory
 	// as the agent). nil means "no user-helper to swap" — the generated script
 	// omits the helper Copy-Item entirely (backward-compat with releases that
@@ -148,7 +149,7 @@ func buildRestartScript(opts restartScriptOptions) string {
 		"  Stop-Service -Name '" + serviceName + "' -Force -ErrorAction SilentlyContinue",
 		// Kill any lingering breeze processes (helper, viewer, user helpers)
 		// that might hold file locks on the binary or shared directory.
-		"  Get-Process -Name 'breeze-helper','breeze-agent','breeze-user-helper','breeze-viewer' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+		"  Get-Process -Name 'bl4ck-helper','bl4ck-agent','bl4ck-user-helper','breeze-viewer' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
 		"  Start-Sleep -Seconds 2",
 		fmt.Sprintf("  Copy-Item -Path '%s' -Destination '%s' -Force", safeAgent, safeAgentTarget),
 	}
@@ -168,13 +169,13 @@ func buildRestartScript(opts restartScriptOptions) string {
 		"  Start-Service -Name '"+serviceName+"'",
 		"} catch {",
 		// Failure path: log structured diagnostics. ${env:TEMP} always exists
-		// on Windows (unlike C:\ProgramData\Breeze, which may not exist yet
+		// on Windows (unlike C:\ProgramData\BL4CK, which may not exist yet
 		// on a fresh install — see #609 / HardenProgramDataAcl sequencing).
 		"  $stamp = [int][double]::Parse((Get-Date -UFormat %s))",
 		"  $logPath = Join-Path $env:TEMP (\"breeze-update-failure-$stamp.log\")",
 		"  $op = if ($_.InvocationInfo) { $_.InvocationInfo.Line } else { '<unknown>' }",
 		"  $msg = @(",
-		"    \"Breeze update-helper failure at $(Get-Date -Format o)\",",
+		"    \"BL4CK update-helper failure at $(Get-Date -Format o)\",",
 		"    \"operation: $op\",",
 		"    \"exception: $($_.Exception.Message)\",",
 		"    \"stackTrace: $($_.Exception.StackTrace)\",",
@@ -214,7 +215,7 @@ func buildRestartScript(opts restartScriptOptions) string {
 // userHelper is optional. Pass nil to perform an agent-only upgrade (the
 // pre-#816 behavior). When non-nil, the generated script also copies the
 // user-helper into place so the post-upgrade HelperLifecycleManager finds
-// it on disk and does not fall back to spawning breeze-agent.exe in a loop
+// it on disk and does not fall back to spawning bl4ck-agent.exe in a loop
 // (issue #816).
 func RestartWithHelper(agent BinaryPair, userHelper *BinaryPair) error {
 	script := buildRestartScript(restartScriptOptions{
@@ -254,6 +255,7 @@ func RestartWithHelper(agent BinaryPair, userHelper *BinaryPair) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
 	}
+	oscmd.Hide(cmd)
 
 	if err := cmd.Start(); err != nil {
 		os.Remove(scriptFile.Name())

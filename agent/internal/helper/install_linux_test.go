@@ -15,8 +15,8 @@ func TestRenderAutoStartEntry_QuotesExecPath(t *testing.T) {
 	}{
 		{
 			name:       "simple path",
-			binaryPath: "/usr/local/bin/breeze-helper",
-			wantExec:   `Exec="/usr/local/bin/breeze-helper"`,
+			binaryPath: "/usr/local/bin/bl4ck-helper",
+			wantExec:   `Exec="/usr/local/bin/bl4ck-helper"`,
 		},
 		{
 			name:       "path with space",
@@ -25,8 +25,8 @@ func TestRenderAutoStartEntry_QuotesExecPath(t *testing.T) {
 		},
 		{
 			name:       "path with special chars",
-			binaryPath: "/opt/breeze & co/breeze-helper",
-			wantExec:   `Exec="/opt/breeze & co/breeze-helper"`,
+			binaryPath: "/opt/breeze & co/bl4ck-helper",
+			wantExec:   `Exec="/opt/breeze & co/bl4ck-helper"`,
 		},
 	}
 
@@ -42,11 +42,11 @@ func TestRenderAutoStartEntry_QuotesExecPath(t *testing.T) {
 }
 
 func TestRenderAutoStartEntry_PreservesOtherFields(t *testing.T) {
-	entry := renderAutoStartEntry("/usr/local/bin/breeze-helper")
+	entry := renderAutoStartEntry("/usr/local/bin/bl4ck-helper")
 	requiredFields := []string{
 		"[Desktop Entry]",
 		"Type=Application",
-		"Name=Breeze Helper",
+		"Name=BL4CK Helper",
 		"Hidden=false",
 		"NoDisplay=true",
 		"X-GNOME-Autostart-enabled=true",

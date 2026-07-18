@@ -36,7 +36,7 @@ downloadRoutes.get('/download/:os/:arch', async (c) => {
   }
 
   const extension = os === 'windows' ? '.exe' : '';
-  const filename = `breeze-agent-${os}-${arch}${extension}`;
+  const filename = `bl4ck-agent-${os}-${arch}${extension}`;
 
   // GitHub redirect mode — no local binaries needed
   if (getBinarySource() === 'github') {
@@ -131,7 +131,7 @@ downloadRoutes.get('/download/:os/:arch/pkg', async (c) => {
     return c.json({ error: 'Invalid architecture', message: `Supported values: amd64, arm64. Got: ${arch}` }, 400);
   }
 
-  const filename = `breeze-agent-darwin-${arch}.pkg`;
+  const filename = `bl4ck-agent-darwin-${arch}.pkg`;
 
   // GitHub redirect mode — no local packages needed
   if (getBinarySource() === 'github') {
@@ -292,7 +292,7 @@ downloadRoutes.get('/download/helper/:os/:arch', async (c) => {
 // ============================================
 // Watchdog Binary Download (public, no auth)
 // ============================================
-// Per-arch like the agent (breeze-watchdog-{os}-{arch}[.exe]). The agent's
+// Per-arch like the agent (bl4ck-watchdog-{os}-{arch}[.exe]). The agent's
 // reconcileWatchdog and the watchdog's own failover self-update fetch this via
 // /agent-versions/:version/download?component=watchdog, which hands back this
 // same-origin URL so the downloader's host-match guard passes (see
@@ -310,7 +310,7 @@ downloadRoutes.get('/download/watchdog/:os/:arch', async (c) => {
   }
 
   const extension = os === 'windows' ? '.exe' : '';
-  const filename = `breeze-watchdog-${os}-${arch}${extension}`;
+  const filename = `bl4ck-watchdog-${os}-${arch}${extension}`;
 
   if (getBinarySource() === 'github') {
     return c.redirect(getGithubWatchdogUrl(os, arch), 302);
@@ -377,7 +377,7 @@ downloadRoutes.get('/download/watchdog/:os/:arch', async (c) => {
   });
 });
 
-// breeze-user-helper: the GUI-subsystem sibling of breeze-agent (Windows in
+// bl4ck-user-helper: the GUI-subsystem sibling of bl4ck-agent (Windows in
 // practice; route stays OS-general like the watchdog route it mirrors),
 // spawned by the agent's sessionbroker into the interactive user session. It is
 // a distinct binary from the Tauri "helper" app (/download/helper) and is
@@ -398,7 +398,7 @@ downloadRoutes.get('/download/user-helper/:os/:arch', async (c) => {
   }
 
   const extension = os === 'windows' ? '.exe' : '';
-  const filename = `breeze-user-helper-${os}-${arch}${extension}`;
+  const filename = `bl4ck-user-helper-${os}-${arch}${extension}`;
 
   if (getBinarySource() === 'github') {
     return c.redirect(getGithubUserHelperUrl(os, arch), 302);
@@ -517,8 +517,8 @@ function generateUninstallScript(): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
 
-AGENT_BINARY="/usr/local/bin/breeze-agent"
-WATCHDOG_BINARY="/usr/local/bin/breeze-watchdog"
+AGENT_BINARY="/usr/local/bin/bl4ck-agent"
+WATCHDOG_BINARY="/usr/local/bin/bl4ck-watchdog"
 
 fatal() {
   echo "Error: $*" >&2
@@ -557,33 +557,33 @@ uninstall_macos() {
   rm -f "$WATCHDOG_BINARY"
 
   echo "Breeze Agent uninstalled."
-  echo "Config at /Library/Application Support/Breeze/ was preserved."
-  echo "To remove config: sudo rm -rf '/Library/Application Support/Breeze'"
+  echo "Config at /Library/Application Support/BL4CK/ was preserved."
+  echo "To remove config: sudo rm -rf '/Library/Application Support/BL4CK'"
 }
 
 uninstall_linux() {
-  local agent_service="/etc/systemd/system/breeze-agent.service"
-  local watchdog_service="/etc/systemd/system/breeze-watchdog.service"
-  local user_service="/usr/lib/systemd/user/breeze-agent-user.service"
-  local xdg_autostart="/etc/xdg/autostart/breeze-agent-user.desktop"
+  local agent_service="/etc/systemd/system/bl4ck-agent.service"
+  local watchdog_service="/etc/systemd/system/bl4ck-watchdog.service"
+  local user_service="/usr/lib/systemd/user/bl4ck-agent-user.service"
+  local xdg_autostart="/etc/xdg/autostart/bl4ck-agent-user.desktop"
   local ipc_dir="/var/run/breeze"
 
   echo "Uninstalling Breeze Agent for Linux..."
 
   if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-active --quiet breeze-agent 2>/dev/null; then
-      systemctl stop breeze-agent
+    if systemctl is-active --quiet bl4ck-agent 2>/dev/null; then
+      systemctl stop bl4ck-agent
       echo "Service stopped."
     fi
-    if systemctl is-enabled --quiet breeze-agent 2>/dev/null; then
-      systemctl disable breeze-agent
+    if systemctl is-enabled --quiet bl4ck-agent 2>/dev/null; then
+      systemctl disable bl4ck-agent
     fi
-    if systemctl is-active --quiet breeze-watchdog 2>/dev/null; then
-      systemctl stop breeze-watchdog
+    if systemctl is-active --quiet bl4ck-watchdog 2>/dev/null; then
+      systemctl stop bl4ck-watchdog
       echo "Watchdog service stopped."
     fi
-    if systemctl is-enabled --quiet breeze-watchdog 2>/dev/null; then
-      systemctl disable breeze-watchdog
+    if systemctl is-enabled --quiet bl4ck-watchdog 2>/dev/null; then
+      systemctl disable bl4ck-watchdog
     fi
   else
     warn "systemctl not found; skipping service stop and disable"
@@ -602,8 +602,8 @@ uninstall_linux() {
   fi
 
   echo "Breeze Agent uninstalled."
-  echo "Config at /etc/breeze/ was preserved."
-  echo "To remove config: sudo rm -rf /etc/breeze"
+  echo "Config at /etc/bl4ck/ was preserved."
+  echo "To remove config: sudo rm -rf /etc/bl4ck"
 }
 
 require_root
@@ -725,11 +725,11 @@ OS="$(detect_os)"
 ARCH="$(detect_arch)"
 INSTALL_DIR="/usr/local/bin"
 if [[ "\$OS" == "darwin" ]]; then
-  CONFIG_DIR="/Library/Application Support/Breeze"
+  CONFIG_DIR="/Library/Application Support/BL4CK"
 else
-  CONFIG_DIR="/etc/breeze"
+  CONFIG_DIR="/etc/bl4ck"
 fi
-BINARY_NAME="breeze-agent"
+BINARY_NAME="bl4ck-agent"
 DOWNLOAD_URL="\${BREEZE_SERVER}/api/v1/agents/download/\${OS}/\${ARCH}"
 PKG_URL="\${BREEZE_SERVER}/api/v1/agents/download/\${OS}/\${ARCH}/pkg"
 VERSION_METADATA_URL="\${BREEZE_SERVER}/api/v1/agent-versions/latest?platform=\${OS}&arch=\${ARCH}&component=agent"
@@ -844,7 +844,7 @@ verify_sha256() {
 # ----- macOS: use .pkg installer -----
 if [[ "\$OS" == "darwin" ]]; then
   info "Downloading macOS installer package..."
-  TMPPKG="$(mktemp -d)/breeze-agent.pkg"
+  TMPPKG="$(mktemp -d)/bl4ck-agent.pkg"
   trap 'rm -rf "$(dirname "\$TMPPKG")"' EXIT
 
   HTTP_CODE="$(curl -fsSL -w '%{http_code}' -o "\$TMPPKG" "\$PKG_URL" 2>/dev/null)" || true
@@ -963,9 +963,9 @@ verify_sha256 "\$TMPFILE" "\$EXPECTED_SHA256"
 success "Verified agent binary checksum"
 
 # ----- Stop existing service before replacing binary (safe for upgrades) -----
-if command -v systemctl &>/dev/null && systemctl is-active --quiet breeze-agent 2>/dev/null; then
+if command -v systemctl &>/dev/null && systemctl is-active --quiet bl4ck-agent 2>/dev/null; then
   info "Stopping existing Breeze Agent service..."
-  if ! systemctl stop breeze-agent 2>&1; then
+  if ! systemctl stop bl4ck-agent 2>&1; then
     warn "Failed to stop existing service cleanly — continuing anyway"
   fi
 fi
@@ -1015,7 +1015,7 @@ success "Agent enrolled successfully"
 # ----- Install service -----
 if command -v systemctl &>/dev/null; then
   info "Installing systemd service..."
-  cat > /etc/systemd/system/breeze-agent.service <<SERVICEEOF
+  cat > /etc/systemd/system/bl4ck-agent.service <<SERVICEEOF
 [Unit]
 Description=Breeze RMM Agent
 After=network-online.target
@@ -1029,7 +1029,7 @@ RestartSec=10
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=breeze-agent
+SyslogIdentifier=bl4ck-agent
 
 # Security hardening
 NoNewPrivileges=false
@@ -1042,8 +1042,8 @@ WantedBy=multi-user.target
 SERVICEEOF
 
   systemctl daemon-reload
-  systemctl enable breeze-agent
-  systemctl start breeze-agent
+  systemctl enable bl4ck-agent
+  systemctl start bl4ck-agent
   success "systemd service installed and started"
 else
   warn "systemd not found. Please configure the agent to start on boot manually."
@@ -1053,7 +1053,7 @@ fi
 echo ""
 success "Breeze agent installation complete!"
 info "The device should appear in your Breeze dashboard within 60 seconds."
-info "  Check status:  sudo systemctl status breeze-agent"
-info "  View logs:     sudo journalctl -u breeze-agent -f"
+info "  Check status:  sudo systemctl status bl4ck-agent"
+info "  View logs:     sudo journalctl -u bl4ck-agent -f"
 `;
 }

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"github.com/breeze-rmm/agent/internal/safemode"
 )
 
@@ -39,6 +40,7 @@ func RebootToSafeMode(payload map[string]any) CommandResult {
 	// Initiate reboot. Delay is in minutes, shutdown /t expects seconds.
 	delaySeconds := delay * 60
 	cmd := exec.Command("shutdown", "/r", "/t", strconv.Itoa(delaySeconds))
+	oscmd.Hide(cmd)
 	if err := cmd.Run(); err != nil {
 		// Rollback: clear the BCD flag so the machine doesn't accidentally
 		// enter safe mode on the next organic reboot.

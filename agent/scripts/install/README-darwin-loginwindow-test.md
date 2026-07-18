@@ -1,6 +1,6 @@
 # macOS LoginWindow Test
 
-Use this on a second Mac that is not hosting the Breeze server.
+Use this on a second Mac that is not hosting the BL4CK server.
 
 ## Stage the helper
 
@@ -13,8 +13,8 @@ sudo ./agent/scripts/install/stage-darwin-loginwindow-test.sh
 
 This script:
 
-- builds `breeze-desktop-helper` to `/tmp/breeze-desktop-helper`
-- installs `/usr/local/bin/breeze-desktop-helper`
+- builds `bl4ck-desktop-helper` to `/tmp/bl4ck-desktop-helper`
+- installs `/usr/local/bin/bl4ck-desktop-helper`
 - installs the Aqua and LoginWindow LaunchAgents
 - validates both plists with `plutil`
 - bootstraps the Aqua helper for the current console user
@@ -24,10 +24,10 @@ This script:
 Run these before logout or reboot:
 
 ```bash
-tail -n 100 /Library/Logs/Breeze/desktop-helper.log
-/usr/local/bin/breeze-desktop-helper probe --context user_session
-/usr/local/bin/breeze-desktop-helper probe --context login_window
-launchctl print gui/$(id -u)/com.breeze.desktop-helper-user
+tail -n 100 /Library/Logs/BL4CK/desktop-helper.log
+/usr/local/bin/bl4ck-desktop-helper probe --context user_session
+/usr/local/bin/bl4ck-desktop-helper probe --context login_window
+launchctl print gui/$(id -u)/com.bl4ck.desktop-helper-user
 ```
 
 Expected shape:
@@ -40,11 +40,11 @@ Expected shape:
 
 ## Real login-window validation
 
-1. Make sure the Breeze server is reachable from this Mac.
+1. Make sure the BL4CK server is reachable from this Mac.
 2. Start tailing logs from another session if possible:
-   `tail -f /Library/Logs/Breeze/desktop-helper.log`
+   `tail -f /Library/Logs/BL4CK/desktop-helper.log`
 3. Log out or reboot to the macOS login window.
-4. Before logging back in, verify from the Breeze dashboard:
+4. Before logging back in, verify from the BL4CK dashboard:
    - the device is still online
    - `desktopAccess.mode` is `login_window`
    - a remote desktop connection can start
@@ -54,8 +54,8 @@ Expected shape:
 
 ## Files to inspect after logout or reboot
 
-- `/Library/Logs/Breeze/desktop-helper.log`
-- `/Library/Logs/Breeze/desktop-helper.log` when the helper can write it
+- `/Library/Logs/BL4CK/desktop-helper.log`
+- `/Library/Logs/BL4CK/desktop-helper.log` when the helper can write it
 
 Look for:
 
@@ -68,9 +68,9 @@ Look for:
 ## Cleanup
 
 ```bash
-sudo launchctl bootout system/com.breeze.agent >/dev/null 2>&1 || true
-sudo launchctl bootout gui/$(id -u)/com.breeze.desktop-helper-user >/dev/null 2>&1 || true
-sudo rm -f /Library/LaunchAgents/com.breeze.desktop-helper-user.plist
-sudo rm -f /Library/LaunchAgents/com.breeze.desktop-helper-loginwindow.plist
-sudo rm -f /usr/local/bin/breeze-desktop-helper
+sudo launchctl bootout system/com.bl4ck.agent >/dev/null 2>&1 || true
+sudo launchctl bootout gui/$(id -u)/com.bl4ck.desktop-helper-user >/dev/null 2>&1 || true
+sudo rm -f /Library/LaunchAgents/com.bl4ck.desktop-helper-user.plist
+sudo rm -f /Library/LaunchAgents/com.bl4ck.desktop-helper-loginwindow.plist
+sudo rm -f /usr/local/bin/bl4ck-desktop-helper
 ```

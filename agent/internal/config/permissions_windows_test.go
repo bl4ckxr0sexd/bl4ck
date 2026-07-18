@@ -13,7 +13,7 @@ import (
 )
 
 // TestWindowsConfigDACLGrantsUsersRead locks the invariants behind the
-// "Breeze Assist requires the Breeze agent..." regression: agent.yaml and its
+// "BL4CK Assist requires the BL4CK agent..." regression: agent.yaml and its
 // directory must grant BUILTIN\Users read (so the Helper, running as the
 // logged-in user, can read them), while secrets.yaml must NOT — the full
 // agent/watchdog tokens and mTLS keys stay SYSTEM + Administrators only.

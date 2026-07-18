@@ -281,8 +281,8 @@ func TestSaveToWritesAtomicallyWithoutLeftoverTempFiles(t *testing.T) {
 		t.Fatalf("Load returned incomplete config: %+v", loaded)
 	}
 
-	// On POSIX, agent.yaml must be world-readable (0644) so the Breeze Helper
-	// ("Breeze Assist"), which runs as the logged-in user and is neither the
+	// On POSIX, agent.yaml must be world-readable (0644) so the BL4CK Helper
+	// ("BL4CK Assist"), which runs as the logged-in user and is neither the
 	// owner (root) nor in the owning group (wheel), can read it. secrets.yaml
 	// holds the full agent/watchdog tokens and mTLS keys and stays root-only
 	// (0600). Skip on Windows where POSIX mode bits don't map directly.
@@ -298,8 +298,8 @@ func TestSaveToWritesAtomicallyWithoutLeftoverTempFiles(t *testing.T) {
 
 // TestEnforceConfigPermissionsAreHelperReadable guards the bug where the
 // SR-001..SR-024 hardening (#568) tightened agent.yaml to 0640 in a 0750 dir,
-// which the Breeze Helper (running as the logged-in user, not root/wheel) could
-// not read — surfacing as "Breeze Assist requires the Breeze agent...". The
+// which the BL4CK Helper (running as the logged-in user, not root/wheel) could
+// not read — surfacing as "BL4CK Assist requires the BL4CK agent...". The
 // config dir must be traversable and agent.yaml world-readable, while
 // secrets.yaml stays owner-only.
 func TestEnforceConfigPermissionsAreHelperReadable(t *testing.T) {

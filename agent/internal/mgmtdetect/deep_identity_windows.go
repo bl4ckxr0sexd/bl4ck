@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/breeze-rmm/agent/internal/oscmd"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -15,6 +16,7 @@ func collectIdentityStatus() IdentityStatus {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "dsregcmd", "/status")
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Warn("dsregcmd failed, falling back to registry", "error", err.Error())

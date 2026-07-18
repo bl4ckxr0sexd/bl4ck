@@ -325,7 +325,7 @@ export default function EnrollmentKeyManager() {
           <h1 className="text-xl font-semibold tracking-tight">Enrollment Keys</h1>
           <p className="text-muted-foreground">
             Create and manage keys for agent enrollment. Use these keys with{' '}
-            <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">breeze-agent enroll &lt;key&gt;</code>
+            <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">bl4ck-agent enroll &lt;key&gt;</code>
           </p>
         </div>
         <button

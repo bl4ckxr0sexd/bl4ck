@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const installDirName = "Breeze"
+const installDirName = "BL4CK"
 
 func ProtectedBinaryPathIn(programFilesDir, binaryName string) (string, error) {
 	if strings.TrimSpace(programFilesDir) == "" {

@@ -30,7 +30,7 @@ func TestDefaultHelperDownloaderRejectsOffOriginRedirect(t *testing.T) {
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/download") {
 			infoHits++
-			http.Redirect(w, r, evil.URL+"/breeze-helper-windows.msi", http.StatusFound)
+			http.Redirect(w, r, evil.URL+"/bl4ck-helper-windows.msi", http.StatusFound)
 			return
 		}
 		http.Error(w, "not found", http.StatusNotFound)
@@ -55,7 +55,7 @@ func TestDefaultHelperDownloaderRejectsOffOriginRedirect(t *testing.T) {
 // TestDefaultHelperDownloaderUsesHelperComponent confirms the verified
 // downloader queries the agent-versions download endpoint with
 // component=helper, so the signed release manifest's helper asset
-// (breeze-helper-*) is the trust anchor — not the unauthenticated
+// (bl4ck-helper-*) is the trust anchor — not the unauthenticated
 // /download/helper/:os/:arch redirect route.
 func TestDefaultHelperDownloaderUsesHelperComponent(t *testing.T) {
 	var gotComponent string

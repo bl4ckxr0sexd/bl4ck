@@ -8,7 +8,7 @@ import (
 
 func configDir() string {
 	if runtime.GOOS == "darwin" {
-		return "/Library/Application Support/Breeze"
+		return "/Library/Application Support/BL4CK"
 	}
-	return "/etc/breeze"
+	return "/etc/bl4ck"
 }

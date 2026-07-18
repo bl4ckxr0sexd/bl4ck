@@ -265,7 +265,7 @@ $ErrorActionPreference = 'Stop'
 $disk = Mount-VHD -Path '%s' -PassThru | Get-Disk
 Initialize-Disk -Number $disk.Number -PartitionStyle GPT
 $part = New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
-Format-Volume -Partition $part -FileSystem NTFS -NewFileSystemLabel 'BreezeRestore' -Confirm:$false | Out-Null
+Format-Volume -Partition $part -FileSystem NTFS -NewFileSystemLabel 'BL4CKRestore' -Confirm:$false | Out-Null
 $part.DriveLetter
 `, escapePSString(vhdxPath))
 

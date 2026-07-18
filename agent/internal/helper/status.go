@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Status represents the helper_status.yaml file written by the Breeze Helper app.
+// Status represents the helper_status.yaml file written by the BL4CK Helper app.
 type Status struct {
 	Version      string    `yaml:"version"`
 	ChatActive   bool      `yaml:"chat_active"`
@@ -66,7 +66,7 @@ func IsIdle(configPath string) bool {
 }
 
 // statusPathFrom derives the status file path from the config path.
-// e.g., /Library/Application Support/Breeze/helper_config.yaml -> helper_status.yaml
+// e.g., /Library/Application Support/BL4CK/helper_config.yaml -> helper_status.yaml
 func statusPathFrom(configPath string) string {
 	dir := filepath.Dir(configPath)
 	return filepath.Join(dir, "helper_status.yaml")

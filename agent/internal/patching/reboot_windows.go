@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/breeze-rmm/agent/internal/config"
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 // RebootState tracks the current reboot scheduling state.
@@ -112,7 +113,9 @@ func (r *RebootManager) Cancel() error {
 	r.cancelLocked()
 
 	// Abort any pending Windows shutdown
-	exec.Command("shutdown", "/a").Run()
+	abortCmd := exec.Command("shutdown", "/a")
+	oscmd.Hide(abortCmd)
+	abortCmd.Run()
 
 	r.state.RebootScheduled = false
 	r.state.ScheduledAt = time.Time{}
@@ -225,7 +228,9 @@ func (r *RebootManager) executeReboot() {
 	}
 
 	// Execute reboot via Windows shutdown command
-	exec.Command("shutdown", "/r", "/t", "0", "/d", "p:2:17").Run()
+	rebootCmd := exec.Command("shutdown", "/r", "/t", "0", "/d", "p:2:17")
+	oscmd.Hide(rebootCmd)
+	rebootCmd.Run()
 }
 
 func rebootHistoryPath() string {

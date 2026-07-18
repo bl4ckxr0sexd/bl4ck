@@ -22,7 +22,7 @@ func TestHelperWarnLimiterBudget(t *testing.T) {
 
 	// limit=3, 5-minute window (matches production default)
 	lim := newHelperWarnLimiter(3, 5*time.Minute)
-	msg := "connect: connect to /var/run/breeze.sock: connection refused"
+	msg := "connect: connect to /var/run/bl4ck.sock: connection refused"
 	now := time.Now()
 
 	// Calls 1–3 should all emit WARN.
@@ -532,9 +532,9 @@ func TestWaitForEnrollment_IgnoresTornWrite(t *testing.T) {
 	}
 }
 
-// TestUserHelperRoleDefault locks in the cobra default for `breeze-agent
+// TestUserHelperRoleDefault locks in the cobra default for `bl4ck-agent
 // user-helper --role`. The Windows AgentUserHelper Scheduled Task invokes
-// `breeze-agent user-helper` (historically with no flags) under
+// `bl4ck-agent user-helper` (historically with no flags) under
 // BUILTIN\Users at LeastPrivilege, so the default must be "user". The
 // previous "system" default caused the helper to claim HelperRoleSystem,
 // which the sessionbroker correctly rejected with "system role requires

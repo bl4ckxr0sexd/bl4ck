@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 type wscProductRaw struct {
@@ -28,6 +30,7 @@ func GetWindowsSecurityCenterProducts() ([]AVProduct, error) {
 
 	command := "Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | Select-Object displayName,productState,pathToSignedProductExe,pathToSignedReportingExe,timestamp,instanceGuid | ConvertTo-Json -Compress"
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", command)
+	oscmd.Hide(cmd)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("wsc query timed out")

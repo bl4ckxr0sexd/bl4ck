@@ -2,7 +2,7 @@
 // Windows from the Go agent. When a non-elevated process triggers
 // consent.exe (the UAC consent UI), we extract the subject user, target
 // executable, hash, and signer, then POST an elevation_requests row with
-// flow_type='uac_intercept' to the Breeze API. This is discovery-only —
+// flow_type='uac_intercept' to the BL4CK API. This is discovery-only —
 // no actuation, no blocking. Tracks 4-6 build the actuation side.
 //
 // File layout:

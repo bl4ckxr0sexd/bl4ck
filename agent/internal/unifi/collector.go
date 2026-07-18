@@ -18,9 +18,9 @@ type CollectorConfig struct {
 }
 
 type CollectorDeps struct {
-	APIBaseURL string       // the Breeze server root (cfg.ServerURL), e.g. https://breeze.example.com — NOT including /api/v1
+	APIBaseURL string       // the BL4CK server root (cfg.ServerURL), e.g. https://breeze.example.com — NOT including /api/v1
 	AgentID    string       // this agent's id; agent telemetry endpoints live under /api/v1/agents/<AgentID>/
-	HTTP       *http.Client // authed transport to the Breeze API (agent token attached)
+	HTTP       *http.Client // authed transport to the BL4CK API (agent token attached)
 	Logf       func(format string, args ...any)
 }
 

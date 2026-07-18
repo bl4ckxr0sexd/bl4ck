@@ -51,10 +51,10 @@ type etwSession struct {
 // session call fails with ERROR_ACCESS_DENIED).
 //
 // The returned Subscriber owns one RealTime session named
-// "Breeze-LUA-Discovery". Two callers on the same machine would conflict;
+// "BL4CK-LUA-Discovery". Two callers on the same machine would conflict;
 // we assume only one agent process per host (enforced elsewhere).
 func NewETWSubscriber() (Subscriber, error) {
-	session := etw.NewRealTimeSession("Breeze-LUA-Discovery")
+	session := etw.NewRealTimeSession("BL4CK-LUA-Discovery")
 	provider, err := etw.ParseProvider(providerGUID)
 	if err != nil {
 		return nil, fmt.Errorf("etwlua: parse provider GUID: %w", err)

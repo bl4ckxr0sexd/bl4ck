@@ -214,7 +214,7 @@ export function mountInviteLandingRoutes(app: Hono): void {
           enrollmentSecret,
           siteId: redeemed.siteId,
         });
-        filename = 'breeze-agent-windows.zip';
+        filename = 'bl4ck-agent-windows.zip';
       } else {
         // macOS: install.sh downloads the arch-matched pkg at install time, so
         // no binary is bundled here (one zip serves Intel + Apple Silicon).
@@ -224,7 +224,7 @@ export function mountInviteLandingRoutes(app: Hono): void {
           enrollmentSecret,
           siteId: redeemed.siteId,
         });
-        filename = 'breeze-agent-macos.zip';
+        filename = 'bl4ck-agent-macos.zip';
       }
 
       c.header('Content-Type', 'application/zip');

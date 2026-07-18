@@ -569,7 +569,7 @@ func (c *Client) handleLaunchProcess(env *ipc.Envelope) {
 		return
 	}
 
-	// Security: only allow launching the agent's own binary (e.g., Breeze Helper).
+	// Security: only allow launching the agent's own binary (e.g., BL4CK Helper).
 	// Prevents arbitrary code execution if the IPC channel is compromised.
 	selfPath, err := os.Executable()
 	if err == nil {

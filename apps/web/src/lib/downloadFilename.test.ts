@@ -7,29 +7,29 @@ describe('filenameFromContentDisposition', () => {
   });
 
   it('reads quoted filenames', () => {
-    expect(filenameFromContentDisposition('attachment; filename="breeze-agent-windows.zip"')).toBe(
-      'breeze-agent-windows.zip',
+    expect(filenameFromContentDisposition('attachment; filename="bl4ck-agent-windows.zip"')).toBe(
+      'bl4ck-agent-windows.zip',
     );
   });
 
   it('prefers RFC 5987 filename star values', () => {
     expect(
       filenameFromContentDisposition(
-        'attachment; filename="fallback.zip"; filename*=UTF-8\'\'breeze-agent%20windows.zip',
+        'attachment; filename="fallback.zip"; filename*=UTF-8\'\'bl4ck-agent%20windows.zip',
       ),
-    ).toBe('breeze-agent windows.zip');
+    ).toBe('bl4ck-agent windows.zip');
   });
 
   it('strips path separators from hostile filenames', () => {
-    expect(filenameFromContentDisposition('attachment; filename="C:\\temp\\breeze-agent.msi"')).toBe(
-      'breeze-agent.msi',
+    expect(filenameFromContentDisposition('attachment; filename="C:\\temp\\bl4ck-agent.msi"')).toBe(
+      'bl4ck-agent.msi',
     );
   });
 
   it('handles RFC 5987 values with a language tag', () => {
     expect(
-      filenameFromContentDisposition("attachment; filename*=UTF-8'en'breeze-agent.zip"),
-    ).toBe('breeze-agent.zip');
+      filenameFromContentDisposition("attachment; filename*=UTF-8'en'bl4ck-agent.zip"),
+    ).toBe('bl4ck-agent.zip');
   });
 
   it('strips path separators from filename* values', () => {
@@ -63,10 +63,10 @@ describe('filenameFromContentDisposition', () => {
 
 describe('fallbackInstallerFilename', () => {
   it('uses zip fallback for unsigned Windows bundles', () => {
-    expect(fallbackInstallerFilename('windows')).toBe('breeze-agent-windows.zip');
+    expect(fallbackInstallerFilename('windows')).toBe('bl4ck-agent-windows.zip');
   });
 
   it('uses macOS zip fallback', () => {
-    expect(fallbackInstallerFilename('macos')).toBe('breeze-agent-macos.zip');
+    expect(fallbackInstallerFilename('macos')).toBe('bl4ck-agent-macos.zip');
   });
 });

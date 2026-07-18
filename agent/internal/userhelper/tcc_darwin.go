@@ -316,8 +316,8 @@ func handleFullDiskAccessGuidance(status *ipc.TCCStatus, promptFile string) {
 // now granted, shown once on the transition to fully-granted.
 func showTCCCompleteNotification() {
 	showNotificationOS(ipc.NotifyRequest{
-		Title: "Breeze: Setup Complete",
-		Body:  "All required permissions are granted — Breeze Agent is ready.",
+		Title: "BL4CK: Setup Complete",
+		Body:  "All required permissions are granted — BL4CK Agent is ready.",
 	})
 }
 
@@ -381,9 +381,9 @@ func tccPromptFilePath() string {
 			"error", err.Error())
 		return filepath.Join(os.TempDir(), "breeze-tcc-prompted")
 	}
-	dir := filepath.Join(cu.HomeDir, "Library", "Application Support", "Breeze")
+	dir := filepath.Join(cu.HomeDir, "Library", "Application Support", "BL4CK")
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		log.Warn("could not create Breeze app support dir, falling back to tmp",
+		log.Warn("could not create BL4CK app support dir, falling back to tmp",
 			"dir", dir, "error", err.Error())
 		return filepath.Join(os.TempDir(), fmt.Sprintf("breeze-tcc-prompted-%s", cu.Uid))
 	}
@@ -409,17 +409,17 @@ func showTCCDialog(missing []string) {
 
 	var msg, script string
 	if fdaMissing {
-		msg = "Breeze Agent needs Full Disk Access to function properly.\n\nPlease grant it in System Settings > Privacy & Security > Full Disk Access.\n\nScreen Recording and Accessibility will be configured automatically."
+		msg = "BL4CK Agent needs Full Disk Access to function properly.\n\nPlease grant it in System Settings > Privacy & Security > Full Disk Access.\n\nScreen Recording and Accessibility will be configured automatically."
 		script = fmt.Sprintf(
 			`display dialog "%s" `+
-				`buttons {"Later", "Open Settings"} default button "Open Settings" with title "Breeze: Permissions Required" giving up after 60`,
+				`buttons {"Later", "Open Settings"} default button "Open Settings" with title "BL4CK: Permissions Required" giving up after 60`,
 			escapeAppleScript(msg),
 		)
 	} else {
 		msg = "Screen Recording and Accessibility are being configured automatically.\n\nThis should resolve within a few minutes. If this persists, check agent logs or restart the agent."
 		script = fmt.Sprintf(
 			`display dialog "%s" `+
-				`buttons {"OK"} default button "OK" with title "Breeze: Permissions Configuring" giving up after 60`,
+				`buttons {"OK"} default button "OK" with title "BL4CK: Permissions Configuring" giving up after 60`,
 			escapeAppleScript(msg),
 		)
 	}
@@ -457,7 +457,7 @@ func showTCCNotification(missing []string) {
 	}
 
 	req := ipc.NotifyRequest{
-		Title: "Breeze: Permission Required",
+		Title: "BL4CK: Permission Required",
 		Body:  body,
 	}
 	showNotificationOS(req)

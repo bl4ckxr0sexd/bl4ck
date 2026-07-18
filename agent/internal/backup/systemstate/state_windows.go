@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 // WindowsCollector gathers Windows system state: registry hives, boot config,
@@ -89,6 +91,7 @@ func (c *WindowsCollector) collectRegistry(stagingDir string) ([]Artifact, error
 	for _, hive := range hives {
 		outPath := filepath.Join(dir, hive)
 		cmd := exec.Command("reg", "save", `HKLM\`+hive, outPath, "/y")
+		oscmd.Hide(cmd)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			slog.Warn("systemstate: reg save failed", "hive", hive, "error", err.Error(), "output", string(out))
 			continue
@@ -110,6 +113,7 @@ func (c *WindowsCollector) collectBootConfig(stagingDir string) ([]Artifact, err
 
 	outPath := filepath.Join(dir, "bcd_export")
 	cmd := exec.Command("bcdedit", "/export", outPath)
+	oscmd.Hide(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("bcdedit export: %s: %w", string(out), err)
 	}
@@ -128,6 +132,7 @@ func (c *WindowsCollector) collectDrivers(stagingDir string) ([]Artifact, error)
 
 	outPath := filepath.Join(dir, "inventory.csv")
 	cmd := exec.Command("driverquery", "/v", "/fo", "csv")
+	oscmd.Hide(cmd)
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("driverquery: %w", err)
@@ -149,6 +154,7 @@ func (c *WindowsCollector) collectCertificates(stagingDir string) ([]Artifact, e
 	}
 
 	cmd := exec.Command("certutil", "-backupDB", dir)
+	oscmd.Hide(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("certutil backupDB: %s: %w", string(out), err)
 	}
@@ -167,6 +173,7 @@ func (c *WindowsCollector) collectServices(stagingDir string) ([]Artifact, error
 
 	outPath := filepath.Join(dir, "services.txt")
 	cmd := exec.Command("sc", "query", "type=service", "state=all")
+	oscmd.Hide(cmd)
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("sc query: %w", err)
@@ -189,6 +196,7 @@ func (c *WindowsCollector) collectScheduledTasks(stagingDir string) ([]Artifact,
 
 	outPath := filepath.Join(dir, "tasks.csv")
 	cmd := exec.Command("schtasks", "/query", "/fo", "csv", "/v")
+	oscmd.Hide(cmd)
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("schtasks: %w", err)
@@ -211,6 +219,7 @@ func (c *WindowsCollector) collectFirewall(stagingDir string) ([]Artifact, error
 
 	outPath := filepath.Join(dir, "rules.wfw")
 	cmd := exec.Command("netsh", "advfirewall", "export", outPath)
+	oscmd.Hide(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("netsh advfirewall export: %s: %w", string(out), err)
 	}
@@ -229,6 +238,7 @@ func (c *WindowsCollector) collectFeatures(stagingDir string) ([]Artifact, error
 
 	outPath := filepath.Join(dir, "features.txt")
 	cmd := exec.Command("dism", "/online", "/get-features", "/format:table")
+	oscmd.Hide(cmd)
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("dism get-features: %w", err)
@@ -257,6 +267,7 @@ func (c *WindowsCollector) collectIIS(stagingDir string) ([]Artifact, error) {
 
 	outPath := filepath.Join(dir, "config.xml")
 	cmd := exec.Command(appcmd, "list", "config", "/xml")
+	oscmd.Hide(cmd)
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("appcmd list config: %w", err)
@@ -272,7 +283,9 @@ func (c *WindowsCollector) collectIIS(stagingDir string) ([]Artifact, error) {
 // ---------------------------------------------------------------------------
 
 func windowsVersion() string {
-	out, err := exec.Command("cmd", "/c", "ver").Output()
+	c := exec.Command("cmd", "/c", "ver")
+	oscmd.Hide(c)
+	out, err := c.Output()
 	if err != nil {
 		return "windows"
 	}

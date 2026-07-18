@@ -77,7 +77,7 @@ func TestDecodeBootstrapResponseLegacyFallback(t *testing.T) {
 		SnapshotID: "snapshot-legacy",
 		TargetConfig: map[string]any{
 			"provider": "local",
-			"path":     "/var/lib/breeze-backups",
+			"path":     "/var/lib/bl4ck-backups",
 		},
 		Snapshot: &AuthenticatedSnapshot{
 			ID:         "snapshot-db-id",

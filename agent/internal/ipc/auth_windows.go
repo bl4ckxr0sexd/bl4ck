@@ -123,7 +123,7 @@ func (p *PeerCredentials) IdentityKey() string {
 
 // DefaultSocketPath returns the default named pipe path for Windows.
 func DefaultSocketPath() string {
-	return `\\.\pipe\breeze-agent-ipc`
+	return `\\.\pipe\bl4ck-agent-ipc`
 }
 
 // isNamedPipePath returns true if the path is a Windows named pipe.

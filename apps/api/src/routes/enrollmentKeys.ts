@@ -1325,7 +1325,7 @@ enrollmentKeyRoutes.get(
       c.header("Content-Type", "application/zip");
       c.header(
         "Content-Disposition",
-        'attachment; filename="breeze-agent-macos.zip"',
+        'attachment; filename="bl4ck-agent-macos.zip"',
       );
       c.header("Content-Length", String(zipBuffer.length));
       c.header("Cache-Control", "no-store");
@@ -1872,7 +1872,7 @@ async function serveInstaller(
     });
 
     c.header("Content-Type", "application/zip");
-    c.header("Content-Disposition", `attachment; filename="breeze-agent-macos.zip"`);
+    c.header("Content-Disposition", `attachment; filename="bl4ck-agent-macos.zip"`);
     c.header("Content-Length", String(resultBuffer.length));
     c.header("Cache-Control", "no-store");
     return c.body(resultBuffer as unknown as ArrayBuffer);

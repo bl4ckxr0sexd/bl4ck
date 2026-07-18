@@ -31,9 +31,10 @@ func showNotificationOS(req ipc.NotifyRequest) bool {
 $doc = [Windows.Data.Xml.Dom.XmlDocument]::new()
 $doc.LoadXml($xml)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($doc)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Breeze Agent").Show($toast)`
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("BL4CK Agent").Show($toast)`
 
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script, "-xml", toastXML)
+	hideWindow(cmd)
 	if err := cmd.Run(); err != nil {
 		log.Warn("notification failed", "error", err)
 		return false

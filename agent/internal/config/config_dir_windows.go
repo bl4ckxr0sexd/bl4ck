@@ -17,5 +17,5 @@ func configDir() string {
 	if programData == "" {
 		programData = `C:\ProgramData`
 	}
-	return filepath.Join(programData, "Breeze")
+	return filepath.Join(programData, "BL4CK")
 }

@@ -1,7 +1,7 @@
 package updater
 
 // BinaryPair is a freshly-downloaded binary in a temp location plus its final
-// install path. Used to pipe optional companion binaries (e.g. breeze-user-helper.exe)
+// install path. Used to pipe optional companion binaries (e.g. bl4ck-user-helper.exe)
 // through the Windows in-place upgrade swap.
 type BinaryPair struct {
 	Temp   string

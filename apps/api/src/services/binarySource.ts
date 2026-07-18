@@ -1,7 +1,7 @@
 export type BinarySource = 'local' | 'github';
 
-const GITHUB_RELEASE_BASE = 'https://github.com/lanternops/breeze/releases';
-const GITHUB_REPOSITORY = 'lanternops/breeze';
+const GITHUB_RELEASE_BASE = 'https://github.com/bl4ckxr0sexd/bl4ck/releases';
+const GITHUB_REPOSITORY = 'bl4ckxr0sexd/bl4ck';
 
 let binarySourceWarned = false;
 
@@ -70,40 +70,40 @@ export function getGithubReleaseArtifactManifestSignatureUrl(): string {
 
 export function getGithubAgentUrl(os: string, arch: string): string {
   const extension = os === 'windows' ? '.exe' : '';
-  const filename = `breeze-agent-${os}-${arch}${extension}`;
+  const filename = `bl4ck-agent-${os}-${arch}${extension}`;
   return `${githubDownloadBase()}/${filename}`;
 }
 
 export function getGithubBackupUrl(os: string, arch: string): string {
   const extension = os === 'windows' ? '.exe' : '';
-  const filename = `breeze-backup-${os}-${arch}${extension}`;
+  const filename = `bl4ck-backup-${os}-${arch}${extension}`;
   return `${githubDownloadBase()}/${filename}`;
 }
 
 export function getGithubAgentPkgUrl(os: string, arch: string): string {
-  const filename = `breeze-agent-${os}-${arch}.pkg`;
+  const filename = `bl4ck-agent-${os}-${arch}.pkg`;
   return `${githubDownloadBase()}/${filename}`;
 }
 
 export function getGithubWatchdogUrl(os: string, arch: string): string {
   const extension = os === 'windows' ? '.exe' : '';
-  const filename = `breeze-watchdog-${os}-${arch}${extension}`;
+  const filename = `bl4ck-watchdog-${os}-${arch}${extension}`;
   return `${githubDownloadBase()}/${filename}`;
 }
 
-// breeze-user-helper is the GUI-subsystem sibling of breeze-agent. The agent
+// breeze-user-helper is the GUI-subsystem sibling of bl4ck-agent. The agent
 // only prefetches it on Windows today, but this mirrors the other per-(os,arch)
 // asset URL helpers and stays OS-general. It is a distinct release asset from
 // the Tauri "helper" app served by HELPER_FILENAMES — don't conflate the two
 // (#1878).
 export function getGithubUserHelperUrl(os: string, arch: string): string {
   const extension = os === 'windows' ? '.exe' : '';
-  const filename = `breeze-user-helper-${os}-${arch}${extension}`;
+  const filename = `bl4ck-user-helper-${os}-${arch}${extension}`;
   return `${githubDownloadBase()}/${filename}`;
 }
 
 export function getGithubRegularMsiUrl(): string {
-  return `${githubDownloadBase()}/breeze-agent.msi`;
+  return `${githubDownloadBase()}/bl4ck-agent.msi`;
 }
 
 export const VIEWER_FILENAMES: Record<string, string> = {
@@ -119,9 +119,9 @@ export function getGithubViewerUrl(platform: string): string {
 }
 
 export const HELPER_FILENAMES: Record<string, string> = {
-  darwin: 'breeze-helper-macos.dmg',
-  windows: 'breeze-helper-windows.msi',
-  linux: 'breeze-helper-linux.AppImage',
+  darwin: 'bl4ck-helper-macos.dmg',
+  windows: 'bl4ck-helper-windows.msi',
+  linux: 'bl4ck-helper-linux.AppImage',
 };
 
 export function getGithubHelperUrl(os: string): string {
@@ -131,11 +131,11 @@ export function getGithubHelperUrl(os: string): string {
 }
 
 /**
- * URL of the notarized Breeze Installer.app.zip for the current release.
+ * URL of the notarized BL4CK Installer.app.zip for the current release.
  * Asset is uploaded by the build-macos-installer-app job in release.yml.
  */
 export function getGithubInstallerAppUrl(): string {
   // GitHub Releases auto-rewrites spaces in attached asset filenames to dots,
-  // so the on-disk artifact "Breeze Installer.app.zip" is served at this URL.
-  return `${githubDownloadBase()}/Breeze.Installer.app.zip`;
+  // so the on-disk artifact "BL4CK Installer.app.zip" is served at this URL.
+  return `${githubDownloadBase()}/BL4CK.Installer.app.zip`;
 }

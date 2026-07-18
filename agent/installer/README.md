@@ -1,13 +1,13 @@
 # Windows MSI Build
 
-This folder contains the WiX v4 installer definition and custom action scripts for packaging `breeze-agent.exe` as an MSI.
+This folder contains the WiX v4 installer definition and custom action scripts for packaging `bl4ck-agent.exe` as an MSI.
 
 ## Prerequisites
 
 - Windows host (or Windows CI runner)
 - WiX v4 CLI (`wix`)
 - PowerShell
-- Built `breeze-agent-windows-amd64.exe`
+- Built `bl4ck-agent-windows-amd64.exe`
 
 ## Build
 
@@ -29,21 +29,21 @@ make build-windows VERSION=$env:BUILD_VERSION
 # Build MSI
 powershell -ExecutionPolicy Bypass -File installer/build-msi.ps1 `
   -Version $env:BUILD_VERSION `
-  -AgentExePath "$PWD\\bin\\breeze-agent-windows-amd64.exe" `
-  -OutputPath "$PWD\\..\\dist\\breeze-agent.msi"
+  -AgentExePath "$PWD\\bin\\bl4ck-agent-windows-amd64.exe" `
+  -OutputPath "$PWD\\..\\dist\\bl4ck-agent.msi"
 ```
 
 ## Silent Install with Enrollment
 
 ```powershell
-msiexec /i breeze-agent.msi /qn SERVER_URL=https://rmm.example.com ENROLLMENT_KEY=ek_abc123
+msiexec /i bl4ck-agent.msi /qn SERVER_URL=https://rmm.example.com ENROLLMENT_KEY=ek_abc123
 ```
 
 The MSI will:
-- Install `breeze-agent.exe` under `C:\Program Files\Breeze\`
-- Create `C:\ProgramData\Breeze\{data,logs}`
-- Install Windows service `BreezeAgent` with executable args `run` (startup type `Manual` by default)
-- Register scheduled task `\Breeze\AgentUserHelper`
+- Install `bl4ck-agent.exe` under `C:\Program Files\BL4CK\`
+- Create `C:\ProgramData\BL4CK\{data,logs}`
+- Install Windows service `Bl4ckAgent` with executable args `run` (startup type `Manual` by default)
+- Register scheduled task `\BL4CK\AgentUserHelper`
 - If `SERVER_URL` and `ENROLLMENT_KEY` are provided, run enrollment and switch the service to `Automatic` + start it
 
 Notes:
@@ -53,21 +53,21 @@ Notes:
 ## Uninstall
 
 ```powershell
-msiexec /x breeze-agent.msi /qn
+msiexec /x bl4ck-agent.msi /qn
 ```
 
 Uninstall removes service, binaries, and scheduled task. `ProgramData` content is intentionally preserved.
 
 ## Kill-Processes Contract
 
-The `KillBreezeProcesses` custom action runs `taskkill /F /T /IM` against
-`breeze-agent.exe`, `breeze-user-helper.exe`, `breeze-watchdog.exe`,
-`breeze-desktop-helper.exe`, and `breeze-backup.exe` before `InstallValidate`
+The `KillBL4CKProcesses` custom action runs `taskkill /F /T /IM` against
+`bl4ck-agent.exe`, `bl4ck-user-helper.exe`, `bl4ck-watchdog.exe`,
+`bl4ck-desktop-helper.exe`, and `bl4ck-backup.exe` before `InstallValidate`
 on **every install path except uninstall** (`Condition="NOT REMOVE"`).
 
 Why "every install path", not just upgrades:
 
-- A fresh MSI install can land on top of a `Program Files\Breeze\` directory
+- A fresh MSI install can land on top of a `Program Files\BL4CK\` directory
   populated by a previous uninstall (binaries can survive uninstall if MSI
   was forced to retain them via `/qn` rollback) or by a non-MSI deployment
   (older PowerShell-based installer, manual drop-in). Without an embedded

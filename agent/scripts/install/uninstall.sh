@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AGENT_BINARY="/usr/local/bin/breeze-agent"
-WATCHDOG_BINARY="/usr/local/bin/breeze-watchdog"
+AGENT_BINARY="/usr/local/bin/bl4ck-agent"
+WATCHDOG_BINARY="/usr/local/bin/bl4ck-watchdog"
 
 fatal() {
   echo "Error: $*" >&2
@@ -20,15 +20,15 @@ require_root() {
 }
 
 uninstall_macos() {
-  local agent_plist="/Library/LaunchDaemons/com.breeze.agent.plist"
-  local watchdog_plist="/Library/LaunchDaemons/com.breeze.watchdog.plist"
-  local user_plist="/Library/LaunchAgents/com.breeze.agent-user.plist"
+  local agent_plist="/Library/LaunchDaemons/com.bl4ck.agent.plist"
+  local watchdog_plist="/Library/LaunchDaemons/com.bl4ck.watchdog.plist"
+  local user_plist="/Library/LaunchAgents/com.bl4ck.agent-user.plist"
 
-  echo "Uninstalling Breeze Agent for macOS..."
+  echo "Uninstalling BL4CK Agent for macOS..."
 
   if command -v launchctl >/dev/null 2>&1; then
-    launchctl bootout system/com.breeze.agent 2>/dev/null || launchctl unload "$agent_plist" 2>/dev/null || true
-    launchctl bootout system/com.breeze.watchdog 2>/dev/null || launchctl unload "$watchdog_plist" 2>/dev/null || true
+    launchctl bootout system/com.bl4ck.agent 2>/dev/null || launchctl unload "$agent_plist" 2>/dev/null || true
+    launchctl bootout system/com.bl4ck.watchdog 2>/dev/null || launchctl unload "$watchdog_plist" 2>/dev/null || true
     launchctl unload "$user_plist" 2>/dev/null || true
   else
     warn "launchctl not found; skipping service stop"
@@ -40,34 +40,34 @@ uninstall_macos() {
   rm -f "$AGENT_BINARY"
   rm -f "$WATCHDOG_BINARY"
 
-  echo "Breeze Agent uninstalled."
-  echo "Config at /Library/Application Support/Breeze/ was preserved."
-  echo "To remove config: sudo rm -rf '/Library/Application Support/Breeze'"
+  echo "BL4CK Agent uninstalled."
+  echo "Config at /Library/Application Support/BL4CK/ was preserved."
+  echo "To remove config: sudo rm -rf '/Library/Application Support/BL4CK'"
 }
 
 uninstall_linux() {
-  local agent_service="/etc/systemd/system/breeze-agent.service"
-  local watchdog_service="/etc/systemd/system/breeze-watchdog.service"
-  local user_service="/usr/lib/systemd/user/breeze-agent-user.service"
-  local xdg_autostart="/etc/xdg/autostart/breeze-agent-user.desktop"
-  local ipc_dir="/var/run/breeze"
+  local agent_service="/etc/systemd/system/bl4ck-agent.service"
+  local watchdog_service="/etc/systemd/system/bl4ck-watchdog.service"
+  local user_service="/usr/lib/systemd/user/bl4ck-agent-user.service"
+  local xdg_autostart="/etc/xdg/autostart/bl4ck-agent-user.desktop"
+  local ipc_dir="/var/run/bl4ck"
 
-  echo "Uninstalling Breeze Agent for Linux..."
+  echo "Uninstalling BL4CK Agent for Linux..."
 
   if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-active --quiet breeze-agent 2>/dev/null; then
-      systemctl stop breeze-agent
+    if systemctl is-active --quiet bl4ck-agent 2>/dev/null; then
+      systemctl stop bl4ck-agent
       echo "Service stopped."
     fi
-    if systemctl is-enabled --quiet breeze-agent 2>/dev/null; then
-      systemctl disable breeze-agent
+    if systemctl is-enabled --quiet bl4ck-agent 2>/dev/null; then
+      systemctl disable bl4ck-agent
     fi
-    if systemctl is-active --quiet breeze-watchdog 2>/dev/null; then
-      systemctl stop breeze-watchdog
+    if systemctl is-active --quiet bl4ck-watchdog 2>/dev/null; then
+      systemctl stop bl4ck-watchdog
       echo "Watchdog service stopped."
     fi
-    if systemctl is-enabled --quiet breeze-watchdog 2>/dev/null; then
-      systemctl disable breeze-watchdog
+    if systemctl is-enabled --quiet bl4ck-watchdog 2>/dev/null; then
+      systemctl disable bl4ck-watchdog
     fi
   else
     warn "systemctl not found; skipping service stop and disable"
@@ -85,9 +85,9 @@ uninstall_linux() {
     systemctl daemon-reload
   fi
 
-  echo "Breeze Agent uninstalled."
-  echo "Config at /etc/breeze/ was preserved."
-  echo "To remove config: sudo rm -rf /etc/breeze"
+  echo "BL4CK Agent uninstalled."
+  echo "Config at /etc/bl4ck/ was preserved."
+  echo "To remove config: sudo rm -rf /etc/bl4ck"
 }
 
 require_root

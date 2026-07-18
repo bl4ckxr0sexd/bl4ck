@@ -42,7 +42,7 @@ var (
 )
 
 // defaultEnrollLastErrorPath returns the platform-specific path to the
-// single-line enrollment error marker. Windows: under ProgramData\Breeze\logs.
+// single-line enrollment error marker. Windows: under ProgramData\BL4CK\logs.
 // Unix: under LogDir().
 func defaultEnrollLastErrorPath() string {
 	return filepath.Join(config.LogDir(), "enroll-last-error.txt")
@@ -104,7 +104,7 @@ func enrollError(cat enrollErrCategory, friendly string, detail error) {
 	writeLastErrorFile(line)
 
 	// Sink 4: Windows Event Log (no-op on macOS/Linux).
-	eventLogError("BreezeAgent", line)
+	eventLogError("Bl4ckAgent", line)
 
 	osExit(cat.exitCode())
 }
@@ -131,7 +131,7 @@ func classifyEnrollError(err error, serverURL string) (enrollErrCategory, string
 			return catRateLimit, "rate limited by server — wait one minute and retry the install"
 		case httpErr.StatusCode >= 500:
 			return catServer, fmt.Sprintf(
-				"server error %d — contact Breeze support if this persists",
+				"server error %d — contact BL4CK support if this persists",
 				httpErr.StatusCode)
 		}
 	}

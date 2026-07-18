@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Dev-only entitlements for self-signed Breeze agent and desktop-helper
+  Dev-only entitlements for self-signed BL4CK agent and desktop-helper
   binaries pushed via `make dev-push` / `make dev-push-helper`.
 
   com.apple.security.cs.disable-library-validation:

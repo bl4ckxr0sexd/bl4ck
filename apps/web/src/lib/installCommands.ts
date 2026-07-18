@@ -43,24 +43,24 @@ export function buildInstallCommands(opts: InstallCommandOptions): InstallComman
     `sudo bash "$f" --server "${apiUrl}" --token "${token}"${unixSecretFlag}`;
 
   // The MZ-magic check is the Windows analog of the unix shebang check: a
-  // captive portal's 200 HTML saved as breeze-agent.exe would otherwise stop
+  // captive portal's 200 HTML saved as bl4ck-agent.exe would otherwise stop
   // the chain with PowerShell's raw "not a valid application" exception
   // (which never sets $LASTEXITCODE — the process fails to start). The
   // $LASTEXITCODE throws cover agent steps that DO run but fail, since
   // native exe exit codes do not trip $ErrorActionPreference.
   const winSecretFlag = enrollmentSecret ? ` --enrollment-secret "${enrollmentSecret}"` : '';
-  const winThrow = (step: string) => `if($LASTEXITCODE){throw "Breeze: ${step} failed (exit code $LASTEXITCODE)"}`;
+  const winThrow = (step: string) => `if($LASTEXITCODE){throw "BL4CK: ${step} failed (exit code $LASTEXITCODE)"}`;
   const winMzCheck =
-    `$b=[IO.File]::ReadAllBytes("$pwd\\breeze-agent.exe"); ` +
+    `$b=[IO.File]::ReadAllBytes("$pwd\\bl4ck-agent.exe"); ` +
     `if($b.Length -lt 2 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A)` +
-    `{throw "Breeze: downloaded file is not a Windows executable - a captive portal or web filter may be intercepting this network"}`;
+    `{throw "BL4CK: downloaded file is not a Windows executable - a captive portal or web filter may be intercepting this network"}`;
   const windows =
     `$ErrorActionPreference='Stop'; ` +
-    `Invoke-WebRequest -Uri "${ghBase}/breeze-agent-windows-amd64.exe" -OutFile breeze-agent.exe; ` +
+    `Invoke-WebRequest -Uri "${ghBase}/bl4ck-agent-windows-amd64.exe" -OutFile bl4ck-agent.exe; ` +
     `${winMzCheck}; ` +
-    `.\\breeze-agent.exe service install; ${winThrow('service install')}; ` +
-    `.\\breeze-agent.exe enroll "${token}" --server "${apiUrl}"${winSecretFlag}; ${winThrow('enrollment')}; ` +
-    `.\\breeze-agent.exe service start; ${winThrow('service start')}`;
+    `.\\bl4ck-agent.exe service install; ${winThrow('service install')}; ` +
+    `.\\bl4ck-agent.exe enroll "${token}" --server "${apiUrl}"${winSecretFlag}; ${winThrow('enrollment')}; ` +
+    `.\\bl4ck-agent.exe service start; ${winThrow('service start')}`;
 
   return { windows, macos: unixCmd, linux: unixCmd };
 }

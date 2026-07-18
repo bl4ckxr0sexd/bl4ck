@@ -14,23 +14,23 @@ func TestParseInstallerFilenameToken(t *testing.T) {
 		// with MSI's Formatted-field [property] syntax and get stripped when the
 		// download filename flows through OriginalDatabase -> CustomActionData,
 		// so the Windows installer download uses parens instead (issue #1956).
-		{"paren clean", "Breeze Agent (ABCDE12345@eu.2breeze.app).msi", "ABCDE12345", "eu.2breeze.app", false},
-		{"paren full windows path", `C:\ProgramData\NinjaRMMAgent\download\Breeze Agent (6KE9MDUG56@us.2breeze.app).msi`, "6KE9MDUG56", "us.2breeze.app", false},
-		{"paren browser dup suffix", "Breeze Agent (ABCDE12345@us.2breeze.app) (1).msi", "ABCDE12345", "us.2breeze.app", false},
-		{"paren host with hyphen", "Breeze Agent (ABCDE12345@my-rmm.example).msi", "ABCDE12345", "my-rmm.example", false},
+		{"paren clean", "BL4CK Agent (ABCDE12345@eu.2breeze.app).msi", "ABCDE12345", "eu.2breeze.app", false},
+		{"paren full windows path", `C:\ProgramData\NinjaRMMAgent\download\BL4CK Agent (6KE9MDUG56@us.2breeze.app).msi`, "6KE9MDUG56", "us.2breeze.app", false},
+		{"paren browser dup suffix", "BL4CK Agent (ABCDE12345@us.2breeze.app) (1).msi", "ABCDE12345", "us.2breeze.app", false},
+		{"paren host with hyphen", "BL4CK Agent (ABCDE12345@my-rmm.example).msi", "ABCDE12345", "my-rmm.example", false},
 		// Prefix is not part of the contract: the parser matches (TOKEN@HOST)
 		// anywhere, so a rebranded download filename still enrolls.
 		{"paren rebranded prefix", "Bl4ck Agent (ABCDE12345@v1.kd3.pro).msi", "ABCDE12345", "v1.kd3.pro", false},
-		{"paren token too short", "Breeze Agent (ABCDE1234@host).msi", "", "", true},
-		{"paren token lowercase", "Breeze Agent (abcde12345@host).msi", "", "", true},
+		{"paren token too short", "BL4CK Agent (ABCDE1234@host).msi", "", "", true},
+		{"paren token lowercase", "BL4CK Agent (abcde12345@host).msi", "", "", true},
 		// Bracket form — legacy / macOS (.app bundle name). Still accepted.
-		{"bracket clean", "Breeze Agent [ABCDE12345@eu.2breeze.app].msi", "ABCDE12345", "eu.2breeze.app", false},
-		{"bracket browser dup suffix", "Breeze Agent [ABCDE12345@us.2breeze.app] (1).msi", "ABCDE12345", "us.2breeze.app", false},
-		{"bracket full path", `C:\Users\me\Downloads\Breeze Agent [Z9Y8X7W6V5@host.example.com].msi`, "Z9Y8X7W6V5", "host.example.com", false},
-		{"bracket host with hyphen", "Breeze Agent [ABCDE12345@my-rmm.example].msi", "ABCDE12345", "my-rmm.example", false},
-		{"no delimiter", "breeze-agent.msi", "", "", true},
-		{"bracket token too short", "Breeze Agent [ABCDE1234@host].msi", "", "", true},
-		{"bracket token lowercase", "Breeze Agent [abcde12345@host].msi", "", "", true},
+		{"bracket clean", "BL4CK Agent [ABCDE12345@eu.2breeze.app].msi", "ABCDE12345", "eu.2breeze.app", false},
+		{"bracket browser dup suffix", "BL4CK Agent [ABCDE12345@us.2breeze.app] (1).msi", "ABCDE12345", "us.2breeze.app", false},
+		{"bracket full path", `C:\Users\me\Downloads\BL4CK Agent [Z9Y8X7W6V5@host.example.com].msi`, "Z9Y8X7W6V5", "host.example.com", false},
+		{"bracket host with hyphen", "BL4CK Agent [ABCDE12345@my-rmm.example].msi", "ABCDE12345", "my-rmm.example", false},
+		{"no delimiter", "bl4ck-agent.msi", "", "", true},
+		{"bracket token too short", "BL4CK Agent [ABCDE1234@host].msi", "", "", true},
+		{"bracket token lowercase", "BL4CK Agent [abcde12345@host].msi", "", "", true},
 		{"empty", "", "", "", true},
 	}
 	for _, tc := range cases {

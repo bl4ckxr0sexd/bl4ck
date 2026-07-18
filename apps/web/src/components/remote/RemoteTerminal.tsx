@@ -152,7 +152,7 @@ export default function RemoteTerminal({
       resizeObserverRef.current.observe(terminalContainerRef.current);
 
       // Display welcome message
-      terminal.writeln('\x1b[1;34mBreeze RMM Remote Terminal\x1b[0m');
+      terminal.writeln('\x1b[1;34mBL4CK RMM Remote Terminal\x1b[0m');
       terminal.writeln(`\x1b[90mConnecting to ${deviceHostname}...\x1b[0m`);
       terminal.writeln('');
 

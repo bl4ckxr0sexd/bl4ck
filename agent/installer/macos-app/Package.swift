@@ -2,20 +2,20 @@
 import PackageDescription
 
 let package = Package(
-    name: "BreezeInstaller",
+    name: "Bl4ckInstaller",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "BreezeInstaller", targets: ["BreezeInstaller"]),
+        .executable(name: "Bl4ckInstaller", targets: ["Bl4ckInstaller"]),
     ],
     targets: [
         .executableTarget(
-            name: "BreezeInstaller",
-            path: "Sources/BreezeInstaller"
+            name: "Bl4ckInstaller",
+            path: "Sources/Bl4ckInstaller"
         ),
         .testTarget(
-            name: "BreezeInstallerTests",
-            dependencies: ["BreezeInstaller"],
-            path: "Tests/BreezeInstallerTests"
+            name: "Bl4ckInstallerTests",
+            dependencies: ["Bl4ckInstaller"],
+            path: "Tests/Bl4ckInstallerTests"
         ),
     ]
 )

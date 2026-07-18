@@ -29,7 +29,7 @@ type Manager struct {
 }
 
 // NewManager creates a Manager and starts the idle reaper goroutine.
-// managedByPolicy controls whether Breeze is allowed to enable/disable macOS Screen Sharing.
+// managedByPolicy controls whether BL4CK is allowed to enable/disable macOS Screen Sharing.
 func NewManager(managedByPolicy bool) *Manager {
 	m := &Manager{
 		sessions:        make(map[string]*Session),
@@ -42,14 +42,14 @@ func NewManager(managedByPolicy bool) *Manager {
 	return m
 }
 
-// SetManagedByPolicy updates whether Breeze is allowed to manage Screen Sharing.
+// SetManagedByPolicy updates whether BL4CK is allowed to manage Screen Sharing.
 func (m *Manager) SetManagedByPolicy(managed bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.managedByPolicy = managed
 }
 
-// IsManagedByPolicy returns whether Breeze is allowed to manage Screen Sharing.
+// IsManagedByPolicy returns whether BL4CK is allowed to manage Screen Sharing.
 func (m *Manager) IsManagedByPolicy() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

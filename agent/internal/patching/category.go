@@ -3,7 +3,7 @@ package patching
 import "strings"
 
 // classifyWindowsUpdateCategory maps a Windows Update's category names to the
-// single canonical category string Breeze uses downstream (patches.category,
+// single canonical category string BL4CK uses downstream (patches.category,
 // Update Ring category rules).
 //
 // It scans EVERY category name, not just the first, and returns the

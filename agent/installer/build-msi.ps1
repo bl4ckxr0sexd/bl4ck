@@ -21,25 +21,25 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$installerPath = Join-Path $PSScriptRoot "breeze.wxs"
-$taskXmlPath = Join-Path $repoRoot "service\\windows\\breeze-agent-user-task.xml"
+$installerPath = Join-Path $PSScriptRoot "bl4ck.wxs"
+$taskXmlPath = Join-Path $repoRoot "service\\windows\\bl4ck-agent-user-task.xml"
 $installUserHelperScriptPath = Join-Path $repoRoot "scripts\\install\\install-windows.ps1"
 $removeUserHelperScriptPath = Join-Path $PSScriptRoot "remove-windows-task.ps1"
 
 if ([string]::IsNullOrWhiteSpace($AgentExePath)) {
-    $AgentExePath = Join-Path $repoRoot "breeze-agent-windows-amd64.exe"
+    $AgentExePath = Join-Path $repoRoot "bl4ck-agent-windows-amd64.exe"
 }
 if ([string]::IsNullOrWhiteSpace($BackupExePath)) {
-    $BackupExePath = Join-Path $repoRoot "breeze-backup-windows-amd64.exe"
+    $BackupExePath = Join-Path $repoRoot "bl4ck-backup-windows-amd64.exe"
 }
 if ([string]::IsNullOrWhiteSpace($WatchdogExePath)) {
-    $WatchdogExePath = Join-Path $repoRoot "breeze-watchdog-windows-amd64.exe"
+    $WatchdogExePath = Join-Path $repoRoot "bl4ck-watchdog-windows-amd64.exe"
 }
 if ([string]::IsNullOrWhiteSpace($UserHelperExePath)) {
-    $UserHelperExePath = Join-Path $repoRoot "breeze-user-helper-windows-amd64.exe"
+    $UserHelperExePath = Join-Path $repoRoot "bl4ck-user-helper-windows-amd64.exe"
 }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $repoRoot "..\\dist\\breeze-agent.msi"
+    $OutputPath = Join-Path $repoRoot "..\\dist\\bl4ck-agent.msi"
 }
 
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {

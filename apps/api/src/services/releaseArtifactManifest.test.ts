@@ -136,14 +136,14 @@ describe("releaseArtifactManifest", () => {
   it("rejects a tampered manifest signature", async () => {
     const asset = Buffer.from("trusted-pkg");
     const signed = makeSignedManifest({
-      assetName: "breeze-agent-darwin-arm64.pkg",
+      assetName: "bl4ck-agent-darwin-arm64.pkg",
       assetBuffer: asset,
     });
     process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
 
     await expect(
       verifyReleaseArtifactBuffer({
-        assetName: "breeze-agent-darwin-arm64.pkg",
+        assetName: "bl4ck-agent-darwin-arm64.pkg",
         assetBuffer: asset,
         manifestBytes: Buffer.from(
           signed.manifest.toString("utf8").replace("v1.2.3", "v9.9.9"),
@@ -174,7 +174,7 @@ describe("releaseArtifactManifest", () => {
   it("verifies a selected asset checksum from a trusted manifest without downloading the asset", async () => {
     const asset = Buffer.from("trusted-agent-binary");
     const signed = makeSignedManifest({
-      assetName: "breeze-agent-linux-amd64",
+      assetName: "bl4ck-agent-linux-amd64",
       assetBuffer: asset,
       release: "v1.2.3",
       repository: "lanternops/breeze",
@@ -183,7 +183,7 @@ describe("releaseArtifactManifest", () => {
 
     await expect(
       verifyReleaseArtifactManifestAsset({
-        assetName: "breeze-agent-linux-amd64",
+        assetName: "bl4ck-agent-linux-amd64",
         manifestBytes: signed.manifest,
         signatureBytes: signed.signature,
         expectedRepository: "lanternops/breeze",
@@ -191,7 +191,7 @@ describe("releaseArtifactManifest", () => {
       }),
     ).resolves.toEqual(
       expect.objectContaining({
-        assetName: "breeze-agent-linux-amd64",
+        assetName: "bl4ck-agent-linux-amd64",
         sha256: createSha256(asset),
         size: asset.length,
         release: "v1.2.3",

@@ -24,7 +24,7 @@ describe('verifyBinaryChecksum', () => {
   });
 
   it('passes when the binary checksum matches the manifest entry', async () => {
-    const binaryPath = join(tempDir, 'breeze-backup-linux-amd64');
+    const binaryPath = join(tempDir, 'bl4ck-backup-linux-amd64');
     const binaryContents = Buffer.from('valid-binary');
     const manifestPath = join(tempDir, 'checksums.json');
 
@@ -38,7 +38,7 @@ describe('verifyBinaryChecksum', () => {
             platform: 'linux',
             architecture: 'amd64',
             sourceType: 'local',
-            sourceRef: '/opt/binaries/breeze-backup-linux-amd64',
+            sourceRef: '/opt/binaries/bl4ck-backup-linux-amd64',
             version: '1.2.3',
             sha256: sha256Hex(binaryContents),
           },
@@ -52,17 +52,17 @@ describe('verifyBinaryChecksum', () => {
       platform: 'linux',
       architecture: 'amd64',
       sourceType: 'local',
-      sourceRef: '/opt/binaries/breeze-backup-linux-amd64',
+      sourceRef: '/opt/binaries/bl4ck-backup-linux-amd64',
       version: '1.2.3',
     })).resolves.toEqual(expect.objectContaining({
       sourceType: 'local',
-      sourceRef: '/opt/binaries/breeze-backup-linux-amd64',
+      sourceRef: '/opt/binaries/bl4ck-backup-linux-amd64',
       version: '1.2.3',
     }));
   });
 
   it('throws when the binary checksum does not match the manifest', async () => {
-    const binaryPath = join(tempDir, 'breeze-backup-linux-amd64');
+    const binaryPath = join(tempDir, 'bl4ck-backup-linux-amd64');
     const manifestPath = join(tempDir, 'checksums.json');
 
     await writeFile(binaryPath, Buffer.from('tampered-binary'));
@@ -97,7 +97,7 @@ describe('verifyBinaryChecksum', () => {
   });
 
   it('throws when no manifest entry matches the source tuple', async () => {
-    const binaryPath = join(tempDir, 'breeze-backup-linux-amd64');
+    const binaryPath = join(tempDir, 'bl4ck-backup-linux-amd64');
     const manifestPath = join(tempDir, 'checksums.json');
 
     await writeFile(binaryPath, Buffer.from('valid-binary'));
@@ -115,10 +115,10 @@ describe('verifyBinaryChecksum', () => {
       platform: 'linux',
       architecture: 'amd64',
       sourceType: 'local',
-      sourceRef: '/opt/binaries/breeze-backup-linux-amd64',
+      sourceRef: '/opt/binaries/bl4ck-backup-linux-amd64',
       version: '1.2.3',
     })).rejects.toThrow(
-      'No recovery binary manifest entry for linux/amd64 (local:/opt/binaries/breeze-backup-linux-amd64@1.2.3)'
+      'No recovery binary manifest entry for linux/amd64 (local:/opt/binaries/bl4ck-backup-linux-amd64@1.2.3)'
     );
   });
 });

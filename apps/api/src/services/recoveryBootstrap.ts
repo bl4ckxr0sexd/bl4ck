@@ -341,11 +341,11 @@ export async function resolveRecoveryTokenPresentation(orgId: string, tokenId: s
       minHelperVersion: BMR_MIN_HELPER_VERSION,
       serverUrl,
       releaseUrl: getGithubReleasePageUrl(),
-      commandTemplate: `breeze-backup bmr-recover --token <recovery-token> --server "${serverUrl}"`,
+      commandTemplate: `bl4ck-backup bmr-recover --token <recovery-token> --server "${serverUrl}"`,
       prerequisites: [
         'Boot the target machine into a compatible recovery environment.',
         'Ensure the environment can reach the Breeze server and backup storage.',
-        'Download the current breeze-backup helper before starting recovery.',
+        'Download the current bl4ck-backup helper before starting recovery.',
         'Have storage or network drivers ready if the target hardware needs them.',
       ],
       restoreType: row.restoreType,

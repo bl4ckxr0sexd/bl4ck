@@ -13,10 +13,10 @@ import (
 )
 
 // windowsWatchdogServiceName is the SCM name installed by
-// `breeze-watchdog service install` (agent/cmd/breeze-watchdog/service_cmd_windows.go:16).
+// `bl4ck-watchdog service install` (agent/cmd/bl4ck-watchdog/service_cmd_windows.go:16).
 // Kept duplicated here rather than imported so this file can stand alone in
-// the breeze-agent package without pulling watchdog cmd internals.
-const watchdogSupervisorServiceName = "BreezeWatchdog"
+// the bl4ck-agent package without pulling watchdog cmd internals.
+const watchdogSupervisorServiceName = "Bl4ckWatchdog"
 
 // Supervisor tick cadence. Sixty seconds is fast enough to recover from a
 // crashed-and-disabled watchdog within one heartbeat window, while staying
@@ -91,7 +91,7 @@ var watchdogSupervisorCtl watchdogServiceController = windowsSCMController{}
 var watchdogSupervisorRestartCount atomic.Int64
 
 // startWatchdogSupervisor launches a goroutine that periodically verifies
-// the BreezeWatchdog Windows service is running, restarting it if found
+// the Bl4ckWatchdog Windows service is running, restarting it if found
 // stopped or paused. Cancel ctx to stop the goroutine.
 //
 // Intentionally conservative:

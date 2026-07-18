@@ -15,7 +15,7 @@ import (
 // release the handle.
 //
 // BinaryPath records the executable the spawner actually launched so callers
-// can distinguish the GUI-subsystem sibling (breeze-user-helper.exe) from
+// can distinguish the GUI-subsystem sibling (bl4ck-user-helper.exe) from
 // the console-subsystem agent fallback when logging spawn outcomes — useful
 // when chasing reports of the logon console flash regression.
 type SpawnedHelper struct {
@@ -103,7 +103,7 @@ func SpawnHelperInSession(sessionID uint32) (*SpawnedHelper, error) {
 	}
 
 	// 4. Build the command line. We launch the GUI-subsystem sibling binary
-	// (breeze-user-helper.exe) so the kernel does not allocate a console
+	// (bl4ck-user-helper.exe) so the kernel does not allocate a console
 	// window in the user session. Falls back to the agent exe if the sibling
 	// is missing — see userHelperExePath documentation.
 	exePath, err := userHelperExePath()
@@ -162,7 +162,7 @@ func SpawnHelperInSession(sessionID uint32) (*SpawnedHelper, error) {
 // user's token in the specified Windows session. Tries WTSQueryUserToken first,
 // falls back to explorer.exe token theft for Azure AD sessions.
 // This helper runs as the interactive user, enabling run_as_user script
-// execution and launching the Breeze Helper Tauri app.
+// execution and launching the BL4CK Helper Tauri app.
 //
 // Returns a SpawnedHelper describing the child process; the caller is
 // responsible for closing the returned handle.

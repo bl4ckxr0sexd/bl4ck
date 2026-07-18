@@ -565,7 +565,7 @@ describe("agentVersions routes", () => {
     it("serves GitHub release artifact manifests after verifying the signed asset checksum", async () => {
       const checksum = "e".repeat(64);
       const signed = makeSignedReleaseArtifactManifest({
-        assetName: "breeze-agent-linux-amd64",
+        assetName: "bl4ck-agent-linux-amd64",
         checksum,
         size: 1234,
       });
@@ -581,7 +581,7 @@ describe("agentVersions routes", () => {
                 architecture: "amd64",
                 component: "agent",
                 downloadUrl:
-                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-agent-linux-amd64",
+                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-agent-linux-amd64",
                 checksum,
                 fileSize: BigInt(1234),
                 releaseManifest: signed.manifest,
@@ -611,7 +611,7 @@ describe("agentVersions routes", () => {
       const signed = makeSignedReleaseManifest({
         platform: "windows",
         arch: "amd64",
-        url: "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-agent-windows-amd64.exe",
+        url: "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-agent-windows-amd64.exe",
         checksum,
         size: 1234,
       });
@@ -626,7 +626,7 @@ describe("agentVersions routes", () => {
                 architecture: "amd64",
                 component: "agent",
                 downloadUrl:
-                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-agent-windows-amd64.exe",
+                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-agent-windows-amd64.exe",
                 checksum,
                 fileSize: BigInt(1234),
                 releaseManifest: signed.manifest,
@@ -667,7 +667,7 @@ describe("agentVersions routes", () => {
         component: "user-helper",
         platform: "windows",
         arch: "amd64",
-        url: "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-user-helper-windows-amd64.exe",
+        url: "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-user-helper-windows-amd64.exe",
         checksum,
         size: 1234,
       });
@@ -682,7 +682,7 @@ describe("agentVersions routes", () => {
                 architecture: "amd64",
                 component: "user-helper",
                 downloadUrl:
-                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-user-helper-windows-amd64.exe",
+                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-user-helper-windows-amd64.exe",
                 checksum,
                 fileSize: BigInt(1234),
                 releaseManifest: signed.manifest,
@@ -721,7 +721,7 @@ describe("agentVersions routes", () => {
       const signed = makeSignedReleaseManifest({
         platform: "macos",
         arch: "arm64",
-        url: "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-agent-darwin-arm64",
+        url: "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-agent-darwin-arm64",
         checksum,
         size: 1234,
       });
@@ -736,7 +736,7 @@ describe("agentVersions routes", () => {
                 architecture: "arm64",
                 component: "agent",
                 downloadUrl:
-                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-agent-darwin-arm64",
+                  "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-agent-darwin-arm64",
                 checksum,
                 fileSize: BigInt(1234),
                 releaseManifest: signed.manifest,
@@ -765,7 +765,7 @@ describe("agentVersions routes", () => {
 
     it("rewrites downloadUrl to server-relative for component=helper (helper RCE fix: keep verified download on the trusted control-plane origin)", async () => {
       const canonical =
-        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-helper-windows.msi";
+        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-helper-windows.msi";
       const checksum = "b".repeat(64);
       const signed = makeSignedReleaseManifest({
         component: "helper",
@@ -821,7 +821,7 @@ describe("agentVersions routes", () => {
 
     it("rewrites downloadUrl to server-relative for component=watchdog (so the agent host-match guard accepts the watchdog download)", async () => {
       const canonical =
-        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-watchdog-linux-amd64";
+        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-watchdog-linux-amd64";
       const checksum = "c".repeat(64);
       const signed = makeSignedReleaseManifest({
         component: "watchdog",
@@ -872,7 +872,7 @@ describe("agentVersions routes", () => {
 
     it("maps platform=macos to /darwin in the server-relative helper URL", async () => {
       const canonical =
-        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-helper-macos.dmg";
+        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-helper-macos.dmg";
       const checksum = "c".repeat(64);
       const signed = makeSignedReleaseManifest({
         component: "helper",
@@ -925,10 +925,10 @@ describe("agentVersions routes", () => {
     // upgrade entirely instead of falling back to an agent-only swap.
     it("serves component=user-helper rows (#816)", async () => {
       const canonical =
-        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/breeze-user-helper-windows-amd64.exe";
+        "https://github.com/LanternOps/breeze/releases/download/v1.0.0/bl4ck-user-helper-windows-amd64.exe";
       const checksum = "f".repeat(64);
       const signed = makeSignedReleaseArtifactManifest({
-        assetName: "breeze-user-helper-windows-amd64.exe",
+        assetName: "bl4ck-user-helper-windows-amd64.exe",
         checksum,
         size: 2048,
       });

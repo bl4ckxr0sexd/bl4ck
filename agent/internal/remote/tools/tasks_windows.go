@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/breeze-rmm/agent/internal/oscmd"
 )
 
 // listTasksScript outputs one task per line. Each line has fields separated by
@@ -126,6 +128,7 @@ func parseTSVTasks(output string) []ScheduledTask {
 
 func listTasksOS(folder, search string, page, limit int, startTime time.Time) CommandResult {
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", listTasksScript(maxTaskListEntries+1))
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to list tasks: %v", err)
@@ -262,6 +265,7 @@ $t.Actions|ForEach-Object{
 }`, escapedPath)
 
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		errMsg := fmt.Sprintf("task not found: %s: %v", path, err)
@@ -371,6 +375,7 @@ func runTaskOS(path string, startTime time.Time) CommandResult {
 	}
 
 	cmd := exec.Command("schtasks", "/run", "/tn", path)
+	oscmd.Hide(cmd)
 	if err := cmd.Run(); err != nil {
 		return NewErrorResult(fmt.Errorf("failed to run task: %w", err), time.Since(startTime).Milliseconds())
 	}
@@ -390,6 +395,7 @@ func enableTaskOS(path string, startTime time.Time) CommandResult {
 	}
 
 	cmd := exec.Command("schtasks", "/change", "/tn", path, "/enable")
+	oscmd.Hide(cmd)
 	if err := cmd.Run(); err != nil {
 		return NewErrorResult(fmt.Errorf("failed to enable task: %w", err), time.Since(startTime).Milliseconds())
 	}
@@ -409,6 +415,7 @@ func disableTaskOS(path string, startTime time.Time) CommandResult {
 	}
 
 	cmd := exec.Command("schtasks", "/change", "/tn", path, "/disable")
+	oscmd.Hide(cmd)
 	if err := cmd.Run(); err != nil {
 		return NewErrorResult(fmt.Errorf("failed to disable task: %w", err), time.Since(startTime).Milliseconds())
 	}
@@ -469,6 +476,7 @@ foreach ($event in $events) {
 $history | ConvertTo-Json -Depth 4 -Compress`, escapedPath, limit)
 
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	oscmd.Hide(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return NewErrorResult(fmt.Errorf("failed to read task history: %w", err), time.Since(startTime).Milliseconds())
