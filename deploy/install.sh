@@ -26,12 +26,16 @@ set -euo pipefail
 DOMAIN=""
 ADMIN_EMAIL=""
 ACME_EMAIL=""
+BINARIES_RELEASE=""
+BINARIES_REPO="bl4ckxr0sexd/bl4ck"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --domain)      DOMAIN="$2"; shift 2 ;;
-    --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
-    --acme-email)  ACME_EMAIL="$2"; shift 2 ;;
+    --domain)           DOMAIN="$2"; shift 2 ;;
+    --admin-email)      ADMIN_EMAIL="$2"; shift 2 ;;
+    --acme-email)       ACME_EMAIL="$2"; shift 2 ;;
+    --binaries-release) BINARIES_RELEASE="$2"; shift 2 ;;
+    --binaries-repo)    BINARIES_REPO="$2"; shift 2 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -155,6 +159,13 @@ else
   echo "    API is healthy."
 fi
 
+# ----- auto-stage installers from a GitHub release (if requested) -----
+if [[ -n "$BINARIES_RELEASE" ]]; then
+  echo "==> Staging installers from GitHub release '${BINARIES_RELEASE}' (${BINARIES_REPO})..."
+  ./deploy/stage-binaries.sh --release "$BINARIES_RELEASE" --repo "$BINARIES_REPO" || \
+    echo "WARNING: installer staging failed — run ./deploy/stage-binaries.sh manually." >&2
+fi
+
 echo ""
 echo "============================================================================"
 echo "  BL4CK is up (build-from-source, local installer mode)."
@@ -167,12 +178,12 @@ fi
 echo ""
 echo "  Caddy issues the Let's Encrypt cert on first HTTPS hit once DNS for"
 echo "  ${DOMAIN} resolves to this box and ports 80/443 are open."
-echo ""
-echo "  NEXT — stage your (unsigned) Windows installers so 'Download Installer'"
-echo "  works. Build them on a Windows machine (see BUILD-EXE-INSTALLER.md), copy"
-echo "  them to this VPS, then run:"
-echo "     ./deploy/stage-binaries.sh /path/to/installers"
-echo "  Expected files: bl4ck-agent.msi, bl4ck-setup.exe,"
-echo "     bl4ck-agent-windows-amd64.exe, bl4ck-watchdog-windows-amd64.exe,"
-echo "     bl4ck-user-helper-windows-amd64.exe"
+if [[ -z "$BINARIES_RELEASE" ]]; then
+  echo ""
+  echo "  NEXT — get the (unsigned) Windows installers onto this box so 'Download"
+  echo "  Installer' works. Easiest (no PC->VPS copy): publish them once with the"
+  echo "  'Build unsigned installers' GitHub Action, then:"
+  echo "     ./deploy/stage-binaries.sh --release unsigned-latest"
+  echo "  Or from a local folder: ./deploy/stage-binaries.sh /path/to/installers"
+fi
 echo "============================================================================"
