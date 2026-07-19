@@ -58,18 +58,26 @@ If the deploy scripts live on a feature branch not yet merged to `main`
 
 ## Step 3 — Make sure the unsigned installers exist on GitHub
 
-The VPS pulls the Windows installers from a GitHub **release**. If the user has
-NOT published them yet, tell them to run the GitHub Action once (in the browser):
-**repo → Actions → "Build unsigned installers" → Run workflow** (leave the tag as
-`unsigned-latest`). It builds the MSI + EXE + agent binaries on a Windows runner
-and publishes them to the `unsigned-latest` release. Wait for it to finish
-(green check) before continuing.
+The VPS pulls the Windows installers from a GitHub **release** (the user built
+them on Windows and uploaded them, e.g. under tag `downloads`; or published them
+via the "Build unsigned installers" Action).
 
-Sanity check the release has assets:
+**IMPORTANT — private repo:** if the repo is **private** (it is, for this
+project), release assets can NOT be downloaded without a token. Ask the user for
+a **fine-grained personal access token** scoped to ONLY this repo with
+**`Contents: Read`** permission. Do NOT print it back or commit it — export it
+just for this session:
 ```bash
-curl -fsIL "https://github.com/<REPO>/releases/download/<TAG>/bl4ck-agent.msi" >/dev/null \
-  && echo "installers present" || echo "installers NOT found — run the Action first"
+export GITHUB_TOKEN='<the fine-grained token>'
 ```
+Sanity check the release + token (private-repo safe):
+```bash
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+  "https://api.github.com/repos/<REPO>/releases/tags/<TAG>" \
+  | grep -o '"name": *"bl4ck-[^"]*"' || echo "release/tag/token problem — recheck"
+```
+(For a *public* repo, no token is needed and `stage-binaries.sh` falls back to a
+plain download.)
 
 ## Step 4 — Install and bring up the stack (one command)
 
