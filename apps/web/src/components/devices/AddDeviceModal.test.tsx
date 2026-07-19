@@ -142,19 +142,19 @@ describe('AddDeviceModal', () => {
     expect(screen.queryByText('macOS (.zip)')).toBeNull();
   });
 
-  it('clamps device count between 1 and 1000', () => {
+  it('renders the MSI/EXE format toggle defaulting to MSI', () => {
     render(<AddDeviceModal isOpen onClose={vi.fn()} />);
 
-    const input = screen.getByLabelText('Number of devices') as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: '5000' } });
-    expect(input.value).toBe('1000');
-
-    fireEvent.change(input, { target: { value: '0' } });
-    expect(input.value).toBe('1');
+    const msi = screen.getByTestId('installer-format-msi');
+    const exe = screen.getByTestId('installer-format-exe');
+    expect(msi.textContent).toContain('MSI');
+    expect(exe.textContent).toContain('EXE');
+    // MSI is selected by default.
+    expect(msi.getAttribute('aria-checked')).toBe('true');
+    expect(exe.getAttribute('aria-checked')).toBe('false');
   });
 
-  it('downloads installer on button click', async () => {
+  it('downloads installer on button click (defaults to format=msi)', async () => {
     fetchWithAuthMock.mockImplementation(async (input) => {
       const url = String(input);
       if (url === '/enrollment-keys') {
@@ -178,16 +178,18 @@ describe('AddDeviceModal', () => {
     expect(String(createCall[0])).toBe('/enrollment-keys');
     const createBody = JSON.parse((createCall[1] as RequestInit).body as string);
     expect(createBody.siteId).toBe('site-aaa-111');
-    // ttlMinutes drives the *child* key now, not the transient parent —
-    // the parent POST must NOT carry it (PR #739 review finding #1).
+    // Device count / expiry are fixed server-side and no longer sent.
     expect(createBody.ttlMinutes).toBeUndefined();
+    expect(createBody.count).toBeUndefined();
 
-    // Default 24h (1440) flows to the installer (child) download URL.
+    // Default format flows to the installer download URL; count/ttl are gone.
     const dlCall = fetchWithAuthMock.mock.calls[1];
-    expect(String(dlCall[0])).toContain('ttlMinutes=1440');
+    expect(String(dlCall[0])).toContain('format=msi');
+    expect(String(dlCall[0])).not.toContain('ttlMinutes');
+    expect(String(dlCall[0])).not.toContain('count=');
   });
 
-  it('sends the selected expiry to the installer download URL', async () => {
+  it('sends format=exe when the EXE installer is selected', async () => {
     fetchWithAuthMock.mockImplementation(async (input) => {
       const url = String(input);
       if (url === '/enrollment-keys') {
@@ -201,7 +203,7 @@ describe('AddDeviceModal', () => {
 
     render(<AddDeviceModal isOpen onClose={vi.fn()} />);
 
-    fireEvent.change(screen.getByTestId('link-ttl'), { target: { value: '10080' } });
+    fireEvent.click(screen.getByTestId('installer-format-exe'));
     fireEvent.click(getDownloadButton());
 
     await waitFor(() => {
@@ -209,7 +211,7 @@ describe('AddDeviceModal', () => {
     });
 
     const dlCall = fetchWithAuthMock.mock.calls[1];
-    expect(String(dlCall[0])).toContain('ttlMinutes=10080');
+    expect(String(dlCall[0])).toContain('format=exe');
   });
 
   it('generates a public link on button click', async () => {
@@ -232,23 +234,24 @@ describe('AddDeviceModal', () => {
 
     render(<AddDeviceModal isOpen onClose={vi.fn()} />);
 
-    fireEvent.change(screen.getByTestId('link-ttl'), { target: { value: '43200' } });
     fireEvent.click(screen.getByText('Generate Link'));
 
     await waitFor(() => {
       expect(screen.getByDisplayValue(/public-download/)).toBeDefined();
     });
 
-    expect(screen.getByText(/Valid for 1 download/)).toBeDefined();
+    expect(screen.getByText(/Enrolls up to 1000 devices/)).toBeDefined();
 
-    // ttlMinutes goes on the installer-link (child) body, not the parent POST.
+    // Count / expiry are fixed server-side and no longer sent on either call.
     const createCall = fetchWithAuthMock.mock.calls[0];
     expect(JSON.parse((createCall[1] as RequestInit).body as string).ttlMinutes)
       .toBeUndefined();
     const linkCall = fetchWithAuthMock.mock.calls[1];
     expect(String(linkCall[0])).toBe('/enrollment-keys/key-456/installer-link');
-    expect(JSON.parse((linkCall[1] as RequestInit).body as string).ttlMinutes)
-      .toBe(43200);
+    const linkBody = JSON.parse((linkCall[1] as RequestInit).body as string);
+    expect(linkBody.ttlMinutes).toBeUndefined();
+    expect(linkBody.count).toBeUndefined();
+    expect(linkBody.format).toBe('msi');
   });
 
   it('copies generated link to clipboard', async () => {

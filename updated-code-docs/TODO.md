@@ -59,17 +59,22 @@ Legend: [x] done · [~] in progress / partial · [ ] not started
 - [ ] When ready: **tell me "sign the exe and msi"** → I wire the signing steps
 - [ ] Sign order matters: agent bins → MSI → EXE (outer sig must cover signed inner)
 
-## 🖥️ TODO — web panel EXE option (best AFTER signing)
-15 touch points across release → API → web. Summary:
-- [ ] `release.yml`: build + sign `bl4ck-setup.exe`, add to verify list, upload,
-      `cp` into `release-assets/`
-- [ ] API `binarySource.ts`: `getGithubSetupExeUrl()`
-- [ ] API `installerBuilder.ts`: `fetchSetupExe()` + `serveWindowsBootstrapExe()`
-      emitting `Bl4ck Agent (TOKEN@HOST).exe` (keep the parens)
-- [ ] API `enrollmentKeys.ts`: widen `platform` checks (2 routes) + `installerLinkSchema`
-- [ ] web `AddDeviceModal.tsx` + `EnrollDeviceStep.tsx`: add `.exe` option;
-      `downloadFilename.ts` fallback
-  (Full list: `CHANGELOG.md` Phase 3 scoping + the 15-row table in chat history.)
+## 🖥️ Web panel EXE option — mostly DONE (branch `web-exe-installer-option`, commit `cf4747af`)
+- [x] API `binarySource.ts`: `getGithubSetupExeUrl()`
+- [x] API `installerBuilder.ts`: `fetchSetupExe()` + `serveWindowsBootstrapExe()`
+      emitting `Bl4ck Setup (TOKEN@HOST).exe` (parens kept)
+- [x] API installer route: `?format=msi|exe` branch + `installerBootstrapTokenIssuance`
+      gained optional `ttlMinutes`
+- [x] **Installer downloader redesign**: device count + validity FIXED at 1000
+      devices / 1 year server-side (count/ttl query params ignored); web
+      `AddDeviceModal` drops those inputs, adds an MSI/EXE toggle
+- [x] Verified: API tsc clean; installerBuilder 10/10, enrollmentKeys_installer
+      23/23, web AddDeviceModal 15/15
+- [ ] **`release.yml`: build + sign `bl4ck-setup.exe`** and add it to the signed
+      release-artifact manifest ← the ONLY remaining piece; deferred into the
+      signing work below (hosted/`github` mode needs the exe in the SIGNED
+      manifest). The EXE download already works in self-hosted (`local`) mode.
+- [ ] Open a PR for `web-exe-installer-option` (stacked on `installer-silent-quietexec`)
 
 ## 🧹 TODO — housekeeping / nice-to-have
 - [ ] Remove stray committed build artifact: `git rm --cached agent/breeze-backup`

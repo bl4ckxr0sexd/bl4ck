@@ -25,7 +25,9 @@ import {
 } from "../services/clientIp";
 import {
   fetchRegularMsi,
+  fetchSetupExe,
   serveWindowsBootstrapMsi,
+  serveWindowsBootstrapExe,
 } from "../services/installerBuilder";
 import {
   issueBootstrapTokenForKey,
@@ -66,12 +68,6 @@ const CHILD_ENROLLMENT_KEY_MAX_USAGE: number | null = (() => {
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 })();
-
-// installer_bootstrap_tokens.max_usage is NOT NULL with a DB CHECK >= 1, so the
-// bootstrap-token installer paths (Windows MSI, macOS app-bundle) cannot store
-// the "unlimited" (null) child-key default. Map unlimited to this finite cap —
-// it matches the .max(100000) ceiling the parent-key create/rotate schemas use.
-const BOOTSTRAP_TOKEN_UNLIMITED_MAX_USAGE = 100000;
 
 // Parent keys that are within this window of expiry are refused as installer
 // sources. Prevents a race where the admin-side parent is already live on
@@ -475,9 +471,19 @@ const rotateEnrollmentKeySchema = z.object({
 // fresh from mint time (see freshChildExpiresAt). Absent → deployment
 // default. Same 365-day cap as createEnrollmentKeySchema.
 const installerQuerySchema = z.object({
+  // count/ttlMinutes are accepted for backward compatibility but IGNORED — the
+  // installer download is fixed at 1000 devices / 1 year (see the route).
   count: z.coerce.number().int().min(1).max(100000).optional(),
   ttlMinutes: z.coerce.number().int().min(1).max(MAX_TTL_MINUTES).optional(),
+  // Installer file format: signed MSI (default) or the silent EXE wrapper.
+  format: z.enum(["msi", "exe"]).optional(),
 });
+
+// Installer downloads use fixed, non-user-configurable limits: one downloaded
+// installer enrolls up to 1000 devices and stays valid for 1 year (both still
+// bounded by the parent enrollment key's own lifetime).
+const INSTALLER_FIXED_MAX_DEVICES = 1000;
+const INSTALLER_FIXED_TTL_MINUTES = 525600; // 365 days
 
 const installerLinkSchema = z.object({
   platform: z.enum(["windows"]),
@@ -941,17 +947,14 @@ enrollmentKeyRoutes.get(
     const auth = c.get("auth");
     const keyId = c.req.param("id")!;
     const platform = c.req.param("platform");
-    const { count: queryCount, ttlMinutes: queryTtl } = c.req.valid("query");
-    // When the admin leaves the device-count / expiry fields unset, fall back to
-    // the deployment defaults (CHILD_ENROLLMENT_KEY_MAX_USAGE / _TTL_MINUTES)
-    // rather than a hard-coded single-use 1. An explicit value from the form
-    // still wins — this only fills an *unset* field.
-    const childMaxUsage: number | null =
-      queryCount ?? CHILD_ENROLLMENT_KEY_MAX_USAGE;
-    const childTtlMinutes = queryTtl ?? CHILD_ENROLLMENT_KEY_TTL_MINUTES;
-    // Bootstrap tokens can't be null (see BOOTSTRAP_TOKEN_UNLIMITED_MAX_USAGE).
-    const bootstrapTokenMaxUsage =
-      childMaxUsage ?? BOOTSTRAP_TOKEN_UNLIMITED_MAX_USAGE;
+    const format = c.req.valid("query").format ?? "msi";
+    // Installer downloads are FIXED: 1000 device enrollments and a 1-year
+    // validity. Not user-configurable — the Add Device UI exposes no count or
+    // expiry controls, and any count/ttl left in the query is intentionally
+    // ignored. (Both still bounded by the parent key's own lifetime downstream.)
+    const bootstrapTokenMaxUsage = INSTALLER_FIXED_MAX_DEVICES;
+    const bootstrapTokenTtlMinutes = INSTALLER_FIXED_TTL_MINUTES;
+    const childMaxUsage = bootstrapTokenMaxUsage; // surfaced in the audit detail
 
     if (platform !== "windows") {
       return c.json(
@@ -1027,6 +1030,7 @@ enrollmentKeyRoutes.get(
           parentEnrollmentKeyId: parentKey.id,
           createdByUserId: auth.user.id,
           maxUsage: bootstrapTokenMaxUsage,
+          ttlMinutes: bootstrapTokenTtlMinutes,
           installerPlatform: "windows",
         });
       } catch (err) {
@@ -1038,6 +1042,35 @@ enrollmentKeyRoutes.get(
         throw err;
       }
 
+      const apiHost = new URL(serverUrl).host;
+
+      // EXE: silent double-click installer (bl4ck-setup.exe) that embeds the MSI
+      // and enrolls from its own (TOKEN@HOST) filename.
+      if (format === "exe") {
+        let exe: Buffer;
+        try {
+          exe = await fetchSetupExe();
+        } catch (err) {
+          console.error("[installer] failed to fetch signed setup EXE:", err);
+          return c.json({ error: "EXE installer not available" }, 503);
+        }
+
+        writeEnrollmentKeyAudit(c, auth, {
+          orgId: parentKey.orgId,
+          action: "enrollment_key.installer_download",
+          keyId: parentKey.id,
+          keyName: parentKey.name,
+          details: {
+            platform,
+            mode: "bootstrap-exe",
+            tokenId: issued.id,
+            count: childMaxUsage,
+          },
+        });
+
+        return serveWindowsBootstrapExe(c, { exe, token: issued.token, apiHost });
+      }
+
       let msi: Buffer;
       try {
         msi = await fetchRegularMsi();
@@ -1045,8 +1078,6 @@ enrollmentKeyRoutes.get(
         console.error("[installer] failed to fetch signed MSI:", err);
         return c.json({ error: "MSI not available" }, 503);
       }
-
-      const apiHost = new URL(serverUrl).host;
 
       writeEnrollmentKeyAudit(c, auth, {
         orgId: parentKey.orgId,

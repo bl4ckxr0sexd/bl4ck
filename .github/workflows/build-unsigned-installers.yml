@@ -1,0 +1,211 @@
+name: Build Unsigned Installers
+
+# Builds the BL4CK RMM Windows installers UNSIGNED (no code-signing cert) and
+# publishes them to a GitHub prerelease so a VPS can fetch them for pre-signing
+# testing. This is a deliberately signing-free mirror of the build steps in
+# release.yml's build-agent + build-windows-msi jobs — every Azure Trusted
+# Signing / azure/login / signature-verification step is omitted on purpose.
+# Do NOT use these artifacts for production distribution.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to publish the unsigned installers under'
+        type: string
+        default: 'unsigned-latest'
+
+env:
+  GO_VERSION: '1.25.12'
+
+permissions:
+  contents: read
+
+jobs:
+  build-unsigned:
+    name: Build + Publish Unsigned Windows Installers
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: agent/go.sum
+
+      - name: Download Go dependencies
+        working-directory: agent
+        shell: pwsh
+        run: go mod download
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install WiX CLI
+        shell: pwsh
+        run: |
+          dotnet tool update --global wix | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            dotnet tool install --global wix | Out-Null
+          }
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          wix eula accept wix7
+
+      - name: Compute version
+        id: version
+        shell: pwsh
+        run: |
+          # build-msi.ps1 requires a dotted numeric version (X.Y.Z). This
+          # workflow has no release tag, so ship a fixed unsigned-testing
+          # version. The short SHA is exported separately for the release body.
+          "version=0.0.0" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $short = "${{ github.sha }}".Substring(0, 7)
+          "short_sha=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Install go-winres
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          go install github.com/tc-hib/go-winres@v0.3.3
+          if ($LASTEXITCODE -ne 0) { throw "go install go-winres failed with exit code $LASTEXITCODE" }
+
+      - name: Build Windows resources and binaries (UNSIGNED)
+        shell: pwsh
+        env:
+          BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -Path dist -ItemType Directory -Force | Out-Null
+          $winres = "$env:USERPROFILE\go\bin\go-winres.exe"
+          # Embed VERSIONINFO + manifest + icon resources into every Windows
+          # binary (mirrors release.yml — needed for the MSI #944 overwrite rule
+          # and the #949 manifest guard).
+          Push-Location agent\resources
+          & $winres simply --arch amd64 --no-suffix --icon icon.ico --admin `
+            --file-version $env:BUILD_VERSION --product-version $env:BUILD_VERSION `
+            --product-name "BL4CK RMM Agent" --file-description "BL4CK RMM Agent" `
+            --copyright "Copyright (c) BL4CK RMM" --original-filename "bl4ck-agent.exe" `
+            --out ..\cmd\bl4ck-agent\rsrc_windows_amd64.syso
+          if ($LASTEXITCODE -ne 0) { throw "go-winres simply bl4ck-agent failed with exit code $LASTEXITCODE" }
+          & $winres simply --arch amd64 --no-suffix --icon icon.ico `
+            --file-version $env:BUILD_VERSION --product-version $env:BUILD_VERSION `
+            --product-name "BL4CK RMM User Helper" --file-description "BL4CK RMM User Helper" `
+            --copyright "Copyright (c) BL4CK RMM" --original-filename "bl4ck-user-helper.exe" `
+            --out ..\cmd\bl4ck-user-helper\rsrc_windows_amd64.syso
+          if ($LASTEXITCODE -ne 0) { throw "go-winres simply bl4ck-user-helper failed with exit code $LASTEXITCODE" }
+          & $winres simply --arch amd64 --no-suffix --icon icon.ico `
+            --file-version $env:BUILD_VERSION --product-version $env:BUILD_VERSION `
+            --product-name "BL4CK RMM Watchdog" --file-description "BL4CK RMM Watchdog" `
+            --copyright "Copyright (c) BL4CK RMM" --original-filename "bl4ck-watchdog.exe" `
+            --out ..\cmd\bl4ck-watchdog\rsrc_windows_amd64.syso
+          if ($LASTEXITCODE -ne 0) { throw "go-winres simply bl4ck-watchdog failed with exit code $LASTEXITCODE" }
+          & $winres simply --arch amd64 --no-suffix --icon icon.ico `
+            --file-version $env:BUILD_VERSION --product-version $env:BUILD_VERSION `
+            --product-name "BL4CK RMM Backup Helper" --file-description "BL4CK RMM Backup Helper" `
+            --copyright "Copyright (c) BL4CK RMM" --original-filename "bl4ck-backup.exe" `
+            --out ..\cmd\bl4ck-backup\rsrc_windows_amd64.syso
+          if ($LASTEXITCODE -ne 0) { throw "go-winres simply bl4ck-backup failed with exit code $LASTEXITCODE" }
+          Pop-Location
+          # bl4ck-agent (requireAdministrator manifest)
+          Push-Location agent
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -ldflags="-s -w -X main.version=$env:BUILD_VERSION" -o ..\dist\bl4ck-agent-windows-amd64.exe .\cmd\bl4ck-agent
+          if ($LASTEXITCODE -ne 0) { throw "go build bl4ck-agent failed with exit code $LASTEXITCODE" }
+          Pop-Location
+          # bl4ck-backup
+          Push-Location agent
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -ldflags="-s -w -X main.version=$env:BUILD_VERSION" -o ..\dist\bl4ck-backup-windows-amd64.exe .\cmd\bl4ck-backup
+          if ($LASTEXITCODE -ne 0) { throw "go build bl4ck-backup failed with exit code $LASTEXITCODE" }
+          Pop-Location
+          # bl4ck-watchdog
+          Push-Location agent
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -ldflags="-s -w -X main.version=$env:BUILD_VERSION" -o ..\dist\bl4ck-watchdog-windows-amd64.exe .\cmd\bl4ck-watchdog
+          if ($LASTEXITCODE -ne 0) { throw "go build bl4ck-watchdog failed with exit code $LASTEXITCODE" }
+          Pop-Location
+          # bl4ck-user-helper (GUI-subsystem, asInvoker manifest)
+          Push-Location agent
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -ldflags="-s -w -X main.version=$env:BUILD_VERSION -H windowsgui" -o ..\dist\bl4ck-user-helper-windows-amd64.exe .\cmd\bl4ck-user-helper
+          if ($LASTEXITCODE -ne 0) { throw "go build bl4ck-user-helper failed with exit code $LASTEXITCODE" }
+          Pop-Location
+
+      - name: Build MSI (UNSIGNED)
+        shell: pwsh
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $version = "${{ steps.version.outputs.version }}"
+          $agentExe = Join-Path $root "dist\bl4ck-agent-windows-amd64.exe"
+          $backupExe = Join-Path $root "dist\bl4ck-backup-windows-amd64.exe"
+          $watchdogExe = Join-Path $root "dist\bl4ck-watchdog-windows-amd64.exe"
+          $userHelperExe = Join-Path $root "dist\bl4ck-user-helper-windows-amd64.exe"
+          $msiPath = Join-Path $root "dist\bl4ck-agent.msi"
+          & (Join-Path $root "agent\installer\build-msi.ps1") -Version $version -AgentExePath $agentExe -BackupExePath $backupExe -WatchdogExePath $watchdogExe -UserHelperExePath $userHelperExe -OutputPath $msiPath
+
+      # Build the silent EXE installer (bl4ck-setup.exe). Unlike release.yml this
+      # embeds the UNSIGNED MSI (no outer Authenticode signature applied). Generic
+      # release asset — no baked-in server/key, so per-device enrollment reads the
+      # (TOKEN@HOST) token from the download filename (SETUP_* ldflags left empty).
+      - name: Build silent EXE installer (bl4ck-setup.exe, UNSIGNED)
+        shell: pwsh
+        env:
+          BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Copy-Item "dist\bl4ck-agent.msi" "agent\cmd\bl4ck-setup\payload.msi" -Force
+          $winres = "$env:USERPROFILE\go\bin\go-winres.exe"
+          Push-Location agent\resources
+          & $winres simply --arch amd64 --no-suffix --icon icon.ico --admin `
+            --file-version $env:BUILD_VERSION --product-version $env:BUILD_VERSION `
+            --product-name "BL4CK RMM Agent Setup" `
+            --file-description "BL4CK RMM Agent Setup" `
+            --copyright "Copyright (c) BL4CK RMM" `
+            --original-filename "bl4ck-setup.exe" `
+            --out ..\cmd\bl4ck-setup\rsrc_windows_amd64.syso
+          if ($LASTEXITCODE -ne 0) { throw "go-winres failed for bl4ck-setup" }
+          Pop-Location
+          $env:GOOS = "windows"; $env:GOARCH = "amd64"
+          Push-Location agent
+          go build -ldflags "-s -w -H windowsgui -X main.defaultServer= -X main.defaultKey= -X main.defaultSecret=" -o ..\dist\bl4ck-setup.exe .\cmd\bl4ck-setup
+          if ($LASTEXITCODE -ne 0) { throw "go build failed for bl4ck-setup" }
+          Pop-Location
+
+      - name: Publish unsigned installers to GitHub Release
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: "Unsigned installers (testing)"
+          prerelease: true
+          body: |
+            ## UNSIGNED Windows installers — testing only
+
+            These artifacts are built **without any Authenticode / code-signing
+            certificate** for pre-signing VPS testing. Windows SmartScreen and UAC
+            will warn on them and they are **not** suitable for production
+            distribution.
+
+            - Built from commit `${{ steps.version.outputs.short_sha }}`
+            - Internal version: `${{ steps.version.outputs.version }}`
+
+            This release is overwritten on every re-run of the workflow.
+          files: |
+            dist/bl4ck-agent.msi
+            dist/bl4ck-setup.exe
+            dist/bl4ck-agent-windows-amd64.exe
+            dist/bl4ck-watchdog-windows-amd64.exe
+            dist/bl4ck-user-helper-windows-amd64.exe

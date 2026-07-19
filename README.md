@@ -102,6 +102,40 @@ or fully non-interactive:
 
 ---
 
+## 🚀 Host it on a fresh VPS
+
+Two ways to stand up the full stack (dashboard + agent enrollment + Windows
+installer download) on a clean Ubuntu VPS. Both build from source and serve the
+Windows installers **without needing a code-signing cert** — signing can be added
+later without redeploying.
+
+**A) Let Claude Code do it.** Copy [`deploy/DEPLOY-WITH-CLAUDE.md`](deploy/DEPLOY-WITH-CLAUDE.md)
+into Claude Code running on the VPS — it asks for your domain + admin email,
+installs everything, and verifies it end-to-end.
+
+**B) One command yourself:**
+```bash
+# on the VPS (domain A-record already pointing at it, ports 80/443 open):
+git clone https://github.com/bl4ckxr0sexd/bl4ck /opt/bl4ck && cd /opt/bl4ck
+./deploy/install.sh \
+  --domain rmm.example.com --admin-email you@example.com \
+  --binaries-release unsigned-latest
+```
+`install.sh` generates `.env` (all secrets), builds the API/web from source,
+brings up Postgres/Redis/API/web/Caddy (**automatic Let's Encrypt HTTPS**), and
+auto-downloads the Windows installers from a GitHub release into the box.
+
+**Getting the installers onto GitHub (no PC→VPS copying):** run the
+**"Build unsigned installers"** GitHub Action once (repo → Actions → Run
+workflow). It builds `bl4ck-agent.msi`, `bl4ck-setup.exe`, and the agent binaries
+on a Windows runner and publishes them to the `unsigned-latest` release, which the
+VPS pulls automatically. (Unsigned installers trigger a one-time Windows
+SmartScreen/UAC prompt — expected until code signing is configured.)
+
+Full runbook + troubleshooting: [`updated-code-docs/DEPLOY-VPS.md`](updated-code-docs/DEPLOY-VPS.md).
+
+---
+
 ## What is BL4CK?
 
 BL4CK is a full-featured remote monitoring and management platform with AI built into its core — not bolted on as an afterthought.

@@ -4,7 +4,9 @@ import JSZip from 'jszip';
 import {
   buildWindowsInstallerZip,
   fetchRegularMsi,
+  fetchSetupExe,
   serveWindowsBootstrapMsi,
+  serveWindowsBootstrapExe,
 } from './installerBuilder';
 import type { Context } from 'hono';
 
@@ -183,5 +185,75 @@ describe('serveWindowsBootstrapMsi', () => {
     expect(headers.get('content-type')).toBe('application/octet-stream');
     expect(headers.get('content-length')).toBe(String(msi.length));
     expect(headers.get('cache-control')).toBe('no-store');
+  });
+});
+
+describe('serveWindowsBootstrapExe', () => {
+  function fakeContext(): { c: Context; headers: Map<string, string> } {
+    const headers = new Map<string, string>();
+    const c = {
+      header: (k: string, v: string) => headers.set(k.toLowerCase(), v),
+      body: () => new Response(),
+    } as unknown as Context;
+    return { c, headers };
+  }
+
+  it('embeds the bootstrap token in the .exe filename using PARENTHESES', () => {
+    const { c, headers } = fakeContext();
+    serveWindowsBootstrapExe(c, {
+      exe: Buffer.from('signed-exe-bytes'),
+      token: 'ABCDE12345',
+      apiHost: 'api.example.com',
+    });
+
+    const cd = headers.get('content-disposition');
+    // bl4ck-setup.exe parses (TOKEN@HOST) from its own filename — same parens,
+    // not-brackets rule as the MSI (#1956).
+    expect(cd).toBe(
+      'attachment; filename="Bl4ck Setup (ABCDE12345@api.example.com).exe"',
+    );
+    expect(cd).not.toContain('[');
+    expect(cd).not.toContain(']');
+  });
+
+  it('serves the EXE bytes unmodified with octet-stream + no-store headers', () => {
+    const { c, headers } = fakeContext();
+    const exe = Buffer.from('signed-exe-bytes');
+    serveWindowsBootstrapExe(c, { exe, token: 'ZZZZZ99999', apiHost: 'eu.2breeze.app' });
+
+    expect(headers.get('content-type')).toBe('application/octet-stream');
+    expect(headers.get('content-length')).toBe(String(exe.length));
+    expect(headers.get('cache-control')).toBe('no-store');
+  });
+});
+
+describe('fetchSetupExe', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  it('verifies the GitHub setup EXE bytes against the signed release manifest', async () => {
+    const asset = Buffer.from('signed-setup-exe');
+    const signed = signedReleaseManifest('bl4ck-setup.exe', asset);
+    process.env.BINARY_SOURCE = 'github';
+    process.env.BINARY_VERSION = '1.2.3';
+    process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/bl4ck-setup.exe')) return new Response(asset);
+      if (url.endsWith('/release-artifact-manifest.json')) return new Response(signed.manifest);
+      if (url.endsWith('/release-artifact-manifest.json.ed25519')) return new Response(signed.signature);
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchSetupExe()).resolves.toEqual(asset);
   });
 });
