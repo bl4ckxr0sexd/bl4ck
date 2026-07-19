@@ -113,13 +113,16 @@ later without redeploying.
 into Claude Code running on the VPS — it asks for your domain + admin email,
 installs everything, and verifies it end-to-end.
 
-**B) One command yourself:**
+**B) One command yourself** (private repo → export a fine-grained token with
+`Contents: Read` first):
 ```bash
 # on the VPS (domain A-record already pointing at it, ports 80/443 open):
-git clone https://github.com/bl4ckxr0sexd/bl4ck /opt/bl4ck && cd /opt/bl4ck
+export GITHUB_TOKEN='github_pat_…'   # fine-grained, this repo, Contents: Read
+git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/bl4ckxr0sexd/bl4ck" /opt/bl4ck
+cd /opt/bl4ck
 ./deploy/install.sh \
   --domain rmm.example.com --admin-email you@example.com \
-  --binaries-release unsigned-latest
+  --binaries-release downloads
 ```
 `install.sh` generates `.env` (all secrets), builds the API/web from source,
 brings up Postgres/Redis/API/web/Caddy (**automatic Let's Encrypt HTTPS**), and
