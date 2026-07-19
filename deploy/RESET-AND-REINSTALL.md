@@ -9,15 +9,13 @@ delete anything.
 ## Step 0 — Collect + confirm
 Ask the user for:
 - **Domain** (e.g. `rmm.example.com`) and **admin email**.
-- **Fine-grained GitHub token** with `Contents: Read` on `bl4ckxr0sexd/bl4ck`
-  (private repo — needed to clone + pull the installer release). Never print it.
 - **Explicit confirmation** that wiping the old panel's database/volumes is OK —
   say clearly: *"This deletes the existing panel and all its data permanently."*
   Do not proceed without a yes.
 
-```bash
-export GITHUB_TOKEN='<fine-grained token>'
-```
+The repo is public, so no token is needed. (If it's private: `export
+GITHUB_TOKEN='<fine-grained, Contents: Read>'` and use it in the clone URL +
+install.sh reuses it for the release.)
 
 ## Step 1 — Find the existing install
 ```bash
@@ -56,10 +54,10 @@ docker builder prune -af
 After this, `docker ps -a` and `docker volume ls` should show NO bl4ck/breeze
 containers or volumes. Verify before continuing.
 
-## Step 3 — Fresh clone of the updated repo (private → token in URL)
+## Step 3 — Fresh clone of the updated repo
 ```bash
 sudo mkdir -p /opt/bl4ck && sudo chown "$USER" /opt/bl4ck
-git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/bl4ckxr0sexd/bl4ck" /opt/bl4ck
+git clone https://github.com/bl4ckxr0sexd/bl4ck /opt/bl4ck   # public repo
 cd /opt/bl4ck
 ```
 

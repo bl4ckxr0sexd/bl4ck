@@ -17,8 +17,8 @@ with unsigned installers that trigger a Windows SmartScreen/UAC prompt.
 |---|---|---|
 | **Domain** for the dashboard | `rmm.example.com` | Must already have a DNS **A record** pointing at THIS VPS's public IP. Required for Let's Encrypt HTTPS + agent TLS. |
 | **Admin email** | `you@example.com` | Becomes the first dashboard login + Let's Encrypt account. |
-| **GitHub token** (fine-grained) | `github_pat_…` | REQUIRED — the repo is **private**, so cloning it and downloading the installer release both need auth. Scope it to ONLY `bl4ckxr0sexd/bl4ck` with **`Contents: Read`**. Never print/commit it. |
 | **Installers release tag** | `downloads` | The GitHub release holding the unsigned installers. **Default `downloads`.** |
+| **GitHub token** (fine-grained) | `github_pat_…` | ONLY needed if the repo is **private** (`Contents: Read`, this repo only). The repo is currently **public**, so skip it — clone + release download work unauthenticated. |
 | **GitHub repo** | `bl4ckxr0sexd/bl4ck` | Where the code + installers live. Default `bl4ckxr0sexd/bl4ck`. |
 
 Before continuing, confirm with the user:
@@ -47,17 +47,16 @@ docker compose version
 
 ## Step 2 — Get the code
 
-The repo is private, so authenticate the clone with the token from Step 0:
+Public repo — plain clone (no token):
 ```bash
-export GITHUB_TOKEN='<fine-grained token, Contents: Read>'
 sudo mkdir -p /opt/bl4ck && sudo chown "$USER" /opt/bl4ck
-git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/<REPO>" /opt/bl4ck
+git clone https://github.com/<REPO> /opt/bl4ck
 cd /opt/bl4ck
 ```
-Replace `<REPO>` with the repo from Step 0 (default `bl4ckxr0sexd/bl4ck`). Keep
-`GITHUB_TOKEN` exported for the rest of the session — install.sh reuses it to pull
-the installer release. If the deploy scripts are on a feature branch not yet on
-`main`, add `-b <branch>` to the clone.
+Replace `<REPO>` with the repo from Step 0 (default `bl4ckxr0sexd/bl4ck`).
+(If it's ever made private again: `export GITHUB_TOKEN='<fine-grained>'` and
+clone `https://x-access-token:${GITHUB_TOKEN}@github.com/<REPO>`; install.sh reuses
+the token to pull the release.)
 
 ## Step 3 — Make sure the unsigned installers exist on GitHub
 
@@ -86,14 +85,14 @@ plain download.)
 
 ```bash
 cd /opt/bl4ck
-# GITHUB_TOKEN must still be exported (from Step 2) — install.sh reuses it to
-# pull the private installer release.
 ./deploy/install.sh \
   --domain <DOMAIN> \
   --admin-email <ADMIN_EMAIL> \
   --binaries-release downloads \
   --binaries-repo <REPO>
 ```
+(Public repo: no token needed. If the repo is private, `export GITHUB_TOKEN=…`
+first — install.sh reuses it to pull the release.)
 This generates `.env` (all secrets via `openssl`), builds the API/web/portal
 images from source (first build ~5–10 min), brings up Postgres/Redis/API/web/
 Caddy, waits for the API to report healthy, and auto-stages the installers from
