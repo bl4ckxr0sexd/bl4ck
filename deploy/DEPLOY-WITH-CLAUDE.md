@@ -17,7 +17,8 @@ with unsigned installers that trigger a Windows SmartScreen/UAC prompt.
 |---|---|---|
 | **Domain** for the dashboard | `rmm.example.com` | Must already have a DNS **A record** pointing at THIS VPS's public IP. Required for Let's Encrypt HTTPS + agent TLS. |
 | **Admin email** | `you@example.com` | Becomes the first dashboard login + Let's Encrypt account. |
-| **Installers release tag** | `unsigned-latest` | The GitHub release holding the unsigned installers (see Step 3). Default `unsigned-latest`. |
+| **GitHub token** (fine-grained) | `github_pat_…` | REQUIRED — the repo is **private**, so cloning it and downloading the installer release both need auth. Scope it to ONLY `bl4ckxr0sexd/bl4ck` with **`Contents: Read`**. Never print/commit it. |
+| **Installers release tag** | `downloads` | The GitHub release holding the unsigned installers. **Default `downloads`.** |
 | **GitHub repo** | `bl4ckxr0sexd/bl4ck` | Where the code + installers live. Default `bl4ckxr0sexd/bl4ck`. |
 
 Before continuing, confirm with the user:
@@ -46,39 +47,51 @@ docker compose version
 
 ## Step 2 — Get the code
 
+The repo is private, so authenticate the clone with the token from Step 0:
 ```bash
+export GITHUB_TOKEN='<fine-grained token, Contents: Read>'
 sudo mkdir -p /opt/bl4ck && sudo chown "$USER" /opt/bl4ck
-git clone https://github.com/<REPO> /opt/bl4ck
+git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/<REPO>" /opt/bl4ck
 cd /opt/bl4ck
 ```
-Replace `<REPO>` with the repo from Step 0 (default `bl4ckxr0sexd/bl4ck`).
-If the deploy scripts live on a feature branch not yet merged to `main`
-(ask the user; e.g. `web-exe-installer-option`), clone that branch with
-`git clone -b <branch> ...`.
+Replace `<REPO>` with the repo from Step 0 (default `bl4ckxr0sexd/bl4ck`). Keep
+`GITHUB_TOKEN` exported for the rest of the session — install.sh reuses it to pull
+the installer release. If the deploy scripts are on a feature branch not yet on
+`main`, add `-b <branch>` to the clone.
 
 ## Step 3 — Make sure the unsigned installers exist on GitHub
 
-The VPS pulls the Windows installers from a GitHub **release**. If the user has
-NOT published them yet, tell them to run the GitHub Action once (in the browser):
-**repo → Actions → "Build unsigned installers" → Run workflow** (leave the tag as
-`unsigned-latest`). It builds the MSI + EXE + agent binaries on a Windows runner
-and publishes them to the `unsigned-latest` release. Wait for it to finish
-(green check) before continuing.
+The VPS pulls the Windows installers from a GitHub **release** (the user built
+them on Windows and uploaded them, e.g. under tag `downloads`; or published them
+via the "Build unsigned installers" Action).
 
-Sanity check the release has assets:
+**IMPORTANT — private repo:** if the repo is **private** (it is, for this
+project), release assets can NOT be downloaded without a token. Ask the user for
+a **fine-grained personal access token** scoped to ONLY this repo with
+**`Contents: Read`** permission. Do NOT print it back or commit it — export it
+just for this session:
 ```bash
-curl -fsIL "https://github.com/<REPO>/releases/download/<TAG>/bl4ck-agent.msi" >/dev/null \
-  && echo "installers present" || echo "installers NOT found — run the Action first"
+export GITHUB_TOKEN='<the fine-grained token>'
 ```
+Sanity check the release + token (private-repo safe):
+```bash
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+  "https://api.github.com/repos/<REPO>/releases/tags/<TAG>" \
+  | grep -o '"name": *"bl4ck-[^"]*"' || echo "release/tag/token problem — recheck"
+```
+(For a *public* repo, no token is needed and `stage-binaries.sh` falls back to a
+plain download.)
 
 ## Step 4 — Install and bring up the stack (one command)
 
 ```bash
 cd /opt/bl4ck
+# GITHUB_TOKEN must still be exported (from Step 2) — install.sh reuses it to
+# pull the private installer release.
 ./deploy/install.sh \
   --domain <DOMAIN> \
   --admin-email <ADMIN_EMAIL> \
-  --binaries-release <TAG> \
+  --binaries-release downloads \
   --binaries-repo <REPO>
 ```
 This generates `.env` (all secrets via `openssl`), builds the API/web/portal

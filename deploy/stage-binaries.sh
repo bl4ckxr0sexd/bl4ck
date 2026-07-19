@@ -52,16 +52,45 @@ if [[ -n "$RELEASE_TAG" ]]; then
   command -v curl >/dev/null 2>&1 || { echo "ERROR: curl required for --release mode" >&2; exit 1; }
   TMP="$(mktemp -d)"
   SRC_DIR="$TMP"
-  base="https://github.com/${REPO}/releases/download/${RELEASE_TAG}"
-  echo "==> Downloading installers from ${base} ..."
-  for f in "${AGENT_FILES[@]}" "${HELPER_FILES[@]}"; do
-    if curl -fsSL "${base}/${f}" -o "${TMP}/${f}"; then
-      echo "  downloaded ${f}"
-    else
-      echo "  (skip ${f} — not in release ${RELEASE_TAG})"
-      rm -f "${TMP}/${f}"
-    fi
-  done
+  # Private repos (like this one) 404 on unauthenticated release downloads. If a
+  # token is present, pull via the GitHub API asset endpoint (works for private
+  # AND public). Use a fine-grained token scoped to this repo with contents:read.
+  TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  if [[ -n "$TOKEN" ]]; then
+    command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 required to read a private release" >&2; exit 1; }
+    echo "==> Fetching release '${RELEASE_TAG}' from ${REPO} (authenticated)..."
+    meta="$(curl -fsSL -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}")" || {
+        echo "ERROR: could not read release '${RELEASE_TAG}' on ${REPO}." >&2
+        echo "       Check the tag exists and the token has contents:read on this repo." >&2
+        exit 1; }
+    # Emit "name<TAB>assetId" per asset, then download each bl4ck-* by id.
+    printf '%s' "$meta" | python3 -c 'import sys,json
+for a in json.load(sys.stdin).get("assets", []):
+    print(a["name"] + "\t" + str(a["id"]))' | while IFS=$'\t' read -r name id; do
+      case "$name" in
+        bl4ck-*)
+          if curl -fsSL -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/octet-stream" \
+               "https://api.github.com/repos/${REPO}/releases/assets/${id}" -o "${TMP}/${name}"; then
+            echo "  downloaded ${name}"
+          else
+            echo "  FAILED ${name}"; rm -f "${TMP}/${name}"
+          fi ;;
+      esac
+    done
+  else
+    base="https://github.com/${REPO}/releases/download/${RELEASE_TAG}"
+    echo "==> Downloading from ${base} (unauthenticated — PUBLIC repos only)..."
+    echo "    If ${REPO} is private, set GITHUB_TOKEN and re-run (else every file 404s)."
+    for f in "${AGENT_FILES[@]}" "${HELPER_FILES[@]}"; do
+      if curl -fsSL "${base}/${f}" -o "${TMP}/${f}"; then
+        echo "  downloaded ${f}"
+      else
+        echo "  (skip ${f} — not in release ${RELEASE_TAG}, or repo is private)"
+        rm -f "${TMP}/${f}"
+      fi
+    done
+  fi
 fi
 
 [[ -n "$SRC_DIR" && -d "$SRC_DIR" ]] || {
