@@ -1,0 +1,5 @@
+# Build artifacts for the baked silent-installer variant (copied/generated at
+# build time by build.ps1). Never commit the MSI payload or the built exe.
+payload.msi
+rsrc_windows_amd64.syso
+*.exe
