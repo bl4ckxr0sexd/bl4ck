@@ -1031,7 +1031,21 @@ enrollmentKeyRoutes.get(
     // Installer downloads are FIXED: 1000 device enrollments and a 1-year
     // validity. Not user-configurable — the Add Device UI exposes no count or
     // expiry controls, and any count/ttl left in the query is intentionally
-    // ignored. (Both still bounded by the parent key's own lifetime downstream.)
+    // ignored.
+    //
+    // The token is NO LONGER bounded by the parent key's lifetime (upstream
+    // #2775). The parent must merely be alive, and not within
+    // INSTALLER_PARENT_MIN_REMAINING_SECONDS of expiry, at download time; after
+    // that the token's own 365-day expiry is the sole authority. This is what
+    // makes the advertised 1-year installer real — the Add Device modal mints a
+    // transient ~60-minute parent, so the old min(parent, token) bound silently
+    // collapsed every "1-year" installer to about an hour.
+    //
+    // The parent row itself survives because enrollmentKeyCleanup exempts any
+    // key still holding a live, unexhausted token — which requires maxUsage to
+    // stay FINITE (1000). A NULL there would make `consumed_count < max_usage`
+    // evaluate to NULL, lose the exemption, and let the 7-day purge cascade the
+    // token away.
     const bootstrapTokenMaxUsage = INSTALLER_FIXED_MAX_DEVICES;
     const bootstrapTokenTtlMinutes = INSTALLER_FIXED_TTL_MINUTES;
     const childMaxUsage = bootstrapTokenMaxUsage; // surfaced in the audit detail
