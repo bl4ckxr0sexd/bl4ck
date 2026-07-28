@@ -15,9 +15,11 @@ import { eq } from 'drizzle-orm';
 import { executeTool } from './aiTools';
 import type { AiToolTier, ActionPlanStep } from '@breeze/shared/types/ai';
 import { compactToolResultForChat } from './aiToolOutput';
+import { sanitizeThrownToolError } from './aiToolErrors';
 import type { ActiveSession } from './streamingSessionManager';
 import { waitForPlanApproval } from './aiAgent';
 import { aiActionPlans } from '../db/schema';
+import { getToolTimeout, withToolTimeout } from './toolTimeouts';
 import {
   m365LookupUserHandler, m365RecentSigninsHandler, m365ListGroupMembershipsHandler,
   m365DisableUserHandler, m365ResetPasswordHandler,
@@ -132,6 +134,7 @@ export const TOOL_TIERS = {
   // Agent log tools
   search_agent_logs: 1,
   set_agent_log_level: 2,
+  capture_agent_pprof: 2,
   // Event log tools
   search_logs: 1,
   get_log_trends: 1,
@@ -160,12 +163,24 @@ export const TOOL_TIERS = {
   query_monitors: 1,
   manage_monitors: 1,           // Action-level escalation in guardrails
   get_service_monitoring_status: 1,
+  // Org lifecycle tools (issue #2366) — new-customer intake (org → site → quote)
+  list_organizations: 1,
+  manage_organizations: 2,      // create_org/update_org/create_site escalate to 3 in guardrails
   // M365 helpdesk tools (Delegant-backed)
   m365_lookup_user: 1,
   m365_recent_signins: 1,
   m365_list_group_memberships: 1,
   m365_disable_user: 3,
   m365_reset_password: 3,
+  // M365 typed Graph read-query tools (Task 9) — registered in the shared
+  // `aiTools` map (see aiToolsM365.ts's registerM365Tools) and executed via
+  // makeHandler/executeTool like list_organizations, not session-aware.
+  m365_query_users: 1,
+  m365_query_signins: 1,
+  m365_query_intune_devices: 1,
+  m365_query_groups: 1,
+  m365_query_org: 1,
+  m365_query_sites: 1,
   // Google Workspace helpdesk tools (DWD service-account-backed)
   google_lookup_user: 1,
   google_reset_password: 3,
@@ -203,48 +218,7 @@ export const BREEZE_MCP_TOOL_NAMES = Object.keys(TOOL_TIERS).map(
 // Helper: Create tool handler that delegates to executeTool
 // ============================================
 
-const TOOL_EXECUTION_TIMEOUT_MS = 60_000; // 60s default safety timeout
 const POST_TOOL_USE_TIMEOUT_MS = 10_000; // 10s for postToolUse DB writes
-
-/**
- * Per-tool timeout overrides for tools that legitimately need more (or less) time.
- * Tools not listed here use TOOL_EXECUTION_TIMEOUT_MS (60s).
- */
-const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
-  // Command execution — waits for agent round-trip
-  execute_command: 120_000,
-  run_script: 120_000,
-  // Disk operations — can scan large filesystems
-  analyze_disk_usage: 90_000,
-  disk_cleanup: 90_000,
-  // Security scans — multi-step agent operations
-  security_scan: 120_000,
-  apply_cis_remediation: 120_000,
-  // Patching — downloads + installs
-  manage_patches: 180_000,
-  // Network discovery — port scanning is slow
-  network_discovery: 120_000,
-  // Desktop / vision — WebRTC setup + capture
-  take_screenshot: 30_000,
-  analyze_screen: 30_000,
-  computer_control: 30_000,
-  // Report generation — aggregates across many devices
-  generate_report: 90_000,
-};
-
-function getToolTimeout(toolName: string): number {
-  return TOOL_TIMEOUT_OVERRIDES[toolName] ?? TOOL_EXECUTION_TIMEOUT_MS;
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Tool execution timed out after ${ms}ms: ${label}`)), ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
 
 /**
  * Fire postToolUse with a timeout — if DB writes hang, don't block the conversation.
@@ -261,7 +235,7 @@ async function safePostToolUse(
 ): Promise<void> {
   if (!onPostToolUse) return;
   try {
-    await withTimeout(
+    await withToolTimeout(
       onPostToolUse(toolName, args, output, isError, durationMs),
       POST_TOOL_USE_TIMEOUT_MS,
       `postToolUse:${toolName}`,
@@ -307,8 +281,10 @@ function makeHandler(
       try {
         check = await onPreToolUse(toolName, args);
       } catch (err) {
-        const reason = err instanceof Error ? err.message : 'Unknown error';
-        console.error(`[AI-SDK] PreToolUse threw for ${toolName}: ${reason}`);
+        // The guardrail path also touches the DB (approval records, rate limits),
+        // so `reason` can be a raw driver message — sanitize before embedding it
+        // in a string that is streamed to the chat (#2603).
+        const reason = sanitizeThrownToolError(`${toolName}:preToolUse`, err);
         check = { allowed: false, error: `Guardrails check failed: ${reason}` };
       }
       if (!check.allowed) {
@@ -329,7 +305,7 @@ function makeHandler(
         orgId: auth.orgId ?? null,
         accessibleOrgIds: auth.accessibleOrgIds ?? null,
       };
-      const result = await withTimeout(
+      const result = await withToolTimeout(
         withDbAccessContext(dbContext, () => executeTool(toolName, args, auth)),
         toolTimeout,
         toolName,
@@ -402,9 +378,12 @@ function makeHandler(
       await safePostToolUse(onPostToolUse, toolName, args, compactResult, isToolError, durationMs);
       return { content: [{ type: 'text' as const, text: compactResult }], ...(isToolError ? { isError: true } : {}) };
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Tool execution failed';
       const durationMs = Date.now() - startTime;
-      console.error(`[AI-SDK] Tool ${toolName} failed in ${durationMs}ms: ${message}`);
+      // A thrown error here is an internal fault — its message is very often a
+      // raw Drizzle/postgres.js string carrying the full query and column list.
+      // sanitizeThrownToolError logs it server-side and returns a safe generic
+      // string for the stream (#2603).
+      const message = sanitizeThrownToolError(toolName, err, { durationMs });
       const safeError = compactToolResultForChat(toolName, JSON.stringify({ error: message }));
       await safePostToolUse(onPostToolUse, toolName, args, safeError, true, durationMs);
       return {
@@ -465,8 +444,10 @@ function makeSessionAwareHandler(
       try {
         check = await onPreToolUse(toolName, args);
       } catch (err) {
-        const reason = err instanceof Error ? err.message : 'Unknown error';
-        console.error(`[AI-SDK] PreToolUse threw for ${toolName}: ${reason}`);
+        // The guardrail path also touches the DB (approval records, rate limits),
+        // so `reason` can be a raw driver message — sanitize before embedding it
+        // in a string that is streamed to the chat (#2603).
+        const reason = sanitizeThrownToolError(`${toolName}:preToolUse`, err);
         check = { allowed: false, error: `Guardrails check failed: ${reason}` };
       }
       if (!check.allowed) {
@@ -486,7 +467,7 @@ function makeSessionAwareHandler(
         orgId: auth.orgId ?? null,
         accessibleOrgIds: auth.accessibleOrgIds ?? null,
       };
-      const result = await withTimeout(
+      const result = await withToolTimeout(
         withDbAccessContext(dbContext, () => sessionHandler(args, auth, session.breezeSessionId)),
         toolTimeout,
         toolName,
@@ -506,9 +487,12 @@ function makeSessionAwareHandler(
       await safePostToolUse(onPostToolUse, toolName, args, compactResult, isToolError, durationMs);
       return { content: [{ type: 'text' as const, text: compactResult }], ...(isToolError ? { isError: true } : {}) };
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Tool execution failed';
       const durationMs = Date.now() - startTime;
-      console.error(`[AI-SDK] Tool ${toolName} failed in ${durationMs}ms: ${message}`);
+      // A thrown error here is an internal fault — its message is very often a
+      // raw Drizzle/postgres.js string carrying the full query and column list.
+      // sanitizeThrownToolError logs it server-side and returns a safe generic
+      // string for the stream (#2603).
+      const message = sanitizeThrownToolError(toolName, err, { durationMs });
       const safeError = compactToolResultForChat(toolName, JSON.stringify({ error: message }));
       await safePostToolUse(onPostToolUse, toolName, args, safeError, true, durationMs);
       return {
@@ -1145,7 +1129,7 @@ export function createBreezeMcpServer(
 
     tool(
       'file_operations',
-      'Perform file operations on a device. Read/list are safe; write/delete require approval.',
+      'Perform file operations on a device. All actions (read, list, write, delete, mkdir, rename) require approval because the agent reads/writes as root/LocalSystem.',
       {
         deviceId: uuid,
         action: z.enum(['list', 'read', 'write', 'delete', 'mkdir', 'rename']),
@@ -1203,12 +1187,12 @@ export function createBreezeMcpServer(
 
     tool(
       'query_change_log',
-      'Search device configuration changes (software, services, startup, network, scheduled tasks, and user accounts).',
+      'Search device configuration changes such as software installs/updates, service changes, startup drift, network changes, scheduled task changes, user account changes, hardware changes (memory/CPU/disk/BIOS/serial), and OS version updates.',
       {
         deviceId: uuid.optional(),
         startTime: z.string().datetime({ offset: true }).optional(),
         endTime: z.string().datetime({ offset: true }).optional(),
-        changeType: z.enum(['software', 'service', 'startup', 'network', 'scheduled_task', 'user_account']).optional(),
+        changeType: z.enum(['software', 'service', 'startup', 'network', 'scheduled_task', 'user_account', 'hardware', 'os_version']).optional(),
         changeAction: z.enum(['added', 'removed', 'modified', 'updated']).optional(),
         limit: z.number().int().min(1).max(500).optional(),
       },
@@ -1518,6 +1502,16 @@ export function createBreezeMcpServer(
       makeHandler('set_agent_log_level', getAuth, onPreToolUse, onPostToolUse)
     ),
 
+    tool(
+      'capture_agent_pprof',
+      "Capture Go runtime pprof profiles (heap and/or goroutine) from a device's Breeze agent process for memory/goroutine-leak diagnostics. Returns profile metadata only; the raw profiles are stored on the command result for download.",
+      {
+        deviceId: uuid,
+        profile: z.enum(['heap', 'goroutine', 'all']).optional(),
+      },
+      makeHandler('capture_agent_pprof', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
     // Event log tools
 
     tool(
@@ -1750,6 +1744,120 @@ export function createBreezeMcpServer(
         limit: z.number().int().min(1).max(500).optional(),
       },
       makeHandler('get_service_monitoring_status', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    // Org lifecycle tools (issue #2366) — new-customer intake (org → site → quote)
+
+    tool(
+      'list_organizations',
+      'List/search the organizations the caller can access (name substring match), each with id, name, slug, status, and its sites (id + name). Use this to resolve the orgId and siteId that other tools require. Partner-scoped callers see all their orgs; organization-scoped callers see only their own. Read-only.',
+      {
+        search: z.string().max(255).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+      makeHandler('list_organizations', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    tool(
+      'manage_organizations',
+      'Create and manage organizations and sites (new-customer intake). Actions: create_org (name required; creates the org under the caller\'s partner with a default "Main Office" site — partner scope only), update_org (name/status patch), create_site (orgId + name + optional address), add_contact (not yet supported — returns guidance). create_org, update_org, and create_site require approval.',
+      {
+        action: z.enum(['create_org', 'update_org', 'create_site', 'add_contact']),
+        orgId: uuid.optional(),
+        name: z.string().max(255).optional(),
+        status: z.enum(['active', 'suspended', 'trial', 'churned']).optional(),
+        address: z.record(z.string(), z.unknown()).optional(),
+        email: z.string().email().max(255).optional(),
+      },
+      makeHandler('manage_organizations', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    // Microsoft 365 typed Graph read-query tools (Task 9) — registered as
+    // standard AiTools in the shared aiTools map (aiToolsM365.ts's
+    // registerM365Tools), so unlike the session-bound M365 helpdesk tools
+    // below they're wired the same way as list_organizations: a plain
+    // makeHandler() -> executeTool() delegation, no session/Delegant binding.
+    // Only visible to the model when the organization's M365 Graph read
+    // integration is configured — executeM365ReadAction (Task 8) refuses
+    // otherwise, so no separate gating list is needed here.
+
+    tool(
+      'm365_query_users',
+      'Query Microsoft 365 users (list or get one). Returns up to 50 users per page, max 4 pages (200 users). Data is read live from the customer\'s Microsoft 365 tenant.',
+      {
+        mode: z.enum(['list', 'get']),
+        search: z.string().max(120).optional(),
+        userIdOrUpn: z.string().min(1).max(320).optional(),
+        accountEnabled: z.boolean().optional(),
+        department: z.string().max(120).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        orgId: uuid.optional(),
+      },
+      makeHandler('m365_query_users', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    tool(
+      'm365_query_signins',
+      'Query recent Microsoft 365 sign-in activity, optionally filtered to one user. Returns up to 50 sign-ins per page, max 2 pages (100 sign-ins), covering up to the last 168 hours. Data is read live from the customer\'s Microsoft 365 tenant. Requires the tenant to have Entra ID P1/P2.',
+      {
+        userPrincipalName: z.string().min(1).max(320).optional(),
+        sinceHours: z.number().int().min(1).max(168).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        orgId: uuid.optional(),
+      },
+      makeHandler('m365_query_signins', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    tool(
+      'm365_query_intune_devices',
+      'Query Intune-managed devices (list or get one). Returns up to 50 devices per page, max 4 pages (200 devices). Data is read live from the customer\'s Microsoft 365 tenant.',
+      {
+        mode: z.enum(['list', 'get']),
+        // Named intuneDeviceId (not deviceId) — this is a foreign Microsoft
+        // Graph/Intune managed-device id, unrelated to Breeze's own `devices`
+        // table. See the matching comment in aiToolsM365.ts.
+        intuneDeviceId: z.string().min(1).max(300).optional(),
+        complianceState: z.enum(['compliant', 'noncompliant', 'inGracePeriod', 'unknown']).optional(),
+        operatingSystem: z.enum(['Windows', 'macOS', 'iOS', 'Android', 'Linux']).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        orgId: uuid.optional(),
+      },
+      makeHandler('m365_query_intune_devices', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    tool(
+      'm365_query_groups',
+      'Query Microsoft 365 groups (list, get one, or list a group\'s members). Returns up to 50 groups or 100 members per page, max 4 pages (200 groups, 400 members). Data is read live from the customer\'s Microsoft 365 tenant.',
+      {
+        mode: z.enum(['list', 'get', 'members']),
+        groupId: z.string().min(1).max(300).optional(),
+        search: z.string().max(120).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        orgId: uuid.optional(),
+      },
+      makeHandler('m365_query_groups', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    tool(
+      'm365_query_org',
+      'Get the Microsoft 365 tenant\'s organization profile or its license/SKU inventory. Each call returns a single organization record or the full SKU list (no client-settable limit). Data is read live from the customer\'s Microsoft 365 tenant.',
+      {
+        include: z.enum(['profile', 'licenses']),
+        orgId: uuid.optional(),
+      },
+      makeHandler('m365_query_org', getAuth, onPreToolUse, onPostToolUse)
+    ),
+
+    tool(
+      'm365_query_sites',
+      'Query SharePoint sites (search or get one). List mode returns a single page of results with no client-settable limit. Data is read live from the customer\'s Microsoft 365 tenant.',
+      {
+        mode: z.enum(['list', 'get']),
+        search: z.string().max(120).optional(),
+        siteId: z.string().min(1).max(300).optional(),
+        orgId: uuid.optional(),
+      },
+      makeHandler('m365_query_sites', getAuth, onPreToolUse, onPostToolUse)
     ),
 
     // Action Plan tool (for action_plan and hybrid_plan modes)

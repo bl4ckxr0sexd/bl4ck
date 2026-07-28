@@ -14,6 +14,7 @@ dist/
 .env.dev
 .env.test
 .env.prod
+.env.finder-dev
 
 # IDE
 .idea/
@@ -32,8 +33,6 @@ pnpm-debug.log*
 
 # Testing
 coverage/
-e2e-tests/doc-verify/reports/
-e2e-tests/doc-verify/assertions.json
 
 # Database
 *.db
@@ -41,6 +40,7 @@ e2e-tests/doc-verify/assertions.json
 
 # Go
 agent/breeze-agent
+agent/breeze-backup
 agent/breeze-watchdog
 agent/bin/
 viewer/bin/
@@ -88,6 +88,11 @@ target/
 !/internal/release-keys/*.pub
 !/internal/release-keys/README.md
 
+# Extension packages (private repos cloned in locally; not for the public repo).
+# /extensions/* (not /extensions) so the README re-inclusion below works.
+/extensions/*
+!/extensions/README.md
+
 # Stray screenshots
 *.png
 !docs/assets/breeze-logo.png
@@ -103,6 +108,7 @@ monitoring/secrets/*
 
 # Docker local overrides
 docker-compose.override.yml
+docker-compose.override.pam.yml
 
 # Backups
 backups/
@@ -116,3 +122,6 @@ backups/
 
 # brainstorming visual companion mockups
 .superpowers/
+
+# Git LFS hooks regenerated per-workspace (core.hooksPath=.githooks)
+.githooks/

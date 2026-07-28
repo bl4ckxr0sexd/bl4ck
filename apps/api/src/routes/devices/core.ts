@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { z } from 'zod';
+import { optionalJsonValidator, zValidator } from '../../lib/validation';
 import { and, eq, gte, like, sql, desc, inArray, type SQL } from 'drizzle-orm';
 import { db, withSystemDbAccessContext } from '../../db';
 import { createHash, randomBytes } from 'crypto';
@@ -39,6 +40,7 @@ import {
   type DevicesSortKey,
 } from './cursor';
 import { writeRouteAudit } from '../../services/auditEvents';
+import { dissolveLinkGroupIfBelowMinimum } from '../../services/deviceLinkGroups';
 import { resolveRemoteAccessForDevice } from '../../services/remoteAccessPolicy';
 import {
   resolveRemoteAccessLaunch,
@@ -52,6 +54,12 @@ import { sendCommandToAgent, isAgentConnected, disconnectAgent } from '../agentW
 import { terminateDeviceRemoteSessions, TEARDOWN_FAILED } from '../../services/remoteSessionTeardown';
 import { CommandTypes } from '../../services/commandQueue';
 import { getGlobalEnrollmentSecret } from '../agents/enrollment';
+import { assertTtlWithinCap } from '../../services/enrollmentDefaults';
+import {
+  withExtensionDeviceCascade,
+  withExtensionDeviceOrgDenormalized,
+  withExtensionDeviceOrgMoveDelete,
+} from '../../extensions/tenancyRegistry';
 
 /**
  * Tables where linked_device_id (not device_id) references devices.id.
@@ -71,7 +79,7 @@ export const DEVICE_LINKED_DEVICE_ID_TABLES = [
 export const DEVICE_DETACH_DEVICE_ID_TABLES = ['tickets'] as const;
 
 /**
- * Subset of {@link DEVICE_CASCADE_DELETE_TABLES} ∪
+ * Subset of {@link getDeviceCascadeDeleteTables} ∪
  * {@link DEVICE_DETACH_DEVICE_ID_TABLES} whose rows denormalize
  * `org_id` for RLS performance. When a device moves between orgs, every
  * one of these tables must have its `org_id` rewritten inside the same
@@ -85,10 +93,10 @@ export const DEVICE_DETACH_DEVICE_ID_TABLES = ['tickets'] as const;
  * Tables intentionally excluded (no `org_id` column today):
  *   automation_policy_compliance, deployment_devices, deployment_results,
  *   device_commands (system-scoped per RLS policy), device_software,
- *   file_transfers, patch_job_results, patch_rollbacks,
+ *   patch_job_results, patch_rollbacks,
  *   psa_ticket_mappings, software_compliance_status
  */
-export const DEVICE_ORG_DENORMALIZED_TABLES = [
+const CORE_DEVICE_ORG_DENORMALIZED_TABLES = [
   'agent_logs', 'ai_screenshots', 'ai_sessions', 'alerts', 'asset_checkouts',
   'audit_baseline_results', 'audit_policy_states',
   'automation_run_device_results',
@@ -117,6 +125,7 @@ export const DEVICE_ORG_DENORMALIZED_TABLES = [
   'recovery_key_access_events',
   'recovery_readiness', 'recovery_tokens', 'remediation_suggestions', 'remote_sessions', 'restore_jobs',
   's1_actions', 's1_agents', 's1_threats',
+  'script_connect_runs',
   'script_executions',
   'security_posture_snapshots', 'security_scans', 'security_status',
   'security_threats',
@@ -126,9 +135,22 @@ export const DEVICE_ORG_DENORMALIZED_TABLES = [
   'tickets', 'time_series_metrics', 'tunnel_sessions',
 ] as const;
 
+export function getDeviceOrgDenormalizedTables(): readonly string[] {
+  return withExtensionDeviceOrgDenormalized(CORE_DEVICE_ORG_DENORMALIZED_TABLES);
+}
+
+const CORE_DEVICE_ORG_MOVE_DELETE_TABLES: readonly string[] = [];
+
+export function getDeviceOrgMoveDeleteTables(): readonly string[] {
+  return withExtensionDeviceOrgMoveDelete(CORE_DEVICE_ORG_MOVE_DELETE_TABLES);
+}
+
+/** @deprecated Static core-only snapshot retained for call sites that predate extensions. */
+export const DEVICE_ORG_DENORMALIZED_TABLES = CORE_DEVICE_ORG_DENORMALIZED_TABLES;
+
 /**
  * Tables that denormalize `org_id` for RLS but have NO `device_id` column,
- * so the generic {@link DEVICE_ORG_DENORMALIZED_TABLES} rewrite loop in
+ * so the generic {@link getDeviceOrgDenormalizedTables} rewrite loop in
  * moveOrg.ts (which keys on `WHERE device_id = ...`) cannot reach them.
  * Each table here gets a dedicated, hand-written UPDATE inside the move-org
  * transaction — e.g. `ticket_alert_links` is rewritten via its alert_id
@@ -166,7 +188,7 @@ export const DEVICE_SITE_DENORMALIZED_TABLES = [
  * IMPORTANT: When you add a new table with a device_id FK, add it here.
  * The test in cascadeDelete.test.ts will fail CI if you forget.
  */
-export const DEVICE_CASCADE_DELETE_TABLES = [
+const CORE_DEVICE_CASCADE_DELETE_TABLES = [
   // recovery_tokens & backup_chains FK to backup_snapshots (no cascade),
   // so delete them first, then restore_jobs → backup_snapshots → backup_jobs
   'recovery_tokens', 'backup_chains',
@@ -187,9 +209,14 @@ export const DEVICE_CASCADE_DELETE_TABLES = [
   'deployment_devices', 'deployment_results', 'software_inventory',
   'software_compliance_status', 'software_policy_audit',
   // Remote access
-  'remote_sessions', 'file_transfers', 'tunnel_sessions',
+  'remote_sessions', 'tunnel_sessions',
   // Monitoring & logs
   'service_process_check_results', 'alerts', 'agent_logs', 'script_executions',
+  // "Run on first connect" ledger (FK device_id → devices.id ON DELETE CASCADE;
+  // leaf table — execution_id is SET NULL, so no ordering constraint). Deleted
+  // before script_executions is irrelevant, but it must be listed for the
+  // explicit-cascade coverage contract.
+  'script_connect_runs',
   'device_event_logs', 'automation_policy_compliance', 'backup_sla_events',
   // Per-device automation execution results (FK device_id → devices.id ON DELETE
   // CASCADE; leaf table, no children) — #2023
@@ -231,6 +258,13 @@ export const DEVICE_CASCADE_DELETE_TABLES = [
   'onedrive_device_state',
 ] as const;
 
+export function getDeviceCascadeDeleteTables(): readonly string[] {
+  return withExtensionDeviceCascade(CORE_DEVICE_CASCADE_DELETE_TABLES);
+}
+
+/** @deprecated Static core-only snapshot retained for call sites that predate extensions. */
+export const DEVICE_CASCADE_DELETE_TABLES = CORE_DEVICE_CASCADE_DELETE_TABLES;
+
 export const coreRoutes = new Hono();
 
 coreRoutes.use('*', authMiddleware);
@@ -248,6 +282,25 @@ function envInt(name: string, fallback: number): number {
 const ENROLL_TOKEN_MAX_COUNT = 1000;
 const ENROLL_TOKEN_MAX_TTL_MINUTES = 525_600; // 365 days
 
+// `count` keeps its existing ad-hoc coercion + clamp behaviour below —
+// existing clients rely on an out-of-range or non-numeric count being
+// silently floored/clamped rather than rejected (devices.test.ts:353+).
+// `ttlMinutes` is schema-validated and REJECTED when out of range: a
+// silently reduced expiry is the exact failure mode #2775/#2777 were filed
+// for, so it gets no such leniency.
+//
+// Every field is optional because a BODYLESS POST is a supported call shape
+// here — first-run guided setup (web setup/EnrollDeviceStep.tsx) and script
+// clients both POST with no body while `fetchWithAuth` still sends
+// `Content-Type: application/json`. That is why the route uses
+// `optionalJsonValidator`, not `zValidator('json', ...)`: the latter 400s
+// ("Malformed JSON in request body") on an empty body with a JSON
+// content-type, which the previous `c.req.json().catch(() => ({}))` did not.
+const onboardingTokenSchema = z.object({
+  count: z.unknown().optional(),
+  ttlMinutes: z.number().int().min(1).max(ENROLL_TOKEN_MAX_TTL_MINUTES).optional(),
+}).strict();
+
 // POST /devices/onboarding-token - Generate a short-lived enrollment key.
 // If AGENT_ENROLLMENT_SECRET is configured, enrollment also requires that
 // shared secret; otherwise the short-lived key stands on its own.
@@ -256,6 +309,7 @@ coreRoutes.post(
   requireScope('organization', 'partner', 'system'),
   requirePermission(PERMISSIONS.ORGS_WRITE.resource, PERMISSIONS.ORGS_WRITE.action),
   requireMfa(),
+  optionalJsonValidator(onboardingTokenSchema),
   async (c) => {
     const auth = c.get('auth');
     const requestedOrgId = c.req.query('orgId');
@@ -280,6 +334,29 @@ coreRoutes.post(
       return c.json({ error: 'Organization ID required. Provide orgId query parameter.' }, 400);
     }
 
+    // Optional caller-supplied multi-use / TTL controls (#1108). A copied CLI
+    // command is frequently pasted onto several machines during a migration;
+    // without these the historical hard-coded single-use token failed on every
+    // machine after the first. Defaults preserve the old single-use, 60-min
+    // behaviour for callers that send no body.
+    const data = c.req.valid('json');
+    const rawCount = Number((data as { count?: unknown }).count);
+    const maxUsage = Number.isFinite(rawCount)
+      ? Math.min(ENROLL_TOKEN_MAX_COUNT, Math.max(1, Math.trunc(rawCount)))
+      : 1;
+    // Explicit-ttl-vs-default is distinguished BEFORE the default is applied:
+    // assertTtlWithinCap must see what the caller actually asked for (an
+    // omitted ttlMinutes stays `undefined`, which the gate never rejects — an
+    // unset value has no chooser to hold to a cap). No coercion or clamping is
+    // needed here: the Zod schema already guarantees an integer in 1..525_600
+    // and REJECTS anything outside it rather than silently reducing it.
+    const explicitTtlMinutes = data.ttlMinutes;
+
+    // Reject (never clamp) a caller-supplied TTL above the partner cap
+    // (#2776 task 3.4). Runs after org resolution — orgId is required.
+    const capError = await assertTtlWithinCap(orgId, explicitTtlMinutes);
+    if (capError) return c.json({ error: capError }, 400);
+
     // Pick the first site in the org for the enrollment key
     const [site] = await db
       .select({ id: sites.id })
@@ -291,21 +368,8 @@ coreRoutes.post(
       return c.json({ error: 'No site found for this organization. Create a site first.' }, 400);
     }
 
-    // Optional caller-supplied multi-use / TTL controls (#1108). A copied CLI
-    // command is frequently pasted onto several machines during a migration;
-    // without these the historical hard-coded single-use token failed on every
-    // machine after the first. Defaults preserve the old single-use, 60-min
-    // behaviour for callers that send no body.
-    const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
-    const rawCount = Number((body as { count?: unknown }).count);
-    const maxUsage = Number.isFinite(rawCount)
-      ? Math.min(ENROLL_TOKEN_MAX_COUNT, Math.max(1, Math.trunc(rawCount)))
-      : 1;
-    const rawTtl = Number((body as { ttlMinutes?: unknown }).ttlMinutes);
-    const defaultTtlMinutes = envInt('ENROLLMENT_KEY_DEFAULT_TTL_MINUTES', 60);
-    const ttlMinutes = Number.isFinite(rawTtl)
-      ? Math.min(ENROLL_TOKEN_MAX_TTL_MINUTES, Math.max(1, Math.trunc(rawTtl)))
-      : defaultTtlMinutes;
+    const ttlMinutes = explicitTtlMinutes
+      ?? envInt('ENROLLMENT_KEY_DEFAULT_TTL_MINUTES', 60);
 
     const key = `enroll_${randomBytes(24).toString('hex')}`;
     const keyHash = hashEnrollmentKey(key);
@@ -531,6 +595,7 @@ coreRoutes.get(
         architecture: devices.architecture,
         agentVersion: devices.agentVersion,
         watchdogVersion: devices.watchdogVersion,
+        agentServerUrl: devices.agentServerUrl,
         status: devices.status,
         watchdogStatus: devices.watchdogStatus,
         mainAgentSilentSince: devices.mainAgentSilentSince,
@@ -545,6 +610,13 @@ coreRoutes.get(
         pendingReboot: devices.pendingReboot,
         batteryStatus: devices.batteryStatus,
         activeVpns: devices.activeVpns,
+        // Linked multi-boot profiles (#2138): null => unlinked. The web list
+        // groups rows client-side by this id (inactive strips / group bar).
+        linkGroupId: devices.linkGroupId,
+        // vm_host member role (#2308): 'host' | 'guest' | null. Lets the web
+        // list nest guest rows under their host without joining the group
+        // table — a non-null role implies the group's kind is 'vm_host'.
+        linkGroupRole: devices.linkGroupRole,
         createdAt: devices.createdAt,
         updatedAt: devices.updatedAt,
         // Hardware summary
@@ -649,6 +721,7 @@ coreRoutes.get(
         architecture: d.architecture,
         agentVersion: d.agentVersion,
         watchdogVersion: d.watchdogVersion,
+        agentServerUrl: d.agentServerUrl ?? null,
         status: d.status,
         watchdogStatus: d.watchdogStatus,
         mainAgentSilentSince: d.mainAgentSilentSince,
@@ -663,6 +736,8 @@ coreRoutes.get(
         isHeadless: d.isHeadless,
         batteryStatus: d.batteryStatus ?? null,
         activeVpns: d.activeVpns ?? null,
+        linkGroupId: d.linkGroupId ?? null,
+        linkGroupRole: d.linkGroupRole ?? null,
         createdAt: d.createdAt,
         updatedAt: d.updatedAt,
         cpuPercent: latestMetrics?.cpuPercent ?? 0,
@@ -1165,6 +1240,14 @@ coreRoutes.post(
         tokenIssuedAt: new Date(),
         previousTokenHash: null,
         previousTokenExpiresAt: null,
+        // Issue #2621 — this is the incident-response revocation path, so it must
+        // also kill any staged (pending) rotation. A staged credential minted
+        // before the revocation would otherwise keep authenticating for the rest
+        // of its window, and could be promoted over this admin-issued token.
+        pendingTokenHash: null,
+        pendingWatchdogTokenHash: null,
+        pendingHelperTokenHash: null,
+        pendingTokenExpiresAt: null,
         updatedAt: new Date()
       })
       .where(eq(devices.id, deviceId))
@@ -1331,6 +1414,12 @@ coreRoutes.delete(
       }
     }
 
+    // #2138/#2308 — whether deleting this device dissolved its link group
+    // (lone multiboot survivor unlinked, or a vm_host group left headless and
+    // its guests unlinked). Recorded in the audit details: an unexplained
+    // "why did this whole VM group un-group?" must be traceable to this event.
+    let linkGroupDissolved = false;
+
     // Cascade: remove all FK-referencing records in a transaction.
     // Uses raw SQL to cover all child tables without importing each schema.
     // When adding new tables with device_id FK, add them here too.
@@ -1356,11 +1445,19 @@ coreRoutes.delete(
           await tx.execute(sql`UPDATE ${sql.identifier(detachTable)} SET device_id = NULL WHERE device_id = ${deviceId}`);
         }
 
-        const tables = DEVICE_CASCADE_DELETE_TABLES;
+        const tables = getDeviceCascadeDeleteTables();
         for (const table of tables) {
           await tx.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE device_id = ${deviceId}`);
         }
         await tx.delete(devices).where(eq(devices.id, deviceId));
+
+        // #2138 — the deleted device's link_group_id went with its row. If it
+        // was a boot profile and the group now has a single lone survivor —
+        // or it was a vm_host group's HOST (#2308), leaving the group
+        // headless — dissolve the group.
+        if (device.linkGroupId) {
+          linkGroupDissolved = await dissolveLinkGroupIfBelowMinimum(tx, device.linkGroupId);
+        }
       });
     } catch (err: unknown) {
       const pgCode = (err as { code?: string })?.code;
@@ -1381,7 +1478,16 @@ coreRoutes.delete(
       resourceType: 'device',
       resourceId: deviceId,
       resourceName: device.hostname ?? device.displayName ?? deviceId,
-      details: { uninstallCommandSent: uninstallSent }
+      details: {
+        uninstallCommandSent: uninstallSent,
+        // #2138/#2308 — deleting a linked device can dissolve its link group
+        // (and unlink every remaining member). Without this flag the audit
+        // trail would show only "device deleted" while sibling devices
+        // silently lost their grouping.
+        ...(device.linkGroupId
+          ? { linkGroupId: device.linkGroupId, linkGroupDissolved }
+          : {}),
+      }
     });
 
     return c.json({

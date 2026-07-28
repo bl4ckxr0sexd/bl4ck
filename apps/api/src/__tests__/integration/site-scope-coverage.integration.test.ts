@@ -119,7 +119,7 @@ describe('site-scope coverage', () => {
  * site-scope gate. This is the exact blind spot the original scanner's header
  * note documented; the 2026-05 sweep fixed the first 6 offenders
  * (browserSecurity/sentinelOne/peripheralControl/huntress/dnsSecurity/analytics)
- * — see docs/superpowers/plans/2026-05-31-site-scope-input-scanner.md.
+ * — see docs/superpowers/plans/ai-mcp/2026-05-31-site-scope-input-scanner.md.
  *
  * The allowlist below captures handlers that touch device-scoped data but do
  * NOT need a site gate. Each entry MUST carry a one-line justification. The
@@ -133,6 +133,14 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
   // ---- Agent / helper / viewer-token paths: authenticated by an AGENT or
   // helper/viewer token, NOT a user session, so there is no `permissions`
   // context and `allowedSiteIds` never applies. (Codex triage 2026-05-31.)
+  // Partner reconstruction API: machine service-principal auth
+  // (requirePartnerApiScope) — no user permissions context; results are
+  // clamped to the principal's partner-accessible orgs by the export query.
+  'routes/partnerApi/devices.ts:GET /devices',
+  // Helper-token path (helperAuth on all helperRoutes): no user permissions
+  // context, and the session lookup is pinned to the token's own device row
+  // (eq(aiSessions.deviceId, device.id)) before any write. (W7 #2637.)
+  'routes/helper/index.ts:POST /chat/sessions/:id/tool-results',
   'routes/agents/bootPerformance.ts:POST /:id/boot-performance',
   'routes/agents/changes.ts:PUT /:id/changes',
   'routes/agents/commands.ts:POST /:id/commands/:commandId/result',
@@ -152,6 +160,9 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
   'routes/helper/index.ts:GET /chat/sessions',
   'routes/helper/index.ts:GET /chat/sessions/:id/messages',
   'routes/helper/index.ts:POST /chat/sessions/:id/flag',
+  // helperAuth device-token path; query pinned to the caller's own device via
+  // eq(aiSessions.deviceId, device.id) (#2637 client-declared tool results).
+  'routes/helper/index.ts:POST /chat/sessions/:id/tool-results',
   'routes/tunnels.ts:GET /desktop-access',
   'routes/tunnels.ts:POST /downgrade-to-vnc',
   'routes/tunnels.ts:POST /upgrade-to-webrtc',
@@ -168,7 +179,6 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
   // ---- Genuinely site-gated via the cross-file `getDeviceWithOrgCheck`
   // helper (routes/remote/helpers.ts), which the file-local scanner can't see.
   'routes/remote/sessions.ts:POST /sessions',
-  'routes/remote/transfers.ts:POST /transfers',
   // ---- Org-wide AGGREGATE reads: return only counts/summaries (no
   // per-device rows), so no cross-site device data is disclosed (returns
   // re-verified 2026-05-31). NB: totals still span the org incl. other
@@ -176,7 +186,6 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
   'routes/huntress.ts:GET /status',
   'routes/metrics.ts:GET /',
   'routes/metrics.ts:GET /trends',
-  'routes/reports/data.ts:GET /data/compliance',
   'routes/sentinelOne.ts:GET /status',
   'routes/softwarePolicies.ts:GET /compliance/overview',
   'routes/updateRings.ts:GET /:id/compliance',
@@ -205,7 +214,6 @@ const SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK: ReadonlySet<string> = new Set<str
   'routes/lifecycle.ts:GET /me/mobile-devices',
   // Site-gated via the cross-file getDeviceWithOrgCheck resolver (remote/helpers.ts).
   'routes/remote/sessions.ts:POST /sessions',
-  'routes/remote/transfers.ts:POST /transfers',
   // Org-wide AGGREGATE reads: return only counts/summaries (no per-device rows),
   // so no cross-site device data is disclosed. Reached via user auth but exempt
   // for the aggregate reason rather than non-user auth — recorded here so the
@@ -214,7 +222,6 @@ const SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK: ReadonlySet<string> = new Set<str
   'routes/huntress.ts:GET /status',
   'routes/metrics.ts:GET /',
   'routes/metrics.ts:GET /trends',
-  'routes/reports/data.ts:GET /data/compliance',
   'routes/sentinelOne.ts:GET /status',
   'routes/softwarePolicies.ts:GET /compliance/overview',
   'routes/updateRings.ts:GET /:id/compliance',
@@ -237,7 +244,7 @@ const SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK: ReadonlySet<string> = new Set<str
 // taking no device input. When triaged, REMOVE the entry here and either fix the
 // handler or add it to SITE_SCOPE_INPUT_EXEMPT. The "no stale entries" test makes
 // the ratchet one-directional — a fixed handler's baseline entry must be removed.
-// Full plan + triage guidance: docs/superpowers/plans/2026-05-31-site-scope-input-scanner.md
+// Full plan + triage guidance: docs/superpowers/plans/ai-mcp/2026-05-31-site-scope-input-scanner.md
 const SITE_SCOPE_INPUT_BASELINE: ReadonlySet<string> = new Set<string>([
 ]);
 

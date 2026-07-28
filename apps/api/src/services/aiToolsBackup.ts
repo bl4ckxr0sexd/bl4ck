@@ -22,9 +22,11 @@ import { eq, and, desc, sql, gte, SQL } from 'drizzle-orm';
 import type { AuthContext } from '../middleware/auth';
 import type { AiTool } from './aiTools';
 import { CommandTypes, queueCommandForExecution } from './commandQueue';
+import { resolveBackupProviderConfig, resolveBackupDestinationError } from './backupProviderConfig';
 import { createManualBackupJobIfIdle } from './backupJobCreation';
 import { enqueueBackupDispatch } from '../jobs/backupEnqueue';
 import { deviceSiteDenied, resolveSiteAllowedDeviceIds } from './aiToolsSiteScope';
+import { loadSnapshotWithSiteAccess } from './aiToolsBackupShared';
 import { inArray } from 'drizzle-orm';
 
 type BackupHandler = (input: Record<string, unknown>, auth: AuthContext) => Promise<string>;
@@ -601,18 +603,12 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
       if (!device) return JSON.stringify({ error: 'Device not found or access denied' });
       if (deviceSiteDenied(auth, device.siteId)) return JSON.stringify({ error: 'Device not found or access denied' });
 
-      // Verify snapshot exists and belongs to org (via orgId on snapshots table)
-      const snapshotConditions: SQL[] = [eq(backupSnapshots.id, snapshotId)];
-      const sc = orgWhere(auth, backupSnapshots.orgId);
-      if (sc) snapshotConditions.push(sc);
-      const [snapshot] = await db.select({
-        id: backupSnapshots.id,
-        snapshotId: backupSnapshots.snapshotId,
-        deviceId: backupSnapshots.deviceId,
-      }).from(backupSnapshots)
-        .where(and(...snapshotConditions))
-        .limit(1);
-      if (!snapshot) return JSON.stringify({ error: 'Snapshot not found or access denied' });
+      // Verify the snapshot under the caller's org AND site scope: the source
+      // snapshot's device must be within the caller's site scope, not just the
+      // restore target (shared provider namespace → cross-site restore else).
+      const snapshotResult = await loadSnapshotWithSiteAccess(auth, snapshotId);
+      if ('error' in snapshotResult) return JSON.stringify({ error: snapshotResult.error });
+      const snapshot = snapshotResult.snapshot;
 
       // Determine restore type based on selectedPaths
       const selectedPaths = Array.isArray(input.selectedPaths) ? input.selectedPaths as string[] : undefined;
@@ -646,6 +642,21 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
         return JSON.stringify({ error: `Device is ${targetDevice.status}, cannot execute command` });
       }
 
+      // The agent needs the same provider + providerConfig the BACKUP command
+      // used to write this snapshot, so it can build a storage provider to
+      // read it back. Fail loudly rather than dispatch a config-less restore.
+      const backupProviderConfig = snapshot.configId
+        ? await resolveBackupProviderConfig(snapshot.configId, orgId)
+        : null;
+      if (!backupProviderConfig) {
+        // Legacy snapshot (null configId) predates destination tracking and
+        // can't be auto-restored — surface a distinct, non-misleading message
+        // rather than a generic "not found" (and never a current-config
+        // fallback, which could read the wrong destination).
+        const { reason, message } = resolveBackupDestinationError(snapshot.configId);
+        return JSON.stringify({ error: message, reason });
+      }
+
       // Insert restore job
       const [restoreJob] = await db.insert(restoreJobs).values({
         orgId,
@@ -668,9 +679,11 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
           CommandTypes.BACKUP_RESTORE,
           {
             restoreJobId: restoreJob.id,
-            snapshotId: snapshot.snapshotId,
+            snapshotId: snapshot.providerSnapshotId,
             targetPath: restoreJob.targetPath ?? '',
             selectedPaths: restoreType === 'selective' ? (selectedPaths ?? []) : [],
+            provider: backupProviderConfig.provider,
+            providerConfig: backupProviderConfig.providerConfig,
           },
           { userId: auth.user?.id ?? undefined }
         );
@@ -705,9 +718,9 @@ export function registerBackupTools(aiTools: Map<string, AiTool>): void {
           commandId: command.id,
           status: updatedRestoreJob?.status ?? restoreJob.status,
           restoreType,
-          snapshotId: snapshot.snapshotId,
+          snapshotId: snapshot.providerSnapshotId,
           deviceId,
-          message: `Restore job created (${restoreType} restore from snapshot ${snapshot.snapshotId})`,
+          message: `Restore job created (${restoreType} restore from snapshot ${snapshot.providerSnapshotId})`,
         });
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to dispatch restore command to agent';

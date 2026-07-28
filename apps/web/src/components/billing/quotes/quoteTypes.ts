@@ -6,8 +6,12 @@ import type { SellerSnapshot } from '../invoiceTypes';
 export type { SellerSnapshot } from '../invoiceTypes';
 export { sellerLines } from '../invoiceTypes';
 import { STATUS_PILL, type StatusPillRole } from '../invoiceTypes';
-import type { QuoteDepositType, QuoteCategorySubtotal } from '@breeze/shared';
-export type { QuoteDepositType, QuoteCategorySubtotal } from '@breeze/shared';
+import type { QuoteDepositType, QuoteCategorySubtotal, CoverPage, ContractVariable } from '@breeze/shared';
+export type { QuoteDepositType, QuoteCategorySubtotal, CoverPage, ContractVariable } from '@breeze/shared';
+// Type-only (erased at compile time), so this pulls no runtime dep on the API
+// client into the types module.
+import type { QuoteSendEmailReason } from '../../../lib/api/quotes';
+export type { QuoteSendEmailReason } from '../../../lib/api/quotes';
 
 export type QuoteStatus =
   | 'draft' | 'sent' | 'viewed' | 'accepted' | 'declined' | 'expired' | 'converted';
@@ -15,7 +19,59 @@ export type QuoteStatus =
 export type QuoteLineRecurrence = 'one_time' | 'monthly' | 'annual';
 export type QuoteItemType = 'hardware' | 'software' | 'service';
 export type QuoteLineSourceType = 'catalog' | 'bundle' | 'manual';
-export type QuoteBlockType = 'heading' | 'rich_text' | 'image' | 'line_items';
+export type QuoteBlockType = 'heading' | 'rich_text' | 'image' | 'line_items' | 'contract';
+
+/** Customer display label: prefer the explicit bill-to name; otherwise resolve
+ *  the real organization name from the client-side org list (same source the
+ *  org switcher renders). Fall back to the UUID prefix only when neither is
+ *  available (e.g. the quote's org isn't in the currently-loaded list, such as
+ *  All-orgs scope). Truthiness after trim, not `??`: the bill-to validator
+ *  allows an empty string, and a blank billToName would otherwise render an
+ *  empty label — the "unfinished header" symptom (#1712) via a different input. */
+export function resolveQuoteOrgName(
+  quote: Pick<Quote, 'billToName' | 'orgId'>,
+  organizations: ReadonlyArray<{ id: string; name?: string | null }>,
+): string {
+  const billTo = quote.billToName?.trim();
+  if (billTo) return billTo;
+  const resolved = organizations.find((o) => o.id === quote.orgId)?.name?.trim();
+  if (resolved) return resolved;
+  return quote.orgId.slice(0, 8);
+}
+
+/** Client-facing shape of a `contract` block's `content` — server-rendered and
+ *  variable-substituted (contractTemplateRender.ts's renderContractBlocksForClient),
+ *  identical across portal/public/admin. Never carries the raw
+ *  templateId/templateVersionId/variableValues authoring shape or an
+ *  unresolved `{{token}}`. */
+export interface ContractBlockContent {
+  label?: string;
+  templateName: string;
+  versionNumber: number;
+  sourceType: 'authored' | 'uploaded';
+  renderedHtml: string | null;
+  fileUrl: string | null;
+  /** ADMIN editor ONLY (added by GET /quotes/:id's admin serialization, never by
+   *  the portal/public serves): the raw authoring fields the editor needs to
+   *  render an editable manual-variable form and offer a version-update nudge.
+   *  Populated for authored AND uploaded-PDF blocks alike (loadContractBlockAuthoring
+   *  keys off the pinned version row, not sourceType). Absent on portal/public
+   *  payloads, and on a block whose pinned template version no longer exists
+   *  (deleted/malformed) — that block is omitted from the authoring map. */
+  authoring?: ContractBlockAuthoring;
+}
+
+/** Raw authoring fields for a persisted `contract` block, exposed only on the
+ *  admin editor payload. `latestPublishedVersion*` describe the newest published
+ *  version of the same template (for the explicit "Update to vN" nudge). */
+export interface ContractBlockAuthoring {
+  templateId: string;
+  templateVersionId: string;
+  variableValues: Record<string, string>;
+  declaredVariables: ContractVariable[];
+  latestPublishedVersionId: string | null;
+  latestPublishedVersionNumber: number | null;
+}
 
 /** A row from `GET /quotes` / the `quote` field of `GET /quotes/:id`. */
 export interface Quote {
@@ -64,11 +120,22 @@ export interface Quote {
   terms: string | null;
   termsAndConditions: string | null;
   sellerSnapshot: SellerSnapshot | null;
+  /** Enhanced-proposals cover page (quotes.cover_page jsonb). Optional/null so
+   *  older payloads and list fixtures without the column stay assignable. */
+  coverPage?: CoverPage | null;
   acceptedAt: string | null;
   declinedAt: string | null;
   convertedAt: string | null;
   convertedInvoiceId: string | null;
   sentAt: string | null;
+  /** Undo-send window: set while a delayed send is pending (quote stays a
+   *  draft until the job fires). Optional — older payloads/fixtures omit it. */
+  sendScheduledAt?: string | null;
+  /** Delayed-dispatch outcome: null = delivered/not-sent-yet. On a SENT quote,
+   *  why the email step failed after the send committed; on a DRAFT, marks a
+   *  scheduled send rejected at fire time. Surfaced as persistent banners on
+   *  the detail view. Optional — older payloads/fixtures omit it. */
+  sendEmailReason?: QuoteSendEmailReason | null;
   viewedAt: string | null;
   createdBy: string | null;
   createdAt: string;
@@ -143,12 +210,37 @@ export interface QuoteBranding {
   seller: SellerSnapshot | null;
 }
 
-/** Shape of `GET /quotes/:id` — `{ data: { quote, blocks, lines, branding } }`. */
+/** Frozen (sent) or org-resolved (draft) customer billing address. */
+export interface QuoteBillToAddress {
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  region: string | null;
+  postalCode: string | null;
+  country: string | null;
+}
+
+/** Resolved customer "bill to" for display — server-side `getQuote` fills it from
+ *  the quote's frozen snapshot (sent) or the org's Billing settings (draft), so
+ *  the customer name + address render on the document even before the quote is
+ *  sent. Optional because list fixtures / older payloads don't carry it. */
+export interface QuoteBillTo {
+  name: string | null;
+  address: QuoteBillToAddress | null;
+  taxId: string | null;
+}
+
+/** Shape of `GET /quotes/:id` — `{ data: { quote, blocks, lines, branding, billTo } }`. */
 export interface QuoteDetail {
   quote: Quote;
   blocks: QuoteBlock[];
   lines: QuoteLine[];
   branding?: QuoteBranding;
+  billTo?: QuoteBillTo;
+  /** Persisted fulfillment staged during acceptance. Included in the detail
+   * read model so technicians can discover the order after a reload. */
+  pax8OrderId?: string | null;
+  pax8OrderLineCount?: number;
 }
 
 export const STATUS_LABELS: Record<QuoteStatus, string> = {
@@ -244,6 +336,16 @@ export function stripHtml(html: string): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Display form of a stored quantity. The API normalizes quantities to
+ *  numeric(12,2) strings ('3.00'), which reads as a pricing artifact on a money
+ *  document ("3.00 laptops"). Whole quantities render bare ('3'); genuinely
+ *  fractional ones keep their significant decimals ('2.5'). Non-numeric input
+ *  (defensive: fixtures/legacy payloads) passes through untouched. */
+export function formatQuantity(quantity: string | number): string {
+  const n = Number(quantity);
+  return Number.isFinite(n) ? String(n) : String(quantity);
 }
 
 /** Compact recurrence suffix for a line: 'one-time' | '/mo' | '/yr'. */

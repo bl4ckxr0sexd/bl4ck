@@ -118,7 +118,8 @@ clientAiAdminOrgRoutes.get('/orgs', requireOrgsRead, async (c) => {
 
   const m365 = await db
     .select({ orgId: m365Connections.orgId, tenantId: m365Connections.tenantId })
-    .from(m365Connections);
+    .from(m365Connections)
+    .where(eq(m365Connections.profile, 'legacy-direct'));
 
   const delegant = await db
     .select({
@@ -149,7 +150,7 @@ clientAiAdminOrgRoutes.get('/orgs', requireOrgsRead, async (c) => {
     }
   }
   for (const row of m365) {
-    if (ENTRA_TENANT_GUID_REGEX.test(row.tenantId)) {
+    if (row.orgId && row.tenantId && ENTRA_TENANT_GUID_REGEX.test(row.tenantId)) {
       suggestedByOrg.set(row.orgId, row.tenantId.toLowerCase());
     }
   }
@@ -239,11 +240,11 @@ clientAiConsentCallbackRoute.get('/consent/callback', (c) => {
   const description = c.req.query('error_description') ?? '';
   const title = granted ? 'Consent granted' : 'Consent not granted';
   const detail = granted
-    ? 'You can close this window, return to Breeze, and click “I’ve granted consent” in the setup wizard.'
-    : escapeHtml(description || error || 'Microsoft did not report a granted consent. Close this window and retry from Breeze.');
+    ? 'You can close this window, return to BL4CK, and click “I’ve granted consent” in the setup wizard.'
+    : escapeHtml(description || error || 'Microsoft did not report a granted consent. Close this window and retry from BL4CK.');
   const html = `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>${title} — Breeze AI for Office</title>
+<head><meta charset="utf-8"><title>${title} — BL4CK AI for Office</title>
 <style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#0b0f17;color:#e5e7eb}main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.25rem}p{color:#9ca3af;font-size:.9rem;line-height:1.5}</style>
 </head>
 <body><main><h1>${title}</h1><p>${detail}</p></main></body>

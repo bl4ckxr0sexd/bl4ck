@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"github.com/breeze-rmm/agent/internal/logging"
 	"github.com/breeze-rmm/agent/internal/mtls"
 	"github.com/breeze-rmm/agent/internal/observability"
+	"github.com/breeze-rmm/agent/internal/pamactuator"
 	"github.com/breeze-rmm/agent/internal/safemode"
 	"github.com/breeze-rmm/agent/internal/secmem"
 	"github.com/breeze-rmm/agent/internal/state"
@@ -36,6 +38,7 @@ import (
 	"github.com/breeze-rmm/agent/internal/unifi"
 	"github.com/breeze-rmm/agent/internal/userhelper"
 	"github.com/breeze-rmm/agent/internal/websocket"
+	"github.com/breeze-rmm/agent/internal/workspaceindex"
 	"github.com/breeze-rmm/agent/pkg/api"
 	"github.com/spf13/cobra"
 )
@@ -77,6 +80,7 @@ var (
 	version          = "0.5.0"
 	cfgFile          string
 	serverURL        string
+	backupServerURL  string // seeded by bootstrap/enroll responses (#2288)
 	enrollmentSecret string
 	enrollSiteID     string
 	enrollDeviceRole string
@@ -102,8 +106,9 @@ var waitForEnrollmentPollInterval = 10 * time.Second
 // is defined in service_seams_windows.go because its signature references
 // Windows-only types.
 var (
-	startAgentFn        func(*config.Config) (*agentComponents, error) = startAgent
-	waitForEnrollmentFn func(context.Context, string) *config.Config   = waitForEnrollment
+	startAgentFn                   func(*config.Config) (*agentComponents, error) = startAgent
+	waitForEnrollmentFn            func(context.Context, string) *config.Config   = waitForEnrollment
+	reconcileServiceUnitIfNeededFn                                                = reconcileServiceUnitIfNeeded
 )
 
 // initBootstrapLogging initializes the logging package with stderr +
@@ -264,7 +269,7 @@ func init() {
 	enrollCmd.Flags().BoolVar(&quietEnroll, "quiet", false, "Suppress stdout progress output (errors still go to stderr). Intended for unattended installs.")
 	bootstrapCmd.Flags().StringVar(&bootstrapInstallData, "install-data", "", "Pipe-packed bootstrap inputs from the MSI BootstrapEnroll CA: <OriginalDatabase>|<BOOTSTRAP_TOKEN>|<SERVER_URL>")
 	bootstrapCmd.Flags().BoolVar(&quietEnroll, "quiet", false, "Suppress stdout progress output (errors still go to stderr)")
-	userHelperCmd.Flags().StringVar(&helperRole, "role", "user", "Helper role: 'system' (desktop capture) or 'user' (script execution)")
+	userHelperCmd.Flags().StringVar(&helperRole, "role", string(ipc.HelperRoleUser), "Helper role: 'system' (desktop capture) or 'user' (script execution)")
 	desktopHelperCmd.Flags().StringVar(&desktopContext, "context", ipc.DesktopContextUserSession, "Desktop context: 'user_session' or 'login_window'")
 
 	rootCmd.AddCommand(startCmd)
@@ -284,6 +289,15 @@ func init() {
 // asInvoker (it is spawned into the interactive user's non-elevated session).
 // version is injected by each cmd wrapper via -X main.version.
 func Main(v string) {
+	// PAM Path B two-stage launch helper: when this process was re-exec'd as
+	// SYSTEM into a target interactive session (carrying the
+	// --pam-session-launch-helper sentinel), run the in-session launch stage
+	// and exit before any normal startup. In every other invocation this
+	// returns immediately. Must be first — before flag/arg parsing, Sentry, and
+	// cobra dispatch — so the helper re-exec short-circuits cleanly. No-op on
+	// non-Windows.
+	pamactuator.MaybeRunSessionLaunchHelper()
+
 	if v != "" {
 		version = v
 	}
@@ -384,6 +398,13 @@ type agentComponents struct {
 	// unifiDone closes after the collector loop goroutine has fully exited.
 	// nil when unifiCancel is nil.
 	unifiDone <-chan struct{}
+
+	// workspaceIndexCancel cancels the server-driven workspace indexing loop.
+	// nil when the local kill switch disables the loop.
+	workspaceIndexCancel context.CancelFunc
+	// workspaceIndexDone closes after crawls and watchers have fully exited.
+	// nil when workspaceIndexCancel is nil.
+	workspaceIndexDone <-chan struct{}
 }
 
 // shutdownAgent gracefully stops all agent components.
@@ -420,6 +441,20 @@ func shutdownAgent(comps *agentComponents) {
 		if comps.unifiDone != nil {
 			runWithTimeout("unifi collector stop", 2*time.Second, func() {
 				<-comps.unifiDone
+			})
+		}
+	}
+
+	// Cancel workspace indexing before core network teardown. A canceled crawl
+	// attempts one terminal CompleteRun, but we do NOT wait out its 30s HTTP
+	// timeout — the whole shutdown must fit systemd's 15s TimeoutStopSec, and
+	// a missed terminal flush self-heals server-side (the stale run is marked
+	// abandoned on the next crawl start). 2s matches the sibling stages.
+	if comps.workspaceIndexCancel != nil {
+		comps.workspaceIndexCancel()
+		if comps.workspaceIndexDone != nil {
+			runWithTimeout("workspace index stop", 2*time.Second, func() {
+				<-comps.workspaceIndexDone
 			})
 		}
 	}
@@ -555,10 +590,19 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 	// stops spamming the API (#401).
 	authMon := authstate.NewMonitor(3)
 
-	// Initialize log shipper for centralized diagnostics
+	// Initialize log shipper for centralized diagnostics.
+	//
+	// The shipper's URL is a provider, not a copied string: after a
+	// backup-server-URL promotion (#2323) diagnostics must follow the promoted
+	// primary instead of being shipped at the dead one for the rest of the
+	// process lifetime — precisely when those logs are most wanted (#2463).
+	// The heartbeat does not exist yet (it owns the promoted URL), so the
+	// provider is seeded with the startup value and bound to hb.ServerURL
+	// below, before the heartbeat starts.
+	shipperServerURL := newServerURLProvider(cfg.ServerURL)
 	if cfg.AgentID != "" && cfg.ServerURL != "" {
 		logging.InitShipper(logging.ShipperConfig{
-			ServerURL:    cfg.ServerURL,
+			ServerURL:    shipperServerURL.Get,
 			AgentID:      cfg.AgentID,
 			AuthToken:    secureToken,
 			AgentVersion: version,
@@ -572,17 +616,13 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 		}
 		// desktop_debug forces info-level shipping so the chatty remote-desktop
 		// diagnostics surface to the API. Leave off in production. See
-		// docs/superpowers/plans/2026-04-13-ice-turn-fallback-diagnostics.md.
+		// docs/superpowers/plans/remote-desktop/2026-04-13-ice-turn-fallback-diagnostics.md.
 		if cfg.DesktopDebug && (cfg.LogShippingLevel == "" || cfg.LogShippingLevel == "warn") {
 			logging.SetShipperLevel("info")
 		}
 	}
 
-	log.Info("starting agent",
-		"version", version,
-		"server", cfg.ServerURL,
-		"agentId", cfg.AgentID,
-	)
+	logProcessStartup(cachedMainProcessStartup())
 
 	// Surface a failed systemd unit auto-heal (reconcileServiceUnitIfNeeded /
 	// the reconcile-unit subcommand) to the fleet now that the log shipper is
@@ -661,6 +701,7 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 			log.Warn("failed to provision PAM dormant elevation account, continuing",
 				"error", err.Error())
 		}
+		logPAMActuatorStrategy(log, cfg.PAMActuatorStrategy)
 	}
 
 	// On macOS, the root daemon has Full Disk Access and can write to the
@@ -683,6 +724,13 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 	// Start heartbeat - this implements the main agent run loop
 	hb := heartbeat.NewWithVersion(cfg, version, secureToken, tlsCfg)
 	hb.SetAuthMonitor(authMon)
+
+	// Point the log shipper at the heartbeat's promoted-URL getter (#2463).
+	// This MUST happen before hb.Start(): the heartbeat is the only thing that
+	// can promote a backup URL, so binding first means there is no window in
+	// which a promotion could land while the shipper still holds the startup
+	// value.
+	shipperServerURL.Bind(hb.ServerURL)
 
 	// Log agent start audit event (nil-safe: Log() is a no-op on nil receiver)
 	hb.AuditLog().Log(audit.EventAgentStart, "", map[string]any{
@@ -717,7 +765,10 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 		// zeroed token and spins auth-failure logs (same class as ETW PR #959).
 		unifiCtx, unifiCancel = context.WithCancel(context.Background())
 		unifiDone = unifi.StartCollectorLoop(unifiCtx, unifi.CollectorDeps{
-			APIBaseURL: cfg.ServerURL,
+			// URL provider, not a copied string: after backup-server-URL
+			// promotion (#2323) uploads must follow the promoted primary
+			// instead of POSTing to the dead one forever (#2423).
+			APIBaseURL: hb.ServerURL,
 			AgentID:    cfg.AgentID,
 			HTTP:       newUnifiAPIClient(secureToken, tlsCfg),
 			// Loop failures here are config-fetch / telemetry-upload errors —
@@ -726,6 +777,33 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 			// warn) actually delivers them; Debug was invisible in the field.
 			Logf: func(format string, args ...any) { log.Warn(fmt.Sprintf(format, args...)) },
 		})
+	}
+
+	var workspaceIndexCancel context.CancelFunc
+	var workspaceIndexDone <-chan struct{}
+	if cfg.WorkspaceIndex.Enabled != nil && !*cfg.WorkspaceIndex.Enabled {
+		log.Debug("workspace indexing disabled by local configuration")
+	} else {
+		workspaceClient := workspaceindex.NewClient(workspaceindex.ClientConfig{
+			// URL provider, not a copied string — see the UniFi collector
+			// wiring above (#2423).
+			ServerURL:    hb.ServerURL,
+			EndpointBase: cfg.WorkspaceIndex.EndpointBase,
+			AuthToken:    secureToken,
+			HTTPClient:   newUnifiAPIClient(secureToken, tlsCfg),
+			AuthMonitor:  authMon,
+		})
+		var workspaceIndexCtx context.Context
+		workspaceIndexCtx, workspaceIndexCancel = context.WithCancel(context.Background())
+		workspaceIndexDeps := workspaceindex.Deps{Client: workspaceClient}
+		// Device-audit trace for server-driven indexing activation (#2425).
+		// Assign only a non-nil logger: a nil *audit.Logger stored in the
+		// AuditLogger interface is a TYPED nil, which passes `!= nil` and would
+		// make the loop's audit guard silently decorative.
+		if auditLog := hb.AuditLog(); auditLog != nil {
+			workspaceIndexDeps.Audit = auditLog
+		}
+		workspaceIndexDone = workspaceindex.StartLoop(workspaceIndexCtx, workspaceIndexDeps)
 	}
 
 	// PAM Track 3: subscribe to Microsoft-Windows-LUA ETW provider for
@@ -770,16 +848,38 @@ func startAgent(cfg *config.Config) (*agentComponents, error) {
 	}
 
 	return &agentComponents{
-		hb:               hb,
-		wsClient:         wsClient,
-		secureToken:      secureToken,
-		etwluaCancel:     etwCancel,
-		etwluaDone:       etwluaDone,
-		supervisorCancel: supervisorCancel,
-		supervisorDone:   supervisorDone,
-		unifiCancel:      unifiCancel,
-		unifiDone:        unifiDone,
+		hb:                   hb,
+		wsClient:             wsClient,
+		secureToken:          secureToken,
+		etwluaCancel:         etwCancel,
+		etwluaDone:           etwluaDone,
+		supervisorCancel:     supervisorCancel,
+		supervisorDone:       supervisorDone,
+		unifiCancel:          unifiCancel,
+		unifiDone:            unifiDone,
+		workspaceIndexCancel: workspaceIndexCancel,
+		workspaceIndexDone:   workspaceIndexDone,
 	}, nil
+}
+
+// logPAMActuatorStrategy logs, once at startup, which PAM elevation actuator
+// strategy is resolved for this agent — the VM validation matrix depends on
+// being able to confirm "token_launch strategy is active" from the logs
+// alone. It also warns when the configured value is a non-empty string that
+// doesn't match a known strategy (e.g. a typo like "token-launch"), since
+// pamActuatorStrategy() silently falls back to sendinput in that case and the
+// mismatch would otherwise be invisible. Deliberately minimal: called once
+// per agent start, never per-actuation.
+func logPAMActuatorStrategy(l *slog.Logger, configured string) {
+	switch pamactuator.Strategy(configured) {
+	case pamactuator.StrategySendInput, pamactuator.StrategyTokenLaunch:
+		l.Info("pam actuator strategy resolved", "strategy", configured)
+	case "":
+		l.Info("pam actuator strategy resolved", "strategy", string(pamactuator.StrategySendInput))
+	default:
+		l.Warn("pam_actuator_strategy is not a recognized strategy, falling back to sendinput",
+			"configuredStrategy", configured)
+	}
 }
 
 // attemptTCCGrant runs tcc.EnsurePermissions and logs the results.
@@ -837,18 +937,41 @@ func retryTCCGrant() {
 // - Receiving pending commands from the server via heartbeat response
 // - Executing commands and reporting results back to the server
 func runAgent() {
+	serviceMode := isWindowsService()
+	startup := currentProcessStartup("run", "", serviceMode)
+	cacheMainProcessStartup(startup)
+	guard, err := acquireMainAgentGuardFn(startup)
+	if err != nil {
+		writeInstanceGuardMarkerFn(startup, err)
+		if errors.Is(err, ErrMainAgentAlreadyRunning) {
+			fmt.Fprintf(
+				os.Stderr,
+				"Breeze main agent is already running (pid=%d session=%d mode=%s)\n",
+				startup.PID,
+				startup.WindowsSessionID,
+				startup.LaunchMode,
+			)
+			mainAgentExitFn(exitAlreadyRunning)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Breeze main-agent instance guard failed: %v\n", err)
+		mainAgentExitFn(exitInstanceGuardError)
+		return
+	}
+	defer guard.Close()
+
 	// Self-heal the installed service unit from older installs (launchd plists on
 	// macOS; systemd unit on Linux) after a binary-only auto-update.
-	reconcileServiceUnitIfNeeded()
+	reconcileServiceUnitIfNeededFn()
 
 	// On Windows, if launched by the SCM, run under the service framework
 	// so we report Running/Stopped status back to the SCM correctly. The
 	// service wrapper owns its own config loading, enrollment check, and
 	// cancellation via the SCM request channel.
-	if isWindowsService() {
+	if serviceMode {
 		if err := runAsService(cfgFile); err != nil {
 			log.Error("service failed", "error", err.Error())
-			os.Exit(1)
+			mainAgentExitFn(1)
 		}
 		return
 	}
@@ -928,6 +1051,26 @@ func runAgent() {
 // values before exec, and the direct-exe CA has to do the same here.
 func trimEnrollInputs(key, server, secret string) (string, string, string) {
 	return strings.TrimSpace(key), strings.TrimSpace(server), strings.TrimSpace(secret)
+}
+
+// resolveBackupServerURL selects and validates the backup control-plane URL
+// seeded during enrollment. The enrollment response takes precedence over the
+// bootstrap response; an invalid seed or one matching the primary URL is
+// discarded rather than persisted into the fresh agent config. A non-nil
+// error means a candidate seed existed but failed validation — callers log
+// it; it must never fail enrollment.
+func resolveBackupServerURL(enrollSeed, bootstrapSeed, primaryServerURL string) (string, error) {
+	seed := enrollSeed
+	if seed == "" {
+		seed = bootstrapSeed
+	}
+	if seed == "" || seed == primaryServerURL {
+		return "", nil
+	}
+	if err := config.ValidateBackupServerURL(seed); err != nil {
+		return "", err
+	}
+	return seed, nil
 }
 
 // assertHostnameNonEmpty enforces the #439 contract: enrollment must
@@ -1135,6 +1278,17 @@ func enrollDevice(enrollmentKey string) {
 	cfg.OrgID = enrollResp.OrgID
 	cfg.SiteID = enrollResp.SiteID
 
+	// Backup control-plane URL (#2288): enroll response wins; bootstrap value
+	// is the fallback. Validated before persisting — a bad value must not
+	// poison a fresh enrollment.
+	resolvedBackupURL, backupSeedErr := resolveBackupServerURL(enrollResp.BackupServerURL, backupServerURL, cfg.ServerURL)
+	if backupSeedErr != nil {
+		enrollLog.Warn("dropped invalid backup server URL seed from enrollment", "error", backupSeedErr)
+	}
+	if resolvedBackupURL != "" {
+		cfg.BackupServerURL = resolvedBackupURL
+	}
+
 	if enrollResp.Config.HeartbeatIntervalSeconds > 0 {
 		cfg.HeartbeatIntervalSeconds = enrollResp.Config.HeartbeatIntervalSeconds
 	}
@@ -1307,21 +1461,23 @@ func checkStatus() {
 // runUserHelper starts the per-user session helper process.
 // It connects to the root daemon via IPC and handles user-context operations.
 func runUserHelper() {
-	runHelperProcess("user helper", helperRole, "", ipc.HelperBinaryUserHelper)
+	// helperRole is bound to the cobra --role string flag; convert at this
+	// CLI boundary into the typed HelperRole used everywhere downstream.
+	runHelperProcess("user helper", ipc.HelperRole(helperRole), "", ipc.HelperBinaryUserHelper)
 }
 
 func runDesktopHelper() {
 	runHelperProcess("desktop helper", desktopHelperRole(), desktopContext, ipc.HelperBinaryDesktopHelper)
 }
 
-func desktopHelperRole() string {
+func desktopHelperRole() ipc.HelperRole {
 	if runtime.GOOS == "darwin" {
 		return ipc.HelperRoleUser
 	}
 	return ipc.HelperRoleSystem
 }
 
-func runHelperProcess(name, role, context, binaryKind string) {
+func runHelperProcess(name string, role ipc.HelperRole, context, binaryKind string) {
 	// Detach any inherited console immediately. This runs at the top of
 	// every helper role — user-helper, desktop-helper, and any future
 	// helper subcommand routed through runHelperProcess — because all of
@@ -1359,9 +1515,14 @@ func runHelperProcess(name, role, context, binaryKind string) {
 	}
 	logging.Init("text", "info", output)
 
-	// Load agent config for IPC socket path and helper-scoped log shipping credentials.
-	cfg, _ := config.Load(cfgFile)
-	if cfg == nil {
+	// Load agent config for IPC socket path and helper-scoped log shipping
+	// credentials. Use LoadHelperConfig, NOT Load: this process runs as the
+	// logged-in user on the user-helper path, and Load() unconditionally reads
+	// root-only secrets.yaml and returns an error there, leaving the helper with
+	// no shipper at all (#2483). LoadHelperConfig reads agent.yaml only.
+	cfg, err := config.LoadHelperConfig(cfgFile)
+	if err != nil {
+		slog.Warn("helper config load failed; helper log shipping disabled", "error", err)
 		cfg = config.Default()
 	}
 
@@ -1370,14 +1531,28 @@ func runHelperProcess(name, role, context, binaryKind string) {
 		socketPath = cfg.IPCSocketPath
 	}
 
-	// Ship helper logs to the API under the same agent identity
+	// Ship helper logs to the API under the same agent identity.
+	//
+	// The helper is a SEPARATE, long-lived process with no heartbeat of its
+	// own, and nothing respawns it when the agent promotes a backup server URL
+	// (#2323) — so a copied cfg.ServerURL would keep shipping helper
+	// diagnostics at the dead primary for the rest of the logon session
+	// (#2463). The agent persists the promotion swap to agent.yaml, which is
+	// world-readable precisely so the helper can read its server URL, so the
+	// provider re-reads it there on a TTL.
+	//
+	// This block is reachable in BOTH user- and SYSTEM-context helpers: the
+	// LoadHelperConfig above reads agent.yaml (world-readable) and skips
+	// root-only secrets.yaml, so the AgentID/ServerURL/HelperAuthToken this gate
+	// needs are populated in a user session too (#2483). Everything the gate
+	// checks lives in agent.yaml by design (see secretKeyAllowedInAgentYAML).
 	if cfg.AgentID != "" && cfg.ServerURL != "" && cfg.HelperAuthToken != "" {
 		helperToken := secmem.NewSecureString(cfg.HelperAuthToken)
 		cfg.AuthToken = ""
 		cfg.HelperAuthToken = ""
 		helperAuthMon := authstate.NewMonitor(3)
 		logging.InitShipper(logging.ShipperConfig{
-			ServerURL:    cfg.ServerURL,
+			ServerURL:    config.NewPersistedServerURLProvider(cfgFile, cfg.ServerURL, 0),
 			AgentID:      cfg.AgentID,
 			AuthToken:    helperToken,
 			AgentVersion: version + "-helper",
@@ -1390,7 +1565,7 @@ func runHelperProcess(name, role, context, binaryKind string) {
 		}
 		// desktop_debug forces info-level shipping so the chatty remote-desktop
 		// diagnostics surface to the API. Leave off in production. See
-		// docs/superpowers/plans/2026-04-13-ice-turn-fallback-diagnostics.md.
+		// docs/superpowers/plans/remote-desktop/2026-04-13-ice-turn-fallback-diagnostics.md.
 		if cfg.DesktopDebug && (cfg.LogShippingLevel == "" || cfg.LogShippingLevel == "warn") {
 			logging.SetShipperLevel("info")
 		}
@@ -1428,15 +1603,7 @@ func runHelperProcess(name, role, context, binaryKind string) {
 		}
 	}()
 
-	log.Info("starting helper",
-		"name", name,
-		"version", version,
-		"socket", socketPath,
-		"pid", os.Getpid(),
-		"role", role,
-		"context", context,
-		"binaryKind", binaryKind,
-	)
+	logProcessStartup(currentProcessStartup("user-helper", role, false))
 
 	// Handle shutdown signals via a done channel so multiple selects
 	// can observe the shutdown without racing on a buffered sigChan.

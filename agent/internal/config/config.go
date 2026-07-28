@@ -1,18 +1,20 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
-// WatchdogConfig holds settings for the bl4ck-watchdog service.
+// WatchdogConfig holds settings for the breeze-watchdog service.
 type WatchdogConfig struct {
 	Enabled                 bool          `mapstructure:"enabled" yaml:"enabled"`
 	ProcessCheckInterval    time.Duration `mapstructure:"process_check_interval" yaml:"process_check_interval"`
@@ -41,34 +43,46 @@ type PolicyConfigStateProbe struct {
 }
 
 type Config struct {
-	AgentID                      string   `mapstructure:"agent_id"`
-	ServerURL                    string   `mapstructure:"server_url"`
-	AuthToken                    string   `mapstructure:"auth_token"`
-	WatchdogAuthToken            string   `mapstructure:"watchdog_auth_token"`
-	HelperAuthToken              string   `mapstructure:"helper_auth_token"`
-	OrgID                        string   `mapstructure:"org_id"`
-	SiteID                       string   `mapstructure:"site_id"`
-	HeartbeatIntervalSeconds     int      `mapstructure:"heartbeat_interval_seconds"`
-	MetricsIntervalSeconds       int      `mapstructure:"metrics_interval_seconds"`
-	ProcessSampleIntervalSeconds int      `mapstructure:"process_sample_interval_seconds"`
+	AgentID   string `mapstructure:"agent_id"`
+	ServerURL string `mapstructure:"server_url"`
+	// BackupServerURL is a second control-plane URL delivered by the server
+	// via heartbeat configUpdate (#2288). The heartbeat loop probes it after
+	// backupProbeThreshold consecutive primary failures and promote-swaps on
+	// a successful authenticated heartbeat. Never a secret; lives in agent.yaml.
+	BackupServerURL   string `mapstructure:"backup_server_url"`
+	AuthToken         string `mapstructure:"auth_token"`
+	WatchdogAuthToken string `mapstructure:"watchdog_auth_token"`
+	HelperAuthToken   string `mapstructure:"helper_auth_token"`
+	// Issue #2621 — staged credentials from a rotation that has been durably
+	// written but not yet confirmed to the server. They are persisted ALONGSIDE
+	// the still-current set, never in place of it: that is what makes a crash at
+	// any point during rotation survivable. On startup an agent that finds these
+	// populated re-drives the confirmation instead of silently dropping them.
+	PendingAuthToken             string `mapstructure:"pending_auth_token"`
+	PendingWatchdogAuthToken     string `mapstructure:"pending_watchdog_auth_token"`
+	PendingHelperAuthToken       string `mapstructure:"pending_helper_auth_token"`
+	OrgID                        string `mapstructure:"org_id"`
+	SiteID                       string `mapstructure:"site_id"`
+	HeartbeatIntervalSeconds     int    `mapstructure:"heartbeat_interval_seconds"`
+	MetricsIntervalSeconds       int    `mapstructure:"metrics_interval_seconds"`
+	ProcessSampleIntervalSeconds int    `mapstructure:"process_sample_interval_seconds"`
 	// PatchScanIntervalHours is the cadence of the (expensive) patch scan, in
 	// hours. Clamped to [1, 168] at the use site; defaults to DefaultPatchScanIntervalHours.
-	PatchScanIntervalHours int `mapstructure:"patch_scan_interval_hours"`
-	EnabledCollectors            []string `mapstructure:"enabled_collectors"`
-	BackupEnabled                bool     `mapstructure:"backup_enabled"`
-	BackupPaths                  []string `mapstructure:"backup_paths"`
-	BackupSchedule               string   `mapstructure:"backup_schedule"`
-	BackupRetention              int      `mapstructure:"backup_retention"`
-	BackupProvider               string   `mapstructure:"backup_provider"`
-	BackupLocalPath              string   `mapstructure:"backup_local_path"`
-	BackupS3Bucket               string   `mapstructure:"backup_s3_bucket"`
-	BackupS3Region               string   `mapstructure:"backup_s3_region"`
-	BackupS3AccessKey            string   `mapstructure:"backup_s3_access_key"`
-	BackupS3SecretKey            string   `mapstructure:"backup_s3_secret_key"`
-	BackupVSSEnabled             bool     `mapstructure:"backup_vss_enabled"`          // Windows: VSS shadow copy before backup
-	BackupSystemStateEnabled     bool     `mapstructure:"backup_system_state_enabled"` // Collect system state alongside file backup
-	BackupBinaryPath             string   `mapstructure:"backup_binary_path"`          // Path to bl4ck-backup helper binary
-	BackupStagingDir             string   `mapstructure:"backup_staging_dir"`          // Staging directory for Hyper-V exports, MSSQL backups, etc. (empty = OS temp dir)
+	PatchScanIntervalHours   int      `mapstructure:"patch_scan_interval_hours"`
+	EnabledCollectors        []string `mapstructure:"enabled_collectors"`
+	BackupEnabled            bool     `mapstructure:"backup_enabled"`
+	BackupPaths              []string `mapstructure:"backup_paths"`
+	BackupRetention          int      `mapstructure:"backup_retention"`
+	BackupProvider           string   `mapstructure:"backup_provider"`
+	BackupLocalPath          string   `mapstructure:"backup_local_path"`
+	BackupS3Bucket           string   `mapstructure:"backup_s3_bucket"`
+	BackupS3Region           string   `mapstructure:"backup_s3_region"`
+	BackupS3AccessKey        string   `mapstructure:"backup_s3_access_key"`
+	BackupS3SecretKey        string   `mapstructure:"backup_s3_secret_key"`
+	BackupVSSEnabled         bool     `mapstructure:"backup_vss_enabled"`          // Windows: VSS shadow copy before backup
+	BackupSystemStateEnabled bool     `mapstructure:"backup_system_state_enabled"` // Collect system state alongside file backup
+	BackupBinaryPath         string   `mapstructure:"backup_binary_path"`          // Path to breeze-backup helper binary
+	BackupStagingDir         string   `mapstructure:"backup_staging_dir"`          // Staging directory for Hyper-V exports, MSSQL backups, etc. (empty = OS temp dir)
 
 	// Local vault (SMB share / USB drive) configuration
 	VaultEnabled        bool   `mapstructure:"vault_enabled"`
@@ -96,6 +110,13 @@ type Config struct {
 	// PAMEnabled gates privileged access management features, including the
 	// dormant local elevation account. Default false.
 	PAMEnabled bool `mapstructure:"pam_enabled"`
+
+	// PAMActuatorStrategy selects the Windows elevation actuator: "sendinput"
+	// (Path A — inject credentials into consent.exe) or "token_launch" (Path B —
+	// suppress consent.exe and launch the target elevated via CreateProcessAsUser
+	// as ~breeze_elev). Default "sendinput". Path B ships dark; flip per-device
+	// via agent.yaml. Ignored when PAMEnabled is false.
+	PAMActuatorStrategy string `mapstructure:"pam_actuator_strategy"`
 
 	// Concurrency limits
 	MaxConcurrentCommands int `mapstructure:"max_concurrent_commands"`
@@ -147,8 +168,15 @@ type Config struct {
 	MtlsKeyPEM      string `mapstructure:"mtls_key_pem"`
 	MtlsCertExpires string `mapstructure:"mtls_cert_expires"`
 
-	// Watchdog configuration for the bl4ck-watchdog service.
+	// Watchdog configuration for the breeze-watchdog service.
 	Watchdog WatchdogConfig `mapstructure:"watchdog" yaml:"watchdog"`
+
+	// WorkspaceIndex controls the server-driven workspace indexing loop.
+	// Enabled nil defaults to on; explicit false is a hard local kill switch.
+	WorkspaceIndex struct {
+		Enabled      *bool  `mapstructure:"enabled" yaml:"enabled"`
+		EndpointBase string `mapstructure:"endpoint_base" yaml:"endpoint_base"`
+	} `mapstructure:"workspace_index" yaml:"workspace_index"`
 
 	// IsService is a runtime flag set when the agent is running as a system service
 	// (Windows SCM, macOS launchd, Linux systemd). It is not persisted to config.
@@ -176,9 +204,9 @@ func defaultLogFile() string {
 	case "windows":
 		return filepath.Join(configDir(), "logs", "agent.log")
 	case "darwin":
-		return "/Library/Application Support/BL4CK/logs/agent.log"
+		return "/Library/Application Support/Breeze/logs/agent.log"
 	default:
-		return "/var/log/bl4ck/agent.log"
+		return "/var/log/breeze/agent.log"
 	}
 }
 
@@ -210,6 +238,7 @@ func Default() *Config {
 		LogMaxBackups:                3,
 		LogShippingLevel:             "warn",
 		PAMEnabled:                   false,
+		PAMActuatorStrategy:          "sendinput",
 		MaxConcurrentCommands:        10,
 		CommandQueueSize:             100,
 		AuditEnabled:                 true,
@@ -300,6 +329,18 @@ func Load(cfgFile string) (*Config, error) {
 		if v := sv.GetString("helper_auth_token"); v != "" {
 			cfg.HelperAuthToken = v
 		}
+		// Issue #2621 — staged rotation credentials. Losing these on load would
+		// reintroduce the stranding bug from the other direction: the server may
+		// already have promoted them, and this is the agent's only durable copy.
+		if v := sv.GetString("pending_auth_token"); v != "" {
+			cfg.PendingAuthToken = v
+		}
+		if v := sv.GetString("pending_watchdog_auth_token"); v != "" {
+			cfg.PendingWatchdogAuthToken = v
+		}
+		if v := sv.GetString("pending_helper_auth_token"); v != "" {
+			cfg.PendingHelperAuthToken = v
+		}
 		if v := sv.GetString("mtls_cert_pem"); v != "" {
 			cfg.MtlsCertPEM = v
 		}
@@ -335,10 +376,64 @@ func Load(cfgFile string) (*Config, error) {
 	return cfg, nil
 }
 
+// persistMu serializes every config-file persist (SetAndPersist,
+// SetAllAndPersist, SetSecretAndPersist, SaveTo). All of them mutate the
+// package-global viper state and rewrite the same files; concurrent callers
+// (e.g. a set_auto_update command worker racing a backup-URL promotion)
+// previously raced viper's internal maps and each other's writes.
+// (config.Load's inline-secret migration writes outside this lock — a
+// pre-existing, startup-dominated path.)
+var persistMu sync.Mutex
+
+// SetAllAndPersist updates several non-secret config keys in viper and writes
+// them to the config file in a SINGLE write, so related keys (e.g. the
+// server_url/backup_server_url swap on backup promotion, #2288) can never be
+// torn across two file writes by a crash between them. Secret keys are routed
+// to secrets.yaml exactly as in SetAndPersist.
+func SetAllAndPersist(kv map[string]any) error {
+	persistMu.Lock()
+	defer persistMu.Unlock()
+	path := viper.ConfigFileUsed()
+
+	if path != "" {
+		if err := migrateInlineSecretsToSecretFile(path); err != nil {
+			return err
+		}
+	}
+	for _, k := range viper.AllKeys() {
+		if isSecretYAMLKey(k) {
+			viper.Set(k, nil)
+		}
+	}
+
+	for key, value := range kv {
+		if isSecretConfigKey(key) {
+			if err := setSecretAndPersistLocked(key, value); err != nil {
+				return err
+			}
+			viper.Set(key, nil)
+		} else {
+			viper.Set(key, value)
+		}
+	}
+	if err := viper.WriteConfig(); err != nil {
+		return err
+	}
+	if path != "" {
+		if err := migrateInlineSecretsToSecretFile(path); err != nil {
+			return err
+		}
+		return enforceConfigFilePermissions(path)
+	}
+	return nil
+}
+
 // SetAndPersist updates a single non-secret config key in viper and writes it
 // to the existing config file. Any legacy inline secrets are migrated to
 // secrets.yaml and scrubbed from agent.yaml after the write.
 func SetAndPersist(key string, value any) error {
+	persistMu.Lock()
+	defer persistMu.Unlock()
 	path := viper.ConfigFileUsed()
 
 	// SECURITY: move any legacy inline secrets out of the on-disk agent.yaml into
@@ -360,7 +455,7 @@ func SetAndPersist(key string, value any) error {
 	}
 
 	if isSecretConfigKey(key) {
-		if err := SetSecretAndPersist(key, value); err != nil {
+		if err := setSecretAndPersistLocked(key, value); err != nil {
 			return err
 		}
 		viper.Set(key, nil)
@@ -382,6 +477,14 @@ func SetAndPersist(key string, value any) error {
 }
 
 func SetSecretAndPersist(key string, value any) error {
+	persistMu.Lock()
+	defer persistMu.Unlock()
+	return setSecretAndPersistLocked(key, value)
+}
+
+// setSecretAndPersistLocked is SetSecretAndPersist's body; callers must hold
+// persistMu.
+func setSecretAndPersistLocked(key string, value any) error {
 	path := secretsFilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -426,8 +529,11 @@ func Save(cfg *Config) error {
 }
 
 func SaveTo(cfg *Config, cfgFile string) error {
+	persistMu.Lock()
+	defer persistMu.Unlock()
 	viper.Set("agent_id", cfg.AgentID)
 	viper.Set("server_url", cfg.ServerURL)
+	viper.Set("backup_server_url", cfg.BackupServerURL)
 	viper.Set("org_id", cfg.OrgID)
 	viper.Set("site_id", cfg.SiteID)
 	viper.Set("heartbeat_interval_seconds", cfg.HeartbeatIntervalSeconds)
@@ -438,6 +544,7 @@ func SaveTo(cfg *Config, cfgFile string) error {
 	viper.Set("log_level", cfg.LogLevel)
 	viper.Set("log_shipping_level", cfg.LogShippingLevel)
 	viper.Set("pam_enabled", cfg.PAMEnabled)
+	viper.Set("pam_actuator_strategy", cfg.PAMActuatorStrategy)
 	viper.Set("auto_update", cfg.AutoUpdate)
 	viper.Set("allow_dev_update", cfg.AllowDevUpdate)
 	viper.Set("pinned_manifest_pub_keys", cfg.PinnedManifestPubKeys)
@@ -483,7 +590,7 @@ func SaveTo(cfg *Config, cfgFile string) error {
 	if err != nil {
 		return fmt.Errorf("writing agent config: %w", err)
 	}
-	// agent.yaml is world-readable (0644) so the BL4CK Helper, running as the
+	// agent.yaml is world-readable (0644) so the Breeze Helper, running as the
 	// logged-in user, can read it. It carries only the helper-scoped token;
 	// full tokens and mTLS keys are written to root-only secrets.yaml below.
 	if err := atomicWriteFile(cfgPath, cfgYAML, 0644); err != nil {
@@ -501,18 +608,55 @@ func SaveTo(cfg *Config, cfgFile string) error {
 	// Write secrets to a separate root-only file.
 	secretsPath := secretsFilePathFor(cfgPath)
 	sv := viper.New()
-	// Only overwrite auth_token if non-empty. At runtime the token may be
-	// cleared from the config struct for security; writing "" would wipe
-	// the persisted token and break the agent on next startup.
-	if cfg.AuthToken != "" {
-		sv.Set("auth_token", cfg.AuthToken)
+
+	// Issue #2621 — SaveTo rebuilds the secrets file from scratch, so every
+	// credential it does not re-write is DROPPED. Two ways that bites:
+	//
+	//   - Staged rotation credentials on disk are invisible to an unrelated
+	//     caller (the mTLS renewal path calls config.Save mid-flight), so a cert
+	//     renewal during a rotation would delete the staged set the server may
+	//     already have promoted.
+	//   - The in-memory config clears tokens for security (AuthToken is zeroed
+	//     after startup) and applyRotatedCredentials updates the credential file
+	//     directly rather than the struct, so cfg's watchdog/helper tokens can be
+	//     stale or empty relative to disk.
+	//
+	// So for every credential: prefer a non-empty in-memory value, otherwise
+	// preserve exactly what is on disk. Never write an empty token over a real
+	// one. A read failure is logged rather than swallowed — silently proceeding
+	// would delete credentials this fallback exists to protect.
+	credsOnDisk, readErr := readPersistedCredentialsAt(cfgPath)
+	// A missing secrets file is the normal first-save/enrollment case, not a
+	// problem — there is simply nothing to preserve. Anything else means the file
+	// exists but could not be parsed, and we are about to overwrite it, so say so.
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		log.Warn("could not read existing credentials while saving config; on-disk credential preservation is degraded",
+			"error", readErr.Error())
 	}
-	if cfg.WatchdogAuthToken != "" {
-		sv.Set("watchdog_auth_token", cfg.WatchdogAuthToken)
+	setCredential := func(key, fromCfg string, fromDisk func(*PersistedCredentials) string) {
+		if fromCfg != "" {
+			sv.Set(key, fromCfg)
+			return
+		}
+		if credsOnDisk != nil {
+			if v := fromDisk(credsOnDisk); v != "" {
+				sv.Set(key, v)
+			}
+		}
 	}
-	if cfg.HelperAuthToken != "" {
-		sv.Set("helper_auth_token", cfg.HelperAuthToken)
-	}
+	setCredential(secretKeyAuthToken, cfg.AuthToken,
+		func(p *PersistedCredentials) string { return p.AuthToken })
+	setCredential(secretKeyWatchdogAuthToken, cfg.WatchdogAuthToken,
+		func(p *PersistedCredentials) string { return p.WatchdogAuthToken })
+	setCredential(secretKeyHelperAuthToken, cfg.HelperAuthToken,
+		func(p *PersistedCredentials) string { return p.HelperAuthToken })
+	setCredential(secretKeyPendingAuthToken, cfg.PendingAuthToken,
+		func(p *PersistedCredentials) string { return p.PendingAuthToken })
+	setCredential(secretKeyPendingWatchdogAuthToken, cfg.PendingWatchdogAuthToken,
+		func(p *PersistedCredentials) string { return p.PendingWatchdogAuthToken })
+	setCredential(secretKeyPendingHelperAuthToken, cfg.PendingHelperAuthToken,
+		func(p *PersistedCredentials) string { return p.PendingHelperAuthToken })
+
 	sv.Set("mtls_cert_pem", cfg.MtlsCertPEM)
 	sv.Set("mtls_key_pem", cfg.MtlsKeyPEM)
 	sv.Set("mtls_cert_expires", cfg.MtlsCertExpires)
@@ -639,7 +783,7 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 // secretKeyAllowedInAgentYAML lists keys that look secret by suffix rules but
-// must remain in agent.yaml. The BL4CK Helper ("BL4CK Assist") runs as the
+// must remain in agent.yaml. The Breeze Helper ("Breeze Assist") runs as the
 // logged-in user and reads agent.yaml directly; it needs helper_auth_token.
 var secretKeyAllowedInAgentYAML = map[string]bool{
 	"helper_auth_token": true,
@@ -676,14 +820,14 @@ func GetDataDir() string {
 	case "windows":
 		return filepath.Join(configDir(), "data")
 	case "darwin":
-		return "/Library/Application Support/BL4CK/data"
+		return "/Library/Application Support/Breeze/data"
 	default:
-		return "/var/lib/bl4ck"
+		return "/var/lib/breeze"
 	}
 }
 
 // FixConfigPermissions loosens the config directory and file permissions so
-// the BL4CK Helper (running as the logged-in user) can read the main config.
+// the Breeze Helper (running as the logged-in user) can read the main config.
 // The secrets file is kept root-only (0600).
 // Safe to call on every startup — it is a no-op if permissions are already
 // correct or the paths don't exist yet.

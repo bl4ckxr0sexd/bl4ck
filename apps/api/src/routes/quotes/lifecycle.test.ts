@@ -29,6 +29,10 @@ vi.mock('../../services/quoteLifecycle', () => ({
   sendQuote: vi.fn(async () => ({ quote: { id: 'q1', status: 'sent' }, emailed: false, acceptUrl: 'http://x/quote/t' })),
 }));
 vi.mock('../../services/quoteService', () => ({ getQuote: vi.fn() }));
+vi.mock('../../jobs/quoteSendQueue', () => ({
+  scheduleQuoteSend: vi.fn(),
+  cancelQuoteSend: vi.fn(),
+}));
 vi.mock('../../services/quoteImageStorage', () => ({
   writeQuoteImage: vi.fn(), readQuoteImage: vi.fn(), sniffImageMime: vi.fn(), MAX_QUOTE_IMAGE_SIZE_BYTES: 5 * 1024 * 1024,
   fetchRemoteImage: vi.fn(),
@@ -40,12 +44,16 @@ vi.mock('./quotes', () => ({
   quoteActorFrom: () => ({ userId: 'u1', partnerId: 'p1', accessibleOrgIds: null }),
   handleServiceError: (_c: unknown, err: unknown) => { throw err; },
 }));
+vi.mock('../../services/contractTemplateRender', () => ({ loadContractBlockRenderData: vi.fn() }));
 
 import { quoteLifecycleRoutes } from './lifecycle';
 import { getQuote } from '../../services/quoteService';
+import { scheduleQuoteSend, cancelQuoteSend } from '../../jobs/quoteSendQueue';
 import { fetchRemoteImage, writeQuoteImage, RemoteImageError } from '../../services/quoteImageStorage';
+import { loadContractBlockRenderData } from '../../services/contractTemplateRender';
 
 const QUOTE_ID = '11111111-1111-4111-8111-111111111111';
+const BLOCK_ID = '22222222-2222-4222-8222-222222222222';
 
 function appWith(scope: 'partner' | 'system' | 'organization', perms: string[]) {
   permState.perms = perms;
@@ -69,6 +77,152 @@ describe('POST /:id/send RBAC (quotes:send)', () => {
   it('403s a wrong scope (organization) even with quotes:send', async () => {
     const res = await appWith('organization', ['quotes:send']).request(`/${QUOTE_ID}/send`, { method: 'POST' });
     expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /:id/send — composer body', () => {
+  const PERMS = ['quotes:read', 'quotes:write', 'quotes:send'];
+  const jsonReq = (body: unknown) => ({
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  it('forwards to/cc/subject/includePdf/message to the service', async () => {
+    const { sendQuote } = await import('../../services/quoteLifecycle');
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/send`, jsonReq({
+      to: ['buyer@customer.example'], cc: ['cfo@customer.example'],
+      subject: 'Your refresh', includePdf: false, message: 'hi',
+    }));
+    expect(res.status).toBe(200);
+    expect(vi.mocked(sendQuote)).toHaveBeenCalledWith(QUOTE_ID, expect.anything(), {
+      to: ['buyer@customer.example'], cc: ['cfo@customer.example'],
+      subject: 'Your refresh', includePdf: false, message: 'hi',
+    });
+  });
+
+  it('400s an invalid recipient email', async () => {
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/send`, jsonReq({ to: ['not-an-email'] }));
+    expect(res.status).toBe(400);
+  });
+
+  it('400s an empty to array (explicit recipients must be non-empty)', async () => {
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/send`, jsonReq({ to: [] }));
+    expect(res.status).toBe(400);
+  });
+
+  it('400s an unknown field (strict body)', async () => {
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/send`, jsonReq({ bcc: ['x@y.z'] }));
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /:id/schedule-send', () => {
+  const PERMS = ['quotes:read', 'quotes:write', 'quotes:send'];
+  const FIRE_AT = new Date('2026-07-18T12:00:30.000Z');
+  const draftQuote = {
+    quote: { id: QUOTE_ID, status: 'draft', orgId: 'org-1' },
+    lines: [{ customerVisible: true }],
+    blocks: [],
+  };
+  const jsonReq = (body: unknown) => ({
+    method: 'POST' as const,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getQuote).mockResolvedValue(draftQuote as never);
+    vi.mocked(scheduleQuoteSend).mockResolvedValue({ sendScheduledAt: FIRE_AT });
+  });
+
+  it('403s a quotes:read + quotes:write user without quotes:send (same gate as /send)', async () => {
+    const res = await appWith('partner', ['quotes:read', 'quotes:write']).request(`/${QUOTE_ID}/schedule-send`, { method: 'POST' });
+    expect(res.status).toBe(403);
+    expect(scheduleQuoteSend).not.toHaveBeenCalled();
+  });
+
+  it('409s (INVALID_STATE) when the quote is not a draft', async () => {
+    vi.mocked(getQuote).mockResolvedValue({ ...draftQuote, quote: { ...draftQuote.quote, status: 'sent' } } as never);
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, { method: 'POST' });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'INVALID_STATE' });
+    expect(scheduleQuoteSend).not.toHaveBeenCalled();
+  });
+
+  it('422s (QUOTE_EMPTY) when the draft has no customer-visible lines', async () => {
+    vi.mocked(getQuote).mockResolvedValue({ ...draftQuote, lines: [{ customerVisible: false }] } as never);
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ code: 'QUOTE_EMPTY' });
+    expect(scheduleQuoteSend).not.toHaveBeenCalled();
+  });
+
+  it('400s a delaySeconds outside 5..300', async () => {
+    for (const delaySeconds of [4, 301, 30.5]) {
+      const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, jsonReq({ delaySeconds }));
+      expect(res.status).toBe(400);
+    }
+    expect(scheduleQuoteSend).not.toHaveBeenCalled();
+  });
+
+  it('400s malformed JSON without scheduling', async () => {
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{ not valid json',
+    });
+    expect(res.status).toBe(400);
+    expect(scheduleQuoteSend).not.toHaveBeenCalled();
+  });
+
+  it('200s with the ISO fire time and forwards delaySeconds as milliseconds', async () => {
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, jsonReq({ delaySeconds: 60, message: 'hi' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: { sendScheduledAt: '2026-07-18T12:00:30.000Z' } });
+    expect(vi.mocked(scheduleQuoteSend)).toHaveBeenCalledWith(
+      QUOTE_ID,
+      expect.anything(),
+      expect.objectContaining({ message: 'hi' }),
+      60_000,
+    );
+  });
+
+  it('defaults the undo window to 30s when delaySeconds is omitted (empty body)', async () => {
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(vi.mocked(scheduleQuoteSend).mock.calls[0]?.[3]).toBe(30_000);
+  });
+});
+
+describe('DELETE /:id/schedule-send', () => {
+  const PERMS = ['quotes:read', 'quotes:write', 'quotes:send'];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getQuote).mockResolvedValue({ quote: { id: QUOTE_ID, status: 'draft', orgId: 'org-1' }, lines: [], blocks: [] } as never);
+  });
+
+  it('403s without quotes:send', async () => {
+    const res = await appWith('partner', ['quotes:read', 'quotes:write']).request(`/${QUOTE_ID}/schedule-send`, { method: 'DELETE' });
+    expect(res.status).toBe(403);
+    expect(cancelQuoteSend).not.toHaveBeenCalled();
+  });
+
+  it('200s {canceled:true} when the undo wins', async () => {
+    vi.mocked(cancelQuoteSend).mockResolvedValue(true);
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: { canceled: true } });
+    expect(cancelQuoteSend).toHaveBeenCalledWith(QUOTE_ID);
+  });
+
+  it('passes through {canceled:false} when the window already elapsed', async () => {
+    vi.mocked(cancelQuoteSend).mockResolvedValue(false);
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/schedule-send`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: { canceled: false } });
   });
 });
 
@@ -142,5 +296,58 @@ describe('POST /:id/images — from URL (JSON body)', () => {
     const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/images`, jsonReq('https://cdn/a.png'));
     expect(res.status).toBe(500);
     expect(writeQuoteImage).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /:id/contract-file/:blockId', () => {
+  const PERMS = ['quotes:read', 'quotes:write'];
+  const uploadedRenderData = {
+    blockId: BLOCK_ID, templateId: 'tmpl-1', templateVersionId: 'ver-1', sourceType: 'uploaded' as const,
+    bodyHtml: null, fileData: Buffer.from('%PDF-1.4'), versionSha256: 'sha', declaredVariables: [],
+    templateName: 'MSA', versionNumber: 1,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('streams application/pdf for an uploaded contract block on the caller\'s own quote', async () => {
+    vi.mocked(getQuote).mockResolvedValue({
+      quote: { id: QUOTE_ID, orgId: 'org-1' },
+      blocks: [{ id: BLOCK_ID, blockType: 'contract', content: { templateId: 'tmpl-1', templateVersionId: 'ver-1' } }],
+      lines: [],
+    } as never);
+    vi.mocked(loadContractBlockRenderData).mockResolvedValue([uploadedRenderData]);
+
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/contract-file/${BLOCK_ID}`, { method: 'GET' });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/pdf');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.toString()).toBe('%PDF-1.4');
+  });
+
+  it('404s a blockId that does not belong to this quote (cross-quote blockId)', async () => {
+    vi.mocked(getQuote).mockResolvedValue({
+      quote: { id: QUOTE_ID, orgId: 'org-1' },
+      blocks: [], // the requested blockId isn't among THIS quote's blocks
+      lines: [],
+    } as never);
+
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/contract-file/${BLOCK_ID}`, { method: 'GET' });
+    expect(res.status).toBe(404);
+    expect(loadContractBlockRenderData).not.toHaveBeenCalled();
+  });
+
+  it('404s when the referenced block is an authored (not uploaded) contract, with no file bytes to stream', async () => {
+    vi.mocked(getQuote).mockResolvedValue({
+      quote: { id: QUOTE_ID, orgId: 'org-1' },
+      blocks: [{ id: BLOCK_ID, blockType: 'contract', content: { templateId: 'tmpl-1', templateVersionId: 'ver-1' } }],
+      lines: [],
+    } as never);
+    vi.mocked(loadContractBlockRenderData).mockResolvedValue([{ ...uploadedRenderData, sourceType: 'authored', fileData: null, bodyHtml: '<p>hi</p>' }]);
+
+    const res = await appWith('partner', PERMS).request(`/${QUOTE_ID}/contract-file/${BLOCK_ID}`, { method: 'GET' });
+    expect(res.status).toBe(404);
   });
 });

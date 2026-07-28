@@ -9,6 +9,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'scripts/recover-stuck-agents': 'scripts/recover-stuck-agents.ts',
+    'scripts/breezectl': 'scripts/breezectl.ts',
   },
   format: ['cjs'],
   // @breeze/api is a deployed application, not a consumed library: package.json
@@ -19,5 +20,6 @@ export default defineConfig({
   // feed's UNION ALL query builder — failing the build for ~150 bytes of unused
   // .d.cts. Disable it; the Dockerfile and runbook only ever run dist/*.cjs.
   dts: false,
-  noExternal: [/^@breeze\/shared/, 'dotenv'],
+  // All @breeze/* workspace packages are source-only (main → src/index.ts), so bundle them; exclude future prebuilt packages here.
+  noExternal: [/^@breeze\//, 'dotenv'],
 });

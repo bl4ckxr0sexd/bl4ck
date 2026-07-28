@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import type { AuthContext } from '../../middleware/auth';
 import { requirePermission, requireScope } from '../../middleware/auth';
 import { writeRouteAudit } from '../../services/auditEvents';
@@ -11,9 +11,12 @@ import {
   listAssignments,
   listAssignmentsForTarget,
   validateAssignmentTarget,
+  authorizeAssignmentTarget,
+  getAssignment,
   canManagePartnerWidePolicies,
   PARTNER_WIDE_WRITE_DENIED_MESSAGE,
 } from '../../services/configurationPolicy';
+import type { ConfigAssignmentLevel } from '../../services/configurationPolicy';
 import { invalidateRemoteAccessCache } from '../../services/remoteAccessPolicy';
 import {
   assignPolicySchema,
@@ -40,7 +43,21 @@ assignmentRoutes.get(
     if (!policy) return c.json({ error: 'Configuration policy not found' }, 404);
 
     const assignments = await listAssignments(id);
-    return c.json({ data: assignments });
+    const authorizedAssignments = await Promise.all(
+      assignments.map(async (assignment) => ({
+        assignment,
+        authorization: await authorizeAssignmentTarget(
+          auth,
+          assignment.level as ConfigAssignmentLevel,
+          assignment.targetId,
+        ),
+      })),
+    );
+    return c.json({
+      data: authorizedAssignments
+        .filter(({ authorization }) => authorization.valid)
+        .map(({ assignment }) => assignment),
+    });
   }
 );
 
@@ -98,6 +115,14 @@ assignmentRoutes.post(
       return c.json({ error: targetValidation.error }, 403);
     }
 
+    // Site sub-axis (SR5-07): RLS does not enforce the site allowlist, so a
+    // site-restricted caller must be blocked from assigning to org/partner
+    // targets or to a site/group/device outside their allowed sites.
+    const siteAuth = await authorizeAssignmentTarget(auth, data.level, targetId);
+    if (!siteAuth.valid) {
+      return c.json({ error: siteAuth.error }, 403);
+    }
+
     // assignPolicy returns null (instead of throwing) on a duplicate — see the
     // comment on its onConflictDoNothing insert in configurationPolicy.ts for
     // why the raised-violation catch pattern doesn't work inside this route's
@@ -153,6 +178,20 @@ assignmentRoutes.delete(
       return c.json({ error: PARTNER_WIDE_WRITE_DENIED_MESSAGE }, 403);
     }
 
+    // Site sub-axis (SR5-07): re-check against the stored target so a
+    // site-restricted caller can't remove an assignment that reaches a site,
+    // group, or device outside their allowlist (RLS does not enforce site).
+    const existing = await getAssignment(aid, id);
+    if (!existing) return c.json({ error: 'Assignment not found' }, 404);
+    const siteAuth = await authorizeAssignmentTarget(
+      auth,
+      existing.level as ConfigAssignmentLevel,
+      existing.targetId
+    );
+    if (!siteAuth.valid) {
+      return c.json({ error: siteAuth.error }, 403);
+    }
+
     const deleted = await unassignPolicy(aid, id);
     if (!deleted) return c.json({ error: 'Assignment not found' }, 404);
 
@@ -181,6 +220,10 @@ assignmentRoutes.get(
   async (c) => {
     const auth = c.get('auth') as AuthContext;
     const query = c.req.valid('query');
+    const siteAuth = await authorizeAssignmentTarget(auth, query.level, query.targetId);
+    if (!siteAuth.valid) {
+      return c.json({ error: siteAuth.error }, 403);
+    }
     const result = await listAssignmentsForTarget(query.level, query.targetId);
 
     // Filter results to only include policies the caller can access

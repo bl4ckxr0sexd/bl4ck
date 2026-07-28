@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import zlib from 'node:zlib';
-import { renderQuotePdf } from './quotePdf';
+import { PDFDocument } from 'pdf-lib';
+import { renderQuotePdf, contractUploadedMarker } from './quotePdf';
 
 // A minimal valid 1x1 transparent PNG (the smallest real PNG pdfkit will accept).
 const ONE_BY_ONE_PNG = Buffer.from(
@@ -64,7 +65,10 @@ describe('renderQuotePdf', () => {
       [
         { id: 'b1', blockType: 'heading', sortOrder: 0, content: { text: 'Our work', level: 2 } },
         { id: 'b2', blockType: 'image', sortOrder: 1, content: { imageId: 'img-123', caption: 'A diagram', width: 200 } },
-        { id: 'b3', blockType: 'rich_text', sortOrder: 2, content: { html: '<p>Hello <b>world</b></p>' } },
+        // <strong> (not <b>) — the sanitized rich-text subset (richTextSanitize.ts)
+        // never emits <b>, and the hand-rolled parser only recognizes the 11
+        // allowed tags.
+        { id: 'b3', blockType: 'rich_text', sortOrder: 2, content: { html: '<p>Hello <strong>world</strong></p>' } },
       ],
       [],
       async (imageId) => { requestedId = imageId; return { data: ONE_BY_ONE_PNG }; },
@@ -73,6 +77,11 @@ describe('renderQuotePdf', () => {
     expect(requestedId).toBe('img-123');
     expect(buf.subarray(0, 4).toString()).toBe('%PDF');
     expect(buf.length).toBeGreaterThan(800);
+    // Formatted rich-text rendering (Task 2): the paragraph's text actually
+    // reaches the page, split across the plain/bold run boundary.
+    const text = extractPdfText(buf);
+    expect(text).toContain('Hello');
+    expect(text).toContain('world');
   });
 
   it('embeds a product thumbnail for a catalog-sourced line via loadCatalogImage', async () => {
@@ -180,6 +189,42 @@ describe('renderQuotePdf', () => {
     expect(pageCount).toBeGreaterThan(1);
   });
 
+  it('never strands a section label + column header on a page without its first row', async () => {
+    // Regression: the section label used to be drawn at the call site behind a
+    // FLAT 52pt "minimum first row" reservation. When the first row was a tall
+    // spec list (a 17-bullet laptop), the label + column header fit that guess and
+    // were drawn at the foot of the page, then the row-level break moved the row
+    // to the next page — leaving the label and header orphaned (seen live on
+    // Q-2026-0006). Sweeping the filler count walks the section label across the
+    // page boundary, so this catches the orphan without brittle height tuning.
+    const TALL_SPEC = Array.from({ length: 17 }, (_, i) => `Specification bullet number ${i + 1} for this configured machine`).join('\n');
+    for (const fillerCount of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const filler = Array.from({ length: fillerCount }, (_, i) => ({
+        id: `f${i}`, blockId: 'b1', name: `FillerItem${i}`,
+        description: 'A reasonably descriptive line so rows take realistic height.',
+        quantity: '1', unitPrice: '10', lineTotal: '10.00', recurrence: 'one_time' as const,
+      }));
+      const buf = await renderQuotePdf(
+        { id: 'q1', quoteNumber: 'Q-ORPHAN', oneTimeTotal: '100.00', monthlyRecurringTotal: '0.00', annualRecurringTotal: '0.00', total: '100.00', currencyCode: 'USD' },
+        [
+          { id: 'b1', blockType: 'line_items', sortOrder: 0, content: { label: 'DesktopSection' } },
+          { id: 'b2', blockType: 'line_items', sortOrder: 1, content: { label: 'LaptopSection' } },
+        ],
+        [
+          ...filler,
+          { id: 'tall', blockId: 'b2', name: 'FourteenInchLaptop', description: TALL_SPEC, quantity: '1', unitPrice: '1224', lineTotal: '1224.00', recurrence: 'one_time' },
+        ],
+        async () => null,
+        { partnerName: 'Acme MSP' },
+      );
+      // Whichever page carries the label must also carry its first row's title.
+      const pages = extractPdfTextByStream(buf);
+      const labelPage = pages.find((p) => p.includes('LaptopSection'));
+      expect(labelPage, `no page contained the label (fillerCount=${fillerCount})`).toBeDefined();
+      expect(labelPage, `label orphaned from its first row (fillerCount=${fillerCount})`).toContain('FourteenInchLaptop');
+    }
+  });
+
   it('a single-page quote stays single-page after the footer pass (no blank trailing page)', async () => {
     const buf = await renderQuotePdf(
       { id: 'q1', quoteNumber: 'Q-6', oneTimeTotal: '100.00', monthlyRecurringTotal: '0.00', annualRecurringTotal: '0.00', total: '100.00', currencyCode: 'USD' },
@@ -198,7 +243,10 @@ describe('renderQuotePdf', () => {
         id: 'q1', quoteNumber: 'Q-DEP',
         oneTimeTotal: '1100.00', monthlyRecurringTotal: '0.00', annualRecurringTotal: '0.00',
         dueOnAcceptanceTotal: '1100.00', total: '1100.00', currencyCode: 'USD',
-        depositType: 'percent', depositAmount: '330.00',
+        // depositAmount is deliberately WRONG here: the derived depositDueTotal
+        // must win (selected_lines deposits derive from flagged lines, so the
+        // persisted column can be stale), with depositAmount as the fallback.
+        depositType: 'percent', depositAmount: '999.00', depositDueTotal: '330.00',
         categoryBreakdown: [
           { category: 'hardware', oneTimeTotal: '1000.00', monthlyTotal: '0.00', annualTotal: '0.00' },
           { category: 'other', oneTimeTotal: '100.00', monthlyTotal: '0.00', annualTotal: '0.00' },
@@ -214,7 +262,10 @@ describe('renderQuotePdf', () => {
     );
     expect(buf.subarray(0, 4).toString()).toBe('%PDF');
     const text = extractPdfText(buf);
-    expect(text).toContain('Deposit due on acceptance');
+    // The anchor row states the sum the deposit splits: due = deposit + remaining.
+    expect(text).toContain('Due on acceptance');
+    expect(text).toContain('Deposit due now');
+    expect(text).toContain('330.00');
     expect(text).toContain('Remaining balance');
     // Remainder = dueOnAcceptance 1100.00 − deposit 330.00 = 770.00 (cents math).
     expect(text).toContain('770.00');
@@ -234,14 +285,14 @@ describe('renderQuotePdf', () => {
     expect(buf.subarray(0, 4).toString()).toBe('%PDF');
     const text = extractPdfText(buf);
     expect(text).toContain('Due on acceptance');
-    expect(text).not.toContain('Deposit due on acceptance');
+    expect(text).not.toContain('Deposit due now');
     expect(text).not.toContain('Remaining balance');
   });
 
   it('page-breaks the summary when deposit + breakdown rows would overflow the bottom margin', async () => {
     // 25 one-time lines leave the cursor in the 90–160px band above the bottom
     // margin: the legacy 90px reservation would NOT break the page, so the
-    // deposit (extra 18px row) + 4-category breakdown (4×12+4px, ~160px total)
+    // deposit (extra anchor + remainder rows, 36px) + 4-category breakdown (4×12+4px, ~160px total)
     // rows would crowd into the bottom margin / footer band (and pdfkit's
     // auto-page-add on the overflowing last row spawns a stray page). The sized
     // reservation must instead move the WHOLE summary to page 2 — asserted by
@@ -279,11 +330,29 @@ describe('renderQuotePdf', () => {
     );
     expect(pageCount(withDeposit)).toBe(2);
     const streams = extractPdfTextByStream(withDeposit);
-    const summaryStream = streams.find((t) => t.includes('Deposit due on acceptance'));
+    const summaryStream = streams.find((t) => t.includes('Deposit due now'));
     expect(summaryStream).toBeDefined();
     expect(summaryStream).toContain('Remaining balance');
     // The summary page must be its own page — none of the 25 line rows on it.
     expect(summaryStream).not.toContain('Item ');
+  });
+
+  it('renders a per-table Subtotal row only when the block opts in', async () => {
+    const lines = [
+      { id: 'l1', blockId: 'b1', description: 'Widget', quantity: '2', unitPrice: '100', lineTotal: '200.00', recurrence: 'one_time' as const },
+      { id: 'l2', blockId: 'b1', description: 'Service', quantity: '1', unitPrice: '50', lineTotal: '50.00', recurrence: 'monthly' as const },
+    ];
+    const base = { id: 'q1', quoteNumber: 'Q-SUB', currencyCode: 'USD', oneTimeTotal: '200.00', monthlyRecurringTotal: '50.00', total: '250.00', dueOnAcceptanceTotal: '200.00' };
+
+    const off = await renderQuotePdf(base as never, [{ id: 'b1', blockType: 'line_items', sortOrder: 0, content: {} }], lines, async () => null, {});
+    expect(extractPdfText(off)).not.toContain('Subtotal');
+
+    const on = await renderQuotePdf(base as never, [{ id: 'b1', blockType: 'line_items', sortOrder: 0, content: { showSubtotal: true } }], lines, async () => null, {});
+    const text = extractPdfText(on);
+    expect(text).toContain('Subtotal');
+    // Split by recurrence: one-time $200 and $50/mo.
+    expect(text).toContain('200.00');
+    expect(text).toContain('50.00/mo');
   });
 
   it('renderQuotePdf includes the From block and T&C', async () => {
@@ -295,5 +364,136 @@ describe('renderQuotePdf', () => {
       [], [], async () => null, { partnerName: 'Acme MSP LLC' },
     );
     expect(buf.subarray(0, 4).toString()).toBe('%PDF');
+  });
+
+  // Task 14: proposal cover page + contract blocks in the PDF.
+  describe('cover page', () => {
+    const baseQuote = {
+      id: 'q1', quoteNumber: 'Q-COVER', currencyCode: 'USD',
+      oneTimeTotal: '100.00', monthlyRecurringTotal: '0.00', annualRecurringTotal: '0.00', total: '100.00',
+      billToName: 'Globex Corp',
+      billToAddress: { line1: '1 Main St', line2: null, city: 'Austin', region: 'TX', postalCode: '78701', country: 'US' },
+      sellerSnapshot: { name: 'Acme MSP LLC', phone: null, email: null, website: null, address: null },
+    };
+    const blocks = [{ id: 'b1', blockType: 'heading', sortOrder: 0, content: { text: 'Proposal', level: 1 } }] as const;
+
+    it('a coverPage.enabled quote grows the page count by exactly 1 vs. the same quote with cover disabled', async () => {
+      const without = await renderQuotePdf({ ...baseQuote, coverPage: { enabled: false, showPreparedBy: true } } as never, blocks as never, [], async () => null, {});
+      const withCover = await renderQuotePdf(
+        { ...baseQuote, coverPage: { enabled: true, title: 'Network Refresh Proposal', coverImageId: null, preparedForName: null, showPreparedBy: true } } as never,
+        blocks as never, [], async () => null, {},
+      );
+      const withoutPages = (await PDFDocument.load(without)).getPageCount();
+      const withPages = (await PDFDocument.load(withCover)).getPageCount();
+      expect(withPages).toBe(withoutPages + 1);
+    });
+
+    it('renders the cover title, prepared-for, and prepared-by text on the cover page', async () => {
+      const buf = await renderQuotePdf(
+        { ...baseQuote, coverPage: { enabled: true, title: 'Network Refresh Proposal', coverImageId: null, preparedForName: null, showPreparedBy: true } } as never,
+        blocks as never, [], async () => null, { partnerName: 'Acme MSP LLC' },
+      );
+      const text = extractPdfText(buf);
+      expect(text).toContain('Network Refresh Proposal');
+      expect(text).toContain('PREPARED FOR');
+      expect(text).toContain('Globex Corp');
+      expect(text).toContain('PREPARED BY');
+      expect(text).toContain('Acme MSP LLC');
+    });
+
+    it('draws the cover image via loadImage when coverImageId is set', async () => {
+      let requested: string | null = null;
+      const buf = await renderQuotePdf(
+        { ...baseQuote, coverPage: { enabled: true, title: 'Cover', coverImageId: 'cover-img-1', preparedForName: null, showPreparedBy: true } } as never,
+        blocks as never, [],
+        async (imageId) => { requested = imageId; return { data: ONE_BY_ONE_PNG }; },
+        {},
+      );
+      expect(requested).toBe('cover-img-1');
+      expect(buf.subarray(0, 4).toString()).toBe('%PDF');
+    });
+
+    it('omits the Prepared by block when showPreparedBy is false', async () => {
+      const buf = await renderQuotePdf(
+        { ...baseQuote, coverPage: { enabled: true, title: 'Cover', coverImageId: null, preparedForName: null, showPreparedBy: false } } as never,
+        blocks as never, [], async () => null, {},
+      );
+      const text = extractPdfText(buf);
+      expect(text).toContain('PREPARED FOR');
+      expect(text).not.toContain('PREPARED BY');
+    });
+
+    it('a quote with no coverPage (undefined) renders unchanged (no extra page, no throw)', async () => {
+      const buf = await renderQuotePdf(baseQuote as never, blocks as never, [], async () => null, {});
+      expect(buf.subarray(0, 4).toString()).toBe('%PDF');
+      const pages = (await PDFDocument.load(buf)).getPageCount();
+      expect(pages).toBe(1);
+    });
+  });
+
+  // Task 14: contract blocks — authored (rich text) and uploaded (marker line).
+  describe('contract blocks', () => {
+    const baseQuote = {
+      id: 'q1', quoteNumber: 'Q-CONTRACT', currencyCode: 'USD',
+      oneTimeTotal: '100.00', monthlyRecurringTotal: '0.00', annualRecurringTotal: '0.00', total: '100.00',
+    };
+
+    it('renders an authored contract block: heading (template name) + substituted rich text', async () => {
+      const contractRenderData = new Map([
+        ['b1', { html: '<p>This agreement is between <strong>Acme MSP</strong> and the client.</p>', templateName: 'Master Services Agreement' }],
+      ]);
+      const buf = await renderQuotePdf(
+        baseQuote as never,
+        [{ id: 'b1', blockType: 'contract', sortOrder: 0, content: { templateId: 't1', templateVersionId: 'v1', variableValues: {} } }],
+        [], async () => null, {}, async () => null, contractRenderData as never,
+      );
+      const text = extractPdfText(buf);
+      expect(text).toContain('Master Services Agreement');
+      expect(text).toContain('This agreement is between');
+      expect(text).toContain('Acme MSP');
+    });
+
+    it('a label on the block content overrides the template-name heading', async () => {
+      const contractRenderData = new Map([
+        ['b1', { html: '<p>Body text.</p>', templateName: 'Master Services Agreement' }],
+      ]);
+      const buf = await renderQuotePdf(
+        baseQuote as never,
+        [{ id: 'b1', blockType: 'contract', sortOrder: 0, content: { templateId: 't1', templateVersionId: 'v1', variableValues: {}, label: 'Our Custom Agreement' } }],
+        [], async () => null, {}, async () => null, contractRenderData as never,
+      );
+      const text = extractPdfText(buf);
+      expect(text).toContain('Our Custom Agreement');
+      expect(text).not.toContain('Master Services Agreement');
+    });
+
+    it('renders a one-line marker for an uploaded contract block (html: null)', async () => {
+      const contractRenderData = new Map([
+        ['b1', { html: null, templateName: 'Signed NDA' }],
+      ]);
+      const buf = await renderQuotePdf(
+        baseQuote as never,
+        [{ id: 'b1', blockType: 'contract', sortOrder: 0, content: { templateId: 't1', templateVersionId: 'v1', variableValues: {} } }],
+        [], async () => null, {}, async () => null, contractRenderData as never,
+      );
+      const text = extractPdfText(buf);
+      // The em dash doesn't survive the test's hex→latin1 text extraction (pdfkit
+      // maps it to a WinAnsi glyph code outside straight ASCII, unlike every other
+      // fixture string in this suite) — assert the surrounding text instead of the
+      // exact byte sequence; the marker format itself is asserted directly against
+      // contractUploadedMarker() below.
+      expect(text).toContain('Signed NDA');
+      expect(text).toContain('attached below');
+      expect(contractUploadedMarker('Signed NDA')).toBe('Signed NDA — attached below');
+    });
+
+    it('a contract block with no matching contractRenderData entry does not throw', async () => {
+      const buf = await renderQuotePdf(
+        baseQuote as never,
+        [{ id: 'b1', blockType: 'contract', sortOrder: 0, content: { templateId: 't1', templateVersionId: 'v1', variableValues: {} } }],
+        [], async () => null, {},
+      );
+      expect(buf.subarray(0, 4).toString()).toBe('%PDF');
+    });
   });
 });

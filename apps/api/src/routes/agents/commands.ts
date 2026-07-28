@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { z } from 'zod';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, runOutsideDbContext, withSystemDbAccessContext } from '../../db';
@@ -24,11 +24,14 @@ import { captureException } from '../../services/sentry';
 import { processCollectedAuditPolicyCommandResult } from '../../services/auditBaselineService';
 import { CommandTypes, queueCommandForExecution } from '../../services/commandQueue';
 import { claimPendingCommandsForDevice } from '../../services/commandDispatch';
-import { decryptCommandsForDelivery, hasSensitivePayload } from '../../services/sensitiveCommandPayload';
+import { decryptClaimedCommandsForDelivery } from '../../services/commandDelivery';
+import { hasSensitivePayload } from '../../services/sensitiveCommandPayload';
 import { applyVaultSyncCommandResult } from '../../services/vaultSyncPersistence';
 import { processBackupVerificationResult } from '../backup/verificationService';
 import { updateRestoreJobByCommandId } from '../../services/restoreResultPersistence';
 import { detectResultValidationFamily, validateCriticalCommandResult, DR_COMMAND_TYPES } from '../../services/agentCommandResultValidation';
+import { redactSecretsFromOutput, redactAgentResultErrorFields } from '../../services/secretRedaction';
+import { isRawStdoutArtifactCommand } from '../../services/commandAudit';
 
 export const commandsRoutes = new Hono();
 const ACCEPTED_COMMAND_RESULT_STATUSES = ['pending', 'sent'] as const;
@@ -38,14 +41,27 @@ function commandResultToStdout(data: z.infer<typeof commandResultSchema>): strin
     (data.result !== undefined ? JSON.stringify(data.result) : undefined);
 }
 
-function buildStoredCommandResult(data: z.infer<typeof commandResultSchema>, stdout: string | undefined) {
+function buildStoredCommandResult(
+  commandType: string,
+  data: z.infer<typeof commandResultSchema>,
+  stdout: string | undefined,
+) {
+  // Defense-in-depth: strip full PEM private-key blocks from agent output
+  // before it is persisted and later shown to scripts:read users. Pre-update
+  // agents don't redact server-side-visible output, so we redact here.
+  // Preserve null/undefined (don't coerce to '') to keep the stored shape stable.
+  //
+  // Exception: artifact-bearing stdout (capture_pprof base64 profiles) must be
+  // stored byte-for-byte -- the redaction patterns statistically fire inside
+  // megabytes of random base64 and would silently corrupt the artifact (#2401).
+  const skipStdoutRedaction = isRawStdoutArtifactCommand(commandType);
   return {
     status: data.status,
     exitCode: data.exitCode,
-    stdout,
-    stderr: data.stderr,
+    stdout: stdout != null && !skipStdoutRedaction ? redactSecretsFromOutput(stdout) : stdout,
+    stderr: data.stderr != null ? redactSecretsFromOutput(data.stderr) : data.stderr,
     durationMs: data.durationMs,
-    error: data.error,
+    error: data.error != null ? redactSecretsFromOutput(data.error) : data.error,
   };
 }
 
@@ -120,16 +136,21 @@ commandsRoutes.get('/:id/commands', async (c) => {
 
   const commands = await runOutsideDbContext(() =>
     withSystemDbAccessContext(() =>
-      claimPendingCommandsForDevice(agent.deviceId, 10, agent.role)
+      claimPendingCommandsForDevice(
+        agent.deviceId,
+        10,
+        agent.role,
+        // #2774 — offboarding drain: only self_uninstall is deliverable.
+        agent.tenantDraining ? ['self_uninstall'] : undefined
+      )
     )
   );
 
+  // #2414 — decrypt just-in-time; a command whose payload fails decryption is
+  // released back to `pending` (not stranded as `sent`) while its siblings
+  // still deliver.
   return c.json({
-    commands: decryptCommandsForDelivery(commands.map(cmd => ({
-      id: cmd.id,
-      type: cmd.type,
-      payload: cmd.payload,
-    }))),
+    commands: await decryptClaimedCommandsForDelivery(commands),
   });
 });
 
@@ -181,8 +202,15 @@ commandsRoutes.post(
               startedAt,
               completedAt,
               exitCode: data.exitCode ?? null,
-              output: data.stdout ?? null,
-              errorMessage: data.error ?? data.stderr ?? null,
+              // Defense-in-depth: redact PEM private-key blocks from persisted
+              // software-install output/errors (mirrors buildStoredCommandResult).
+              output: data.stdout != null ? redactSecretsFromOutput(data.stdout) : null,
+              errorMessage:
+                data.error != null
+                  ? redactSecretsFromOutput(data.error)
+                  : data.stderr != null
+                    ? redactSecretsFromOutput(data.stderr)
+                    : null,
             })
             .where(and(
               eq(deploymentResults.deploymentId, deploymentIdFromCmd),
@@ -197,6 +225,17 @@ commandsRoutes.post(
     // Query device_commands OUTSIDE the agentAuth transaction.
     // device_commands has no RLS; querying via the pool (auto-commit)
     // guarantees visibility of recently committed rows.
+    //
+    // The READ deliberately stays on the bare pool while the write below takes
+    // an explicit system context. Only insert/update/delete are instrumented by
+    // the contextless-write guard (CONTEXTLESS_WRITE_GUARD_METHODS, db/index.ts),
+    // and a bare-pool read of an RLS-free table returns the same rows a
+    // system-context read would — so wrapping it would buy nothing and cost a
+    // full BEGIN + set_config×6 + COMMIT round-trip on a hot agent path we are
+    // actively trying to keep off the connection pool (#1105). If
+    // device_commands ever gains an RLS policy, this read becomes a silent
+    // 0-row no-op and MUST move into withSystemDbAccessContext — same caveat as
+    // services/commandDispatch.ts.
     const [command] = await runOutsideDbContext(() =>
       db
         .select()
@@ -227,18 +266,34 @@ commandsRoutes.post(
     }
 
     const {
-      normalizedData,
+      normalizedData: rawNormalizedData,
       stdout,
       validationError,
     } = normalizeCriticalResultIfNeeded(command.type, commandId, data);
 
-    const updated = await runOutsideDbContext(async () => {
+    // #2434 chokepoint (REST twin of agentWs.processCommandResult): redact
+    // agent-supplied error/stderr ONCE before the device_commands write and
+    // the per-type post-processing handlers (security, CIS, sensitive-data,
+    // backup verification, restore, vault sync) so every persisted surface
+    // receives redacted text. stdout stays raw here (structured-JSON parsers
+    // + capture_pprof artifacts); persisted stdout is redacted per-site.
+    const normalizedData = redactAgentResultErrorFields(rawNormalizedData);
+
+    // Terminal compare-and-set, outside the agentAuth transaction for the same
+    // visibility reasons as the lookup above, and under an explicit system
+    // context so this is not a contextless bare-pool write (#1375). Mirrors the
+    // WS twin in agentWs.processCommandResult; device_commands is intentionally
+    // system-scoped (no RLS), so the context changes nothing about what the
+    // write can touch — it makes the guard's invariant in db/index.ts true on
+    // this path too. Without it, this route was the largest remaining source of
+    // BREEZE-7 events after the WS path was fixed.
+    const updated = await runOutsideDbContext(async () => withSystemDbAccessContext(async () => {
       const query = db
         .update(deviceCommands)
         .set({
           status: normalizedData.status === 'completed' ? 'completed' : 'failed',
           completedAt: new Date(),
-          result: buildStoredCommandResult(normalizedData, stdout),
+          result: buildStoredCommandResult(command.type, normalizedData, stdout),
           // Credentials ride the payload for some commands (e.g. FileVault
           // rotation); blank them once the command is terminal.
           ...(hasSensitivePayload(command.type) ? { payload: null } : {}),
@@ -253,7 +308,7 @@ commandsRoutes.post(
       return typeof query.returning === 'function'
         ? query.returning({ id: deviceCommands.id })
         : query;
-    });
+    }));
 
     const updatedRows = Array.isArray(updated)
       ? updated
@@ -289,7 +344,7 @@ commandsRoutes.post(
 
     if (command.type === filesystemAnalysisCommandType) {
       try {
-        await handleFilesystemAnalysisCommandResult(command, normalizedData);
+        await handleFilesystemAnalysisCommandResult(command, normalizedData, agent.orgId);
       } catch (err) {
         console.error(`[agents] filesystem analysis post-processing failed for ${commandId}:`, err);
         captureException(err);

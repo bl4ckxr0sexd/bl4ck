@@ -6,7 +6,7 @@
  */
 
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../lib/validation';
 import { z } from 'zod';
 import { streamSSE } from 'hono/streaming';
 import { authMiddleware, requireMfa, requirePermission, requireScope } from '../middleware/auth';
@@ -17,11 +17,14 @@ import {
   closeSession,
   getSessionMessages,
   handleApproval,
+  isIntentBackedExecution,
   searchSessions,
   listM365Connections,
-  resolveDefaultModel
+  resolveDefaultModel,
+  sanitizeErrorForClient,
 } from '../services/aiAgent';
 import { runPreFlightChecks, abortActivePlan } from '../services/aiAgentSdk';
+import { sanitizeThrownToolError } from '../services/aiToolErrors';
 import { streamingSessionManager } from '../services/streamingSessionManager';
 import { getUsageSummary, updateBudget, getSessionHistory, recordUsage } from '../services/aiCostTracker';
 import { createTicket, changeTicketStatus, TicketServiceError } from '../services/ticketService';
@@ -29,8 +32,9 @@ import { createTimeEntry } from '../services/timeEntryService';
 import { writeRouteAudit } from '../services/auditEvents';
 import { assertNotLocked } from '../services/effectiveSettings';
 import { db } from '../db';
-import { aiSessions, aiMessages, aiToolExecutions, auditLogs, organizations, devices } from '../db/schema';
+import { aiSessions, aiMessages, aiToolExecutions, auditLogs, organizations, devices, actionIntents } from '../db/schema';
 import { eq, and, desc, gte, lte, count, avg, sql as drizzleSql } from 'drizzle-orm';
+import { REVEAL_WINDOW_DAYS } from '../services/actionIntents/resultSecrets';
 import { PERMISSIONS } from '../services/permissions';
 import {
   createAiSessionSchema as sharedCreateAiSessionSchema,
@@ -122,6 +126,14 @@ function generateSessionTitle(content: string): string {
 export const aiRoutes = new Hono();
 const requireAiRead = requirePermission(PERMISSIONS.ORGS_READ.resource, PERMISSIONS.ORGS_READ.action);
 const requireAiWrite = requirePermission(PERMISSIONS.ORGS_WRITE.resource, PERMISSIONS.ORGS_WRITE.action);
+// SR5-09: reading OTHER users' AI sessions (the admin audit dashboard) is a
+// dedicated, higher-trust capability — NOT organizations:read, which every
+// technician/viewer holds and which for ordinary AI routes only ever returns the
+// caller's OWN sessions. Gated on ai_sessions:read_all (Org Admin + Partner Admin).
+const requireAiSessionsReadAll = requirePermission(
+  PERMISSIONS.AI_SESSIONS_READ_ALL.resource,
+  PERMISSIONS.AI_SESSIONS_READ_ALL.action,
+);
 const requireTicketsWrite = requirePermission(PERMISSIONS.TICKETS_WRITE.resource, PERMISSIONS.TICKETS_WRITE.action);
 
 aiRoutes.use('*', authMiddleware);
@@ -157,7 +169,9 @@ aiRoutes.post(
       if (message === 'Invalid M365 connection') return c.json({ error: message }, 400);
       if (message === 'Invalid device') return c.json({ error: message }, 400);
       if (message === 'Access denied to this organization') return c.json({ error: message }, 403);
-      return c.json({ error: message }, 500);
+      // Anything past the four exact-match branches above is an unexpected fault
+      // whose message may be raw driver text (#2603) — genericize it.
+      return c.json({ error: sanitizeThrownToolError('create_ai_session', err) }, 500);
     }
   }
 );
@@ -301,7 +315,9 @@ aiRoutes.post(
     const auth = c.get('auth');
     const sessionId = c.req.param('id')!;
 
-    const session = await getSession(sessionId, auth);
+    // Flagging is a moderation action (paired with the admin-only unflag below),
+    // not an owner-only read — keep its existing org-scoped behavior.
+    const session = await getSession(sessionId, auth, { allowAnyOwnerInOrg: true });
     if (!session) {
       return c.json({ error: 'Session not found' }, 404);
     }
@@ -338,7 +354,9 @@ aiRoutes.delete(
     const auth = c.get('auth');
     const sessionId = c.req.param('id')!;
 
-    const session = await getSession(sessionId, auth);
+    // Admin-only unflag (requireScope partner/system): moderators clear another
+    // user's flag, so this is deliberately org-scoped, not owner-bound.
+    const session = await getSession(sessionId, auth, { allowAnyOwnerInOrg: true });
     if (!session) {
       return c.json({ error: 'Session not found' }, 404);
     }
@@ -572,10 +590,15 @@ aiRoutes.post(
             if (event.type === 'done') break;
           }
         } catch (err) {
+          // Never stream a raw error to the browser (#2603). Uses the stream
+          // sanitizer (not the tool one) so user-actionable conditions — rate
+          // limit, budget, approval timeout — survive, while driver text does
+          // not. sanitizeErrorForClient is now detector-gated.
           console.error('[AI/OpenAI] Stream error:', err);
+          const message = sanitizeErrorForClient(err);
           await stream.writeSSE({
             event: 'error',
-            data: JSON.stringify({ type: 'error', message: err instanceof Error ? err.message : 'Stream failed' }),
+            data: JSON.stringify({ type: 'error', message }),
           });
         } finally {
           openaiSession.eventBus.unsubscribe(subscriptionId);
@@ -657,12 +680,15 @@ aiRoutes.post(
           if (event.type === 'done') break;
         }
       } catch (err) {
+        // Never stream a raw error to the browser (#2603). See the OpenAI
+        // branch above for why this uses the stream sanitizer.
         console.error('[AI] Stream error:', err);
+        const message = sanitizeErrorForClient(err);
         await stream.writeSSE({
           event: 'error',
           data: JSON.stringify({
             type: 'error',
-            message: err instanceof Error ? err.message : 'Stream failed',
+            message,
           }),
         });
       } finally {
@@ -744,6 +770,21 @@ aiRoutes.post(
 
     const success = await handleApproval(executionId, approved, auth, sessionId);
     if (!success) {
+      // CRITICAL-3 (whole-branch review): a Tier-3 intent-backed execution
+      // NEVER reports success here — its real decision lives on
+      // action_intents.status, decided via the /approvals surface (mobile
+      // push or the Approvals queue), not this self-approve endpoint. Give
+      // the web chat client an honest "still pending" response instead of a
+      // generic "not found" so it can render a waiting state rather than
+      // silently timing out.
+      if (await isIntentBackedExecution(executionId)) {
+        return c.json({
+          success: false,
+          pending: true,
+          via: 'intent',
+          message: 'This action needs approval in the Approvals area or the Breeze mobile app.',
+        });
+      }
       return c.json({ error: 'Execution not found or already processed' }, 404);
     }
 
@@ -1017,11 +1058,15 @@ aiRoutes.put(
   }
 );
 
-// GET /admin/sessions - Get session history for admin dashboard
+// GET /admin/sessions - Get session history for admin dashboard.
+// SR5-09: enumerates other users' sessions (id, userId, title, cost, flags), so
+// it requires ai_sessions:read_all — a stricter gate than the ordinary AI reads.
+// The returned rows are already a projected metadata DTO (getSessionHistory):
+// no systemPrompt, contextSnapshot, sdkSessionId, or raw tool input/output.
 aiRoutes.get(
   '/admin/sessions',
   requireScope('organization', 'partner', 'system'),
-  requireAiRead,
+  requireAiSessionsReadAll,
   async (c) => {
     const auth = c.get('auth');
     const orgId = c.req.query('orgId') || auth.orgId;
@@ -1206,7 +1251,8 @@ aiRoutes.get(
       .groupBy(drizzleSql`DATE(${aiToolExecutions.createdAt})`)
       .orderBy(drizzleSql`DATE(${aiToolExecutions.createdAt}) ASC`);
 
-    // 4. Raw executions list
+    // 4. Raw executions list (leftJoin: only reset-password rows have an
+    // intent with a revealable secret; everything else derives NULL state)
     const executions = await db
       .select({
         id: aiToolExecutions.id,
@@ -1220,9 +1266,22 @@ aiRoutes.get(
         errorMessage: aiToolExecutions.errorMessage,
         createdAt: aiToolExecutions.createdAt,
         completedAt: aiToolExecutions.completedAt,
+        intentId: aiToolExecutions.intentId,
+        tempPasswordState: drizzleSql<'available' | 'revealed' | 'expired' | null>`CASE
+          WHEN ${actionIntents.id} IS NULL THEN NULL
+          WHEN ${actionIntents.result} ?| array['temporaryPasswordEnc', 'temporaryPassword'] THEN
+            CASE
+              WHEN ${actionIntents.executedAt} < now() - make_interval(days => ${REVEAL_WINDOW_DAYS}) THEN 'expired'
+              ELSE 'available'
+            END
+          WHEN ${actionIntents.result} ? 'temporaryPasswordRevealed' THEN 'revealed'
+          WHEN ${actionIntents.result} ? 'temporaryPasswordExpired' THEN 'expired'
+          ELSE NULL
+        END`,
       })
       .from(aiToolExecutions)
       .innerJoin(aiSessions, eq(aiToolExecutions.sessionId, aiSessions.id))
+      .leftJoin(actionIntents, eq(aiToolExecutions.intentId, actionIntents.id))
       .where(and(...baseConditions))
       .orderBy(desc(aiToolExecutions.createdAt))
       .limit(limit);

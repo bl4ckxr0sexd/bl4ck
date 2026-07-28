@@ -14,15 +14,23 @@ All configuration is done through environment variables, defined in your `.env.p
   Never commit `.env.prod` to version control. Use `.env.example` as a template.
 </Aside>
 
+<Aside type="caution" title="Keep your compose file current">
+  The stock `docker-compose.yml` hand-maps each variable into the `api` service's `environment:` block — a value in `.env` that isn't mapped there **silently does nothing**. Compose files from releases before v0.99.0 were missing the mappings for a number of documented variables (including `ENABLE_2FA`, `BREEZE_PLATFORM_ADMINS`, `CORS_ALLOWED_ORIGINS`, the Twilio SMS, Mailgun, and several M365 families). If a documented setting appears to have no effect, update to the current compose file — or add the variable to the `environment:` block yourself.
+</Aside>
+
 ## Database
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `POSTGRES_USER` | `breeze` | | PostgreSQL username |
-| `POSTGRES_PASSWORD` | — | Yes | PostgreSQL password |
+| `POSTGRES_PASSWORD` | — | Yes | PostgreSQL password. Also used to derive the unprivileged request-pool credential (see below) unless `DATABASE_URL_APP` or `BREEZE_APP_DB_PASSWORD` is set. |
 | `POSTGRES_DB` | `breeze` | | Database name |
 | `POSTGRES_PORT` | `5432` | | PostgreSQL port |
 | `DATABASE_URL` | — | Auto | Full connection string (constructed from above in Docker) |
+| `DATABASE_URL_APP` | — | One of these three (prod) | Explicit connection string for the **unprivileged request role** (`breeze_app`). Preferred, and **required** for multi-host / high-availability `DATABASE_URL` values, which cannot be derived automatically. |
+| `BREEZE_APP_DB_PASSWORD` | — | One of these three (prod) | Password for the `breeze_app` role, used to derive its connection string from `DATABASE_URL`. |
+
+In production, Breeze runs request handlers as an unprivileged, row-level-security-enforced database role (`breeze_app`) rather than as the database owner. **The API refuses to start** unless it can configure that role — set one of `DATABASE_URL_APP`, `BREEZE_APP_DB_PASSWORD`, or `POSTGRES_PASSWORD`. This check runs whenever `NODE_ENV=production`, **including when `AUTO_MIGRATE=false`**. The API also **refuses to start if it detects it is running as a `SUPERUSER` or `BYPASSRLS` role** — if you were previously running as the `postgres` superuser, switch to a `NOSUPERUSER`/`NOBYPASSRLS` role. After doing so you may notice rows that were previously visible to a tenant "disappear"; that is row-level security working correctly, not data loss. See the [request-database-role runbook](https://github.com/LanternOps/breeze/blob/main/docs/runbooks/request-database-role.md).
 
 ## Redis
 
@@ -38,16 +46,20 @@ All configuration is done through environment variables, defined in your `.env.p
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `JWT_SECRET` | — | Yes | JWT signing key (min 32 chars). Generate: `openssl rand -base64 64` |
+| `PARTNER_API_CURSOR_SIGNING_KEY` | — | Yes (prod) | Dedicated key that signs the pagination cursors returned by the Partner Export API. Must be **canonical (standard) base64** — not base64url or hex — decoding to at least 32 bytes, and must not reuse `JWT_SECRET`. Generate: `openssl rand -base64 32`. **The API refuses to start in production without it.** |
 | `AGENT_ENROLLMENT_SECRET` | — | Yes | Shared secret for agent enrollment. Generate: `openssl rand -hex 32` |
 | `APP_ENCRYPTION_KEY` | — | Yes | AES encryption key for sensitive data at rest |
+| `APP_ENCRYPTION_KEY_ID` | — | | Optional identifier for the active encryption key (letters, digits, `.`/`_`/`-`). Setting it enables versioned, context-bound ciphertext for newly stored secrets and is **required for the Microsoft 365 reset-password one-time credential reveal** — without it the reset still succeeds but the temporary password is deliberately discarded rather than stored. Not present in the stock compose file: add it to `.env` **and** to the `api` service `environment:` block. |
 | `MFA_ENCRYPTION_KEY` | — | Yes | Encryption key for MFA secrets |
 | `ENROLLMENT_KEY_PEPPER` | — | Yes | HMAC pepper for enrollment key hashing |
 | `MFA_RECOVERY_CODE_PEPPER` | — | Yes | HMAC pepper for recovery code hashing |
 | `ENROLLMENT_KEY_DEFAULT_TTL_MINUTES` | `60` | | Default enrollment key expiry |
+| `CHILD_ENROLLMENT_KEY_TTL_MINUTES` | `1440` | | Fresh TTL (minutes) given to a "child" enrollment key minted at installer-download, installer-link, or short-code redemption time, measured from mint time rather than the parent key's remaining lifetime |
+| `INSTALLER_BOOTSTRAP_TOKEN_TTL_MINUTES` | `1440` | | Base TTL (minutes) for a freshly-issued installer bootstrap token when no explicit `ttlMinutes` is supplied. The token's own expiry, not the parent enrollment key's, governs how long an installer has to complete enrollment — see [Enrollment Keys](/agents/enrollment-keys/#installer-bootstrap-tokens) |
+| `INSTALLER_PARENT_MIN_REMAINING_SECONDS` | `60` | | Minimum remaining lifetime (seconds) a parent enrollment key must have to be used as an installer source. Guards against building an installer from a parent that expires before the download reaches the target machine |
 | `ENROLLMENT_KEY_CLEANUP_ENABLED` | `true` | | Set to `false` to disable the daily sweep that purges expired enrollment keys |
 | `ENROLLMENT_KEY_PURGE_AFTER_DAYS` | `7` | | Grace period (days past expiry) before an expired enrollment key is purged |
-| `SESSION_SECRET` | — | Yes | Express session signing secret |
-| `SESSION_MAX_AGE` | `86400000` | | Session max age in ms (24h) |
+| `SESSION_SECRET` | — | Yes | Session signing secret |
 
 Access-token (15m) and refresh-token (7d) lifetimes are fixed in code
 (`apps/api/src/services/jwt.ts`) — short-lived access tokens backed by
@@ -69,6 +81,7 @@ deployment env vars.
 | `IS_HOSTED` | — | Yes (prod) | `true` for hosted SaaS edition, `false` for self-hosted. Must be set explicitly — the API refuses to boot otherwise. Controls signup gating, billing, and email-verification policy. |
 | `TRUST_PROXY_HEADERS` | — | Yes (prod) | `true` when behind a reverse proxy (Caddy, Cloudflare). Must be set explicitly in production. |
 | `TRUSTED_PROXY_CIDRS` | — | When `TRUST_PROXY_HEADERS=true` | Comma-separated CIDRs of trusted reverse proxies (e.g., `10.0.0.0/8,172.16.0.0/12`). Required when proxy headers are trusted. |
+| `TRUST_CF_CONNECTING_IP` | `false` | | Set to `true` **only** when Breeze is fronted by Cloudflare. Cloudflare overwrites the `CF-Connecting-IP` header at its edge, but a non-Cloudflare reverse proxy (including the bundled Caddy) does not strip it — so trusting it without a Cloudflare front would let a client spoof the header to defeat IP allowlists and per-IP rate limits. When off, client IPs are resolved from `X-Forwarded-For` instead. If you are behind Cloudflare and leave this unset, client-IP attribution (rate limits, audit logs, IP allowlists) falls back to `X-Forwarded-For`; the API logs a startup warning in that case. |
 | `IP_ALLOWLIST_ENFORCEMENT_MODE` | `enforce` | | Partner dashboard IP allowlist mode. Use `off` only as a break-glass switch if an allowlist locks everyone out. The allowlist only enforces when a partner has entries configured and proxy trust is working through `TRUST_PROXY_HEADERS` plus `TRUSTED_PROXY_CIDRS`. |
 | `DASHBOARD_URL` | — | | URL for links in emails |
 | `PUBLIC_APP_URL` | — | | Public-facing app URL |
@@ -102,6 +115,18 @@ deployment env vars.
 | `TWILIO_VERIFY_SERVICE_SID` | — | Twilio Verify service SID (for SMS MFA) |
 | `TWILIO_MESSAGING_SERVICE_SID` | — | Twilio Messaging Service SID (for alert SMS) |
 | `TWILIO_PHONE_NUMBER` | — | Twilio phone number for outbound SMS |
+
+## Mobile Push Notifications (iOS)
+
+Push notifications to the iOS app go directly through Apple's push service (APNs). All four values are optional but **all-or-none** — setting any one makes the other three required, so a half-configured setup fails at startup rather than silently at first send. Leave them all unset to disable push.
+
+| Variable | Default | Description |
+|---|---|---|
+| `APNS_AUTH_KEY` | — | Contents of the Apple `.p8` push auth key |
+| `APNS_KEY_ID` | — | Apple push key ID |
+| `APNS_TEAM_ID` | — | Apple developer team ID |
+| `APNS_BUNDLE_ID` | — | iOS app bundle identifier |
+| `APNS_ENVIRONMENT` | `production` | `production` or `sandbox`. An empty value is treated as unset. |
 
 ## Binary Distribution
 
@@ -183,13 +208,15 @@ Both API and web Sentry integrations are off by default. Leave the DSN variables
 
 ## Rate Limiting
 
-Two rate-limit tiers protect the API. The generic per-user limit covers logged-in dashboard usage; the per-org agent limit caps how much traffic a single tenant's fleet can generate, even with thousands of agents.
+Per-user and per-endpoint rate limits (login, MFA, dashboard usage) are fixed in code and not configurable via environment variables. The one deployment-tunable limit is the per-org agent cap, which bounds how much traffic a single tenant's fleet can generate, even with thousands of agents.
 
 | Variable | Default | Description |
 |---|---|---|
-| `RATE_LIMIT_WINDOW_MS` | `60000` | Sliding window duration (ms) |
-| `RATE_LIMIT_MAX_REQUESTS` | `100` | Max requests per window |
-| `AGENT_ORG_RATE_LIMIT_PER_MIN` | `600` | Per-organization sliding-window rate limit on agent-authenticated endpoints. Returns `429` with `Retry-After: 60` when exceeded. Sized for ~5 active agents per org; raise for MSPs with very large fleets. |
+| `AGENT_ORG_RATE_LIMIT_PER_MIN` | `600` | Per-organization sliding-window rate limit on agent-authenticated endpoints. Returns `429` with `Retry-After: 60` when exceeded. Sized for ~5 active agents per org; raise for MSPs with very large fleets. Not mapped in the stock compose file — to change it, add it to the `api` service `environment:` block as well as `.env`. |
+
+<Aside type="note">
+  Earlier `.env.example` files carried `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `SESSION_MAX_AGE`, and `ENABLE_API_DOCS` entries. None of these were ever read by the API — they are gone from `.env.example` as of v0.99.0 and can be safely deleted from your `.env`.
+</Aside>
 
 ## Database
 
@@ -197,14 +224,10 @@ Two rate-limit tiers protect the API. The generic per-user limit covers logged-i
 |---|---|---|
 | `DB_POOL_MAX` | `30` | Maximum postgres-js connection pool size. Tune up if you see cascading 504s during heartbeat storms; confirm Postgres `max_connections` has headroom (default 100 is fine for a single API replica). |
 
-## File Transfer & Remote Sessions
+## Remote Sessions & Storage
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRANSFER_STORAGE_PATH` | `./data/transfers` | File transfer storage directory |
-| `MAX_TRANSFER_SIZE_MB` | `100` | Max file transfer size |
-| `MAX_ACTIVE_TRANSFERS_PER_ORG` | `20` | Concurrent transfer limit per org |
-| `MAX_ACTIVE_TRANSFERS_PER_USER` | `10` | Concurrent transfer limit per user |
 | `MAX_ACTIVE_REMOTE_SESSIONS_PER_ORG` | `10` | Concurrent remote sessions per org |
 | `MAX_ACTIVE_REMOTE_SESSIONS_PER_USER` | `5` | Concurrent remote sessions per user |
 | `PATCH_REPORT_STORAGE_PATH` | `./data/patch-reports` | Patch compliance report storage |
@@ -215,8 +238,7 @@ Two rate-limit tiers protect the API. The generic per-user limit covers logged-i
 |---|---|---|
 | `ENABLE_REGISTRATION` | `true` | Allow new user registration |
 | `ENABLE_2FA` | `true` | Enable two-factor authentication |
-| `ENABLE_API_DOCS` | `false` | Enable Swagger API documentation |
-| `ENABLE_API_DOCS_UI` | `false` | Enable interactive Swagger UI (requires `ENABLE_API_DOCS=true`) |
+| `ENABLE_API_DOCS_UI` | on outside production, off in production | Serve the interactive Swagger UI and OpenAPI spec at `/api/v1/docs`. The UI loads its scripts and styles from unpkg, which is why it defaults off in production. (The former `ENABLE_API_DOCS` variable was never read and has been removed.) |
 | `USE_AGENT_SDK` | — | Use Claude Agent SDK for AI chat |
 | `PORTAL_STATE_BACKEND` | `memory` | Portal state backend: `memory` or `redis` (auto `redis` in production) |
 | `PUBLIC_ENABLE_EDR_INTEGRATIONS` | `false` | Surface the EDR UI: the `/security/edr` fleet page, the device Security-tab EDR panel, and the Security dashboard summary cards. Set `true` at web image build time to enable. |
@@ -279,6 +301,68 @@ These enable partners to connect a Microsoft 365 shared support mailbox so custo
 
 <Aside>
   Optional and independent of C2C backup. Register a **multi-tenant** app with Microsoft Graph **application** permissions `Mail.ReadWrite` and `Mail.Send`, and add the redirect URI `<PUBLIC_URL>/api/v1/tickets/mailbox/callback`. When unset, the Microsoft 365 mailbox card is hidden and the connect routes return `400` -- nothing else is affected. See [Email-to-Ticket → Microsoft 365 support mailbox](/features/ticketing/#connecting-a-microsoft-365-support-mailbox).
+</Aside>
+
+## Customer Microsoft 365 Graph-read consent (optional)
+
+This feature is **off by default and safe to leave unset** — every variable below stays empty in a normal deployment. The API only reads and validates them when you turn the feature on. Concretely, the API **refuses to boot only when `M365_CUSTOMER_GRAPH_READ_ONBOARDING_ENABLED=true` *and* one of the required variables is missing or malformed**; while the flag is off (or absent) these variables are never parsed and any values you set are ignored.
+
+Customer Graph-read lets a customer administrator grant read-only Microsoft Graph consent to Breeze's dedicated multi-tenant application without handing you a reusable secret. The Entra certificate and Key Vault access live entirely inside an isolated [executor sidecar](/deploy/production/) — the API holds only an opaque, version-pinned reference and a private key it uses to sign short-lived internal requests to that sidecar. See [Customer Graph Read](/features/identity-integrations/#customer-graph-read-recommended-for-read-only-inventory) for the admin-facing side.
+
+| Variable | Required when enabled | Format / example | Meaning |
+|---|---|---|---|
+| `M365_CUSTOMER_GRAPH_READ_ONBOARDING_ENABLED` | — (the switch) | `true` / `false` (default `false`) | Master switch for **new** consent initiation only. Existing connection status, retest, and disconnect flows are independent of it. When `false`, none of the variables below are validated. |
+| `M365_CUSTOMER_GRAPH_READ_ONBOARDING_ORG_IDS` | Yes | Literal `*` or comma-separated canonical org UUIDs (e.g. `*` or `1111...,2222...`) | Which Breeze organizations may start consent. `*` = all organizations; otherwise an allowlist of canonical UUIDs. Boot fails if enabled and this is empty. |
+| `M365_CUSTOMER_GRAPH_READ_CLIENT_ID` | Yes | Canonical UUID | Entra application (client) ID of the shared multi-tenant Graph-read app. |
+| `M365_CUSTOMER_GRAPH_READ_CREDENTIAL_VERSION` | Yes | Exactly 32 lowercase hex characters | Pins which stored credential version the executor must use. Must equal the version segment of `M365_CUSTOMER_GRAPH_READ_VAULT_REF`. |
+| `M365_CUSTOMER_GRAPH_READ_VAULT_REF` | Yes | `akv://<vault-host>/m365-customer-graph-read/<32-lowercase-hex-version>` | Opaque Key Vault reference to the app's certificate material. The trailing version segment **must match** `M365_CUSTOMER_GRAPH_READ_CREDENTIAL_VERSION`, or boot fails. |
+| `M365_GRAPH_READ_EXECUTOR_URL` | Yes | Origin-only HTTPS, e.g. `https://m365-executor.internal` (no path, query, fragment, or userinfo) | Private base URL of the executor sidecar. Anything other than a bare `https://host[:port]` origin is rejected at boot. |
+| `M365_GRAPH_READ_EXECUTOR_AUDIENCE` | Yes | Literal `m365-graph-read-executor` | JWT audience for the API→executor internal auth token. Must equal that exact string. |
+| `M365_GRAPH_READ_EXECUTOR_SIGNING_KID` | Yes | Non-empty string | Key ID of the API's signing JWK. If the JWK file carries a `kid`, it must match this value. |
+| `M365_GRAPH_READ_EXECUTOR_SIGNING_PRIVATE_JWK_FILE` | Yes | Absolute path to a file, e.g. `/run/secrets/m365_graph_read_executor_signing_private_jwk` | The API's Ed25519 (`kty: OKP`, `crv: Ed25519`) **private** signing JWK. The file must be a regular file whose mode denies all group/other access (**`0600` or stricter**) and should be mounted **read-only**. Boot fails on a symlink, a relative path, over-broad permissions, or a JWK that isn't a valid 32-byte Ed25519 key. Do **not** put the private JWK inline in an env var. |
+
+<Aside type="note" title="How the consent callback URL is derived">
+  The API does **not** read a `..._CALLBACK_URL` variable. It builds the OAuth consent callback from `PUBLIC_URL` (falling back to `PUBLIC_APP_URL`, then `PUBLIC_API_URL`) and appends `/api/v1/m365/consent/callback`. In production at least one of those origin variables must be set. The `M365_CUSTOMER_GRAPH_READ_CALLBACK_URL` line in `.env.example` is **not consumed by the API** — it is read only by the separate executor sidecar (where it must equal that exact `https://<origin>/api/v1/m365/consent/callback` URL). On an API-only host you can ignore it.
+</Aside>
+
+<Aside type="tip">
+  With Docker secrets, `M365_GRAPH_READ_EXECUTOR_SIGNING_PRIVATE_JWK_FILE` points at the in-container mount path (e.g. `/run/secrets/...`), while `M365_GRAPH_READ_EXECUTOR_SIGNING_PRIVATE_JWK_SOURCE_FILE` in `.env` is the **host path** of the source JWK that feeds that secret. Provision the source file with a numeric owner and mode `0400`; only the mounted `..._FILE` path is validated at boot.
+</Aside>
+
+<Aside type="caution" title="Map new variables into the api service">
+  Setting a value in `.env` is necessary but **not sufficient** on a custom Compose file. Every variable above must also be listed in the `api` service's `environment:` block — Compose only interpolates variables it maps explicitly. A value present in `.env` but not mapped through Compose reaches the container as empty, so an "enabled" deploy would fail to boot as if the variable were unset.
+</Aside>
+
+## Customer Microsoft 365 Graph-actions (write) executor (optional)
+
+Like Graph-read above, this feature is **off by default and safe to leave unset** — every variable below stays empty in a normal deployment. The API only reads and validates them when `M365_GRAPH_ACTIONS_TOOLS_ENABLED=true`; while the flag is off (or absent) these variables are never parsed and any values you set are ignored.
+
+Where Graph-read is read-only inventory, Graph-actions authorises **write** operations against a customer's Microsoft 365 tenant — the identity actions the AI can propose, such as resetting a user's password, disabling a user, or changing mailbox rules. Those tools are Tier 3, so they still require human approval before anything executes (see [AI Risk Engine → Approval workflow](/features/ai/#approval-workflow)).
+
+It uses the same isolation model as Graph-read: the Entra certificate and Key Vault access live entirely inside a **separately deployed** executor sidecar, and the API holds only an opaque version-pinned reference plus a private key it uses to sign short-lived internal requests.
+
+| Variable | Required when enabled | Format / example | Meaning |
+|---|---|---|---|
+| `M365_GRAPH_ACTIONS_TOOLS_ENABLED` | — (the switch) | `true` / `false` (default `false`) | Master switch for the M365 write-action tools. When `false`, none of the variables below are validated and the write tools are unavailable. |
+| `M365_GRAPH_ACTIONS_TOOLS_ORG_IDS` | Yes | Literal `*` or comma-separated canonical org UUIDs | Which Breeze organizations may use M365 write actions. `*` = all organizations; otherwise an allowlist. Leave empty while the feature is off. |
+| `M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID` | Yes | Canonical UUID | Entra application (client) ID of the multi-tenant Graph-actions app. |
+| `M365_CUSTOMER_GRAPH_ACTIONS_CREDENTIAL_VERSION` | Yes | Exactly 32 lowercase hex characters | Pins which stored credential version the executor must use. Must equal the version segment of `M365_CUSTOMER_GRAPH_ACTIONS_VAULT_REF`. |
+| `M365_CUSTOMER_GRAPH_ACTIONS_VAULT_REF` | Yes | `akv://<vault-host>/m365-customer-graph-actions/<32-lowercase-hex-version>` | Opaque Key Vault reference to the app's certificate material. The trailing version segment **must match** `M365_CUSTOMER_GRAPH_ACTIONS_CREDENTIAL_VERSION`. |
+| `M365_GRAPH_ACTIONS_EXECUTOR_URL` | Yes | Origin-only HTTPS, e.g. `https://m365-actions.internal` (no path, query, fragment, or userinfo) | Private base URL of the Graph-actions executor sidecar. Must be HTTPS; anything other than a bare origin is rejected at boot. |
+| `M365_GRAPH_ACTIONS_EXECUTOR_AUDIENCE` | Yes | Literal `m365-graph-actions-executor` | JWT audience for the API→executor internal auth token. Must equal that exact string. |
+| `M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_KID` | Yes | Non-empty string | Key ID of the API's signing JWK. If the JWK file carries a `kid`, it must match this value. |
+| `M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_FILE` | Yes | Absolute path, e.g. `/run/secrets/m365_graph_actions_executor_signing_private_jwk` | The API's Ed25519 **private** signing JWK. Same rules as the Graph-read key: a regular file, mode `0600` or stricter, mounted read-only. Never inline the private JWK in an env var. |
+
+<Aside type="caution" title="The executor is not part of the bundled Compose stack">
+  The Graph-actions executor is **deliberately not deployed** by the generic Compose stack. Run its separately released, digest-pinned image (`ghcr.io/lanternops/breeze/m365-graph-actions-executor@sha256:<digest>`) in an environment that supplies a managed or workload identity, private authenticated ingress, and controlled HTTPS egress to Key Vault, Microsoft identity, and Graph. Never expose it through Caddy or a public tunnel, never publish its container port, and never configure a plaintext executor URL.
+</Aside>
+
+<Aside type="tip">
+  As with Graph-read, `M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_FILE` is the in-container mount path, while `M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_SOURCE_FILE` in `.env` is the **host path** of the source JWK feeding that secret. Standalone Compose cannot apply secret uid/gid/mode, so provision the source file with numeric owner `1001:1001` and mode `0400`. The executor receives only the matching **public** JWK.
+</Aside>
+
+<Aside type="caution" title="Map new variables into the api service">
+  As with every optional block above, a value in `.env` is necessary but **not sufficient** on a custom Compose file — each variable must also appear in the `api` service's `environment:` block, or it reaches the container empty and an "enabled" deploy fails to boot.
 </Aside>
 
 ## Docker Deployment

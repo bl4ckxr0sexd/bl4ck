@@ -9,8 +9,10 @@
 import { z } from 'zod';
 import { isIP } from 'node:net';
 import { INVOICE_STATUSES } from '@breeze/shared';
+import { backupProfileSelectionsSchema } from '@breeze/shared/validators';
 import { fleetToolInputSchemas } from './aiToolSchemasFleet';
 import { backupToolSchemas } from './aiToolSchemasBackup';
+import { m365ToolSchemas } from './aiToolSchemasM365';
 import {
   peripheralDeviceClassEnum,
   peripheralPolicyActionEnum,
@@ -285,6 +287,30 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
     payment: z.record(z.string(), z.unknown()).optional(),
   }),
 
+  list_quotes: z.object({
+    orgId: uuid.optional(),
+    status: z.enum(['draft', 'sent', 'viewed', 'accepted', 'declined', 'expired', 'converted']).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
+
+  get_quote: z.object({
+    quoteId: uuid,
+  }),
+
+  list_organizations: z.object({
+    search: z.string().max(255).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
+
+  manage_organizations: z.object({
+    action: z.enum(['create_org', 'update_org', 'create_site', 'add_contact']),
+    orgId: uuid.optional(),
+    name: z.string().min(1).max(255).optional(),
+    status: z.enum(['active', 'suspended', 'trial', 'churned']).optional(),
+    address: z.record(z.string(), z.unknown()).optional(),
+    email: z.string().email().max(255).optional(),
+  }),
+
   manage_quotes: z.object({
     action: z.enum([
       'create_draft',
@@ -298,6 +324,7 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
       'add_catalog_line',
       'update_line',
       'remove_line',
+      'move_line',
       'reorder_lines',
       'send',
       'decline',
@@ -321,11 +348,16 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
   search_catalog: z.object({
     search: z.string().optional(),
     itemType: z.enum(['hardware', 'software', 'service']).optional(),
+    isBundle: z.boolean().optional(),
     limit: z.number().int().min(1).max(100).optional(),
   }),
 
   get_catalog_item: z.object({
     catalogItemId: uuid,
+  }),
+
+  lookup_distributor_product: z.object({
+    query: z.string().min(1).max(40),
   }),
 
   manage_catalog: z.object({
@@ -820,7 +852,7 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
     deviceId: uuid.optional(),
     startTime: z.string().datetime({ offset: true }).optional(),
     endTime: z.string().datetime({ offset: true }).optional(),
-    changeType: z.enum(['software', 'service', 'startup', 'network', 'scheduled_task', 'user_account']).optional(),
+    changeType: z.enum(['software', 'service', 'startup', 'network', 'scheduled_task', 'user_account', 'hardware', 'os_version']).optional(),
     changeAction: z.enum(['added', 'removed', 'modified', 'updated']).optional(),
     limit: z.number().int().min(1).max(500).optional(),
   }),
@@ -1018,6 +1050,11 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
     durationMinutes: z.number().int().min(1).max(1440).optional(),
   }),
 
+  capture_agent_pprof: z.object({
+    deviceId: uuid,
+    profile: z.enum(['heap', 'goroutine', 'all']).optional(),
+  }),
+
   // Event log tools
   search_logs: z.object({
     query: z.string().max(500).optional(),
@@ -1125,6 +1162,16 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
     inlineSettings: z.record(z.string(), z.unknown()).optional().nullable(),
   }),
 
+  manage_backup_profiles: z.object({
+    action: z.enum(['list', 'get', 'create', 'update', 'delete']),
+    profileId: uuid.optional(),
+    name: z.string().min(1).max(255).optional(),
+    description: z.string().max(2000).optional(),
+    ownerScope: z.enum(['organization', 'partner']).optional(),
+    selections: backupProfileSelectionsSchema.optional(),
+    isActive: z.boolean().optional(),
+  }),
+
   // Playbook tools
   list_playbooks: z.object({
     category: z.enum(['disk', 'service', 'memory', 'patch', 'security', 'all']).optional(),
@@ -1229,6 +1276,9 @@ export const toolInputSchemas: Record<string, z.ZodType> = {
 
   // Fleet orchestration tools
   ...fleetToolInputSchemas,
+
+  // Microsoft 365 typed Graph read-query tools (extracted to aiToolSchemasM365.ts)
+  ...m365ToolSchemas,
 };
 
 /**
@@ -1250,6 +1300,15 @@ export function validateToolInput(
     return { success: true };
   }
 
-  const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+  // Object-level refinements (e.g. "install requires patchIds and deviceIds")
+  // carry an empty `path`, so prefixing every message with `${path}: ` yields a
+  // dangling `: message` and, once joined onto the banner, a doubled colon
+  // ("Invalid input: : ..."). Only prefix the path when there is one.
+  const issues = result.error.issues
+    .map(i => {
+      const path = i.path.join('.');
+      return path ? `${path}: ${i.message}` : i.message;
+    })
+    .join('; ');
   return { success: false, error: `Invalid input: ${issues}` };
 }

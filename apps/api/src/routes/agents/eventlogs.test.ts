@@ -86,7 +86,24 @@ function mockDeviceLookup() {
 }
 
 function mockInsertSuccess() {
-  const onConflictDoNothing = vi.fn().mockResolvedValue(undefined);
+  // .returning() echoes the inserted batch (no conflicts) — mirrors the route
+  // chain db.insert().values().onConflictDoNothing().returning().
+  let captured: Array<Record<string, unknown>> = [];
+  const returning = vi.fn().mockImplementation(async () =>
+    captured.map((r) => ({ source: r.source, eventId: r.eventId, timestamp: r.timestamp })));
+  const onConflictDoNothing = vi.fn().mockReturnValue({ returning });
+  const values = vi.fn().mockImplementation((batch: Array<Record<string, unknown>>) => {
+    captured = batch;
+    return { onConflictDoNothing };
+  });
+  mocks.insert.mockReturnValue({ values });
+  return values;
+}
+
+function mockInsertAllConflicts() {
+  // Every row hits the device_event_logs_dedup_idx — .returning() is empty.
+  const returning = vi.fn().mockResolvedValue([]);
+  const onConflictDoNothing = vi.fn().mockReturnValue({ returning });
   const values = vi.fn().mockReturnValue({ onConflictDoNothing });
   mocks.insert.mockReturnValue({ values });
   return values;
@@ -170,10 +187,37 @@ describe('agent event log routes', () => {
         events: [
           expect.objectContaining({
             timestamp: '2026-05-02T12:00:00.000Z',
+            // Regression guard (#2643): forward the persisted `details`, not the
+            // non-existent `rawData` the schema strips. The clamp provenance
+            // that was merged into the stored row is forwarded too.
+            details: {
+              eventRecordId: 123,
+              originalTimestamp: '2026-05-02T13:00:00.000Z',
+              timestampClamped: true,
+            },
           }),
         ],
       })
     );
+    // The removed `rawData` field must not resurface in the forward payload.
+    const forwarded = mocks.enqueueLogForwarding.mock.calls[0]?.[0];
+    expect(forwarded.events[0]).not.toHaveProperty('rawData');
+  });
+
+  it('does not re-forward duplicate events absorbed by the dedup index (#2390 retry passes)', async () => {
+    mockDeviceLookup();
+    mockInsertAllConflicts();
+
+    const res = await app.request(`/agents/${AGENT_ID}/eventlogs`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events: [makeEvent()] }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBe(0); // nothing actually inserted
+    expect(mocks.enqueueLogForwarding).not.toHaveBeenCalled();
   });
 });
 

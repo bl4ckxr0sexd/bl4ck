@@ -5,6 +5,7 @@ vi.mock('../../db', () => ({
   db: {
     select: vi.fn(),
     insert: vi.fn(),
+    transaction: vi.fn(),
   },
   runOutsideDbContext: vi.fn(async (fn: () => Promise<unknown>) => fn()),
   withDbAccessContext: vi.fn(async (_ctx: unknown, fn: () => Promise<unknown>) => fn()),
@@ -28,6 +29,7 @@ vi.mock('../../services/warrantyWorker', () => ({
 }));
 
 import { db } from '../../db';
+import * as schema from '../../db/schema';
 import { queueWarrantySyncForDevice } from '../../services/warrantyWorker';
 import { inventoryRoutes } from './inventory';
 
@@ -182,5 +184,266 @@ describe('agent hardware inventory — warranty sync re-trigger (#1732)', () => 
 
     expect(res.status).toBe(200);
     expect(queueWarrantySyncForDevice).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The software report wipes and reinserts software_inventory rows. Vuln
+// findings reference those rows (FK now ON DELETE SET NULL — BREEZE-3), and
+// the fleet aggregation layer displays a NULL-linked finding as an OS finding,
+// so the route must re-point each finding at the replacement row for the same
+// (name, vendor).
+describe('agent software inventory — vuln finding re-link (BREEZE-3)', () => {
+  type TxUpdateCall = { set?: Record<string, unknown>; where?: unknown };
+
+  function mockSoftwareTx(opts: {
+    linkedFindings: Array<{ findingId: string; name: string; vendor: string | null }>;
+    replacementRows: Array<{ id: string; name: string; vendor: string | null }>;
+  }) {
+    const updateCalls: TxUpdateCall[] = [];
+    const deleteWhere = vi.fn().mockResolvedValue(undefined);
+    const insertValues = vi.fn().mockResolvedValue(undefined);
+    // The linked-findings select must lock its rows in a deterministic order —
+    // that is the BREEZE-3/BREEZE-W deadlock fix. Capture the chain so a
+    // regression that drops `.orderBy(...).for('update')` fails a test instead
+    // of silently reintroducing the lock-order inversion.
+    const linkedFindingsOrderBy = vi.fn();
+    const linkedFindingsFor = vi.fn();
+    const tx = {
+      // Two select shapes: the linked-findings join
+      // (select().from().innerJoin().where().orderBy().for()) and the
+      // post-insert replacement row lookup (select().from().where()).
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              orderBy: linkedFindingsOrderBy.mockReturnValue({
+                for: linkedFindingsFor.mockResolvedValue(opts.linkedFindings),
+              }),
+            }),
+          }),
+          where: vi.fn().mockResolvedValue(opts.replacementRows),
+        }),
+      }),
+      delete: vi.fn().mockReturnValue({ where: deleteWhere }),
+      insert: vi.fn().mockReturnValue({ values: insertValues }),
+      update: vi.fn(() => {
+        const call: TxUpdateCall = {};
+        updateCalls.push(call);
+        return {
+          set: vi.fn((set: Record<string, unknown>) => {
+            call.set = set;
+            return {
+              where: vi.fn((where: unknown) => {
+                call.where = where;
+                return Promise.resolve(undefined);
+              }),
+            };
+          }),
+        };
+      }),
+    };
+    vi.mocked(db.transaction).mockImplementation(async (fn: any) => fn(tx));
+    return { tx, updateCalls, deleteWhere, insertValues, linkedFindingsOrderBy, linkedFindingsFor };
+  }
+
+  async function putSoftware(app: Hono, software: Array<Record<string, unknown>>) {
+    return app.request('/agents/agent-1/software', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ software }),
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('locks the findings it will re-link in id order (BREEZE-3 deadlock fix)', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { linkedFindingsOrderBy, linkedFindingsFor } = mockSoftwareTx({
+      linkedFindings: [{ findingId: 'finding-1', name: 'Google Chrome', vendor: 'Google LLC' }],
+      replacementRows: [{ id: 'new-1', name: 'Google Chrome', vendor: 'Google LLC' }],
+    });
+
+    const res = await putSoftware(makeApp(), [{ name: 'Google Chrome', vendor: 'Google LLC', version: '2.0' }]);
+    expect(res.status).toBe(200);
+
+    // Ordered by device_vulnerabilities.id, and locked. The FK cascade from the
+    // DELETE would otherwise take these row locks in software_inventory order
+    // while refreshRiskScores takes them in id order — opposite directions on
+    // the same rows is the deadlock. Both sides must ascend by id.
+    expect(linkedFindingsOrderBy).toHaveBeenCalledTimes(1);
+    expect(linkedFindingsOrderBy.mock.calls[0]?.[0]).toBe(schema.deviceVulnerabilities.id);
+    expect(linkedFindingsFor).toHaveBeenCalledWith('update', { of: schema.deviceVulnerabilities });
+  });
+
+  it('retries the transaction when it loses a lock race instead of dropping the report', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { tx } = mockSoftwareTx({
+      linkedFindings: [],
+      replacementRows: [],
+    });
+
+    // First attempt deadlocks the way BREEZE-3 did; the report must still land.
+    // Before the retry this propagated to the global handler as a 500 and the
+    // agent's entire software list was discarded (~4k reports in 6 days).
+    const deadlock = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    let attempts = 0;
+    vi.mocked(db.transaction).mockImplementation(async (fn: any) => {
+      attempts += 1;
+      if (attempts === 1) throw deadlock;
+      return fn(tx);
+    });
+
+    const res = await putSoftware(makeApp(), [{ name: 'Google Chrome', vendor: 'Google LLC', version: '2.0' }]);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, count: 1 });
+    expect(attempts).toBe(2);
+  });
+
+  it('gives up after the retry budget and does not mask a non-lock error', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    mockSoftwareTx({ linkedFindings: [], replacementRows: [] });
+
+    // A constraint violation is not a lost lock race — it must surface on the
+    // FIRST throw rather than being retried into extra load.
+    const notALockError = Object.assign(new Error('null value violates not-null'), { code: '23502' });
+    let attempts = 0;
+    vi.mocked(db.transaction).mockImplementation(async () => {
+      attempts += 1;
+      throw notALockError;
+    });
+
+    const res = await putSoftware(makeApp(), [{ name: 'Google Chrome', vendor: 'Google LLC', version: '2.0' }]);
+    expect(res.status).toBe(500);
+    expect(attempts).toBe(1);
+  });
+
+  it('re-links findings to the replacement rows matching (name, vendor)', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { tx, updateCalls } = mockSoftwareTx({
+      linkedFindings: [
+        { findingId: 'finding-1', name: 'Google Chrome', vendor: 'Google LLC' },
+        { findingId: 'finding-2', name: 'Google Chrome', vendor: 'Google LLC' },
+        { findingId: 'finding-3', name: '7-Zip', vendor: null },
+      ],
+      replacementRows: [
+        { id: 'sw-new-1', name: 'Google Chrome', vendor: 'Google LLC' },
+        { id: 'sw-new-2', name: '7-Zip', vendor: null },
+      ],
+    });
+
+    const res = await putSoftware(makeApp(), [
+      { name: 'Google Chrome', version: '127.0', vendor: 'Google LLC' },
+      { name: '7-Zip', version: '24.06' },
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(tx.delete).toHaveBeenCalledTimes(1);
+    expect(tx.insert).toHaveBeenCalledTimes(1);
+    // One UPDATE per replacement row; both Chrome findings batched together.
+    expect(updateCalls).toHaveLength(2);
+    const sets = updateCalls.map((c) => c.set?.softwareInventoryId).sort();
+    expect(sets).toEqual(['sw-new-1', 'sw-new-2']);
+  });
+
+  it('re-links across casing/whitespace changes in name and vendor (correlation-normalized matching)', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { updateCalls } = mockSoftwareTx({
+      linkedFindings: [
+        { findingId: 'finding-1', name: 'GOOGLE Chrome ', vendor: 'GOOGLE LLC' },
+      ],
+      replacementRows: [
+        { id: 'sw-new-1', name: 'Google Chrome', vendor: ' Google LLC' },
+      ],
+    });
+
+    const res = await putSoftware(makeApp(), [
+      { name: 'Google Chrome', vendor: ' Google LLC' },
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0]!.set?.softwareInventoryId).toBe('sw-new-1');
+  });
+
+  it('does not match on name alone when the vendor differs', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { updateCalls } = mockSoftwareTx({
+      linkedFindings: [
+        { findingId: 'finding-1', name: 'Agent', vendor: 'Vendor A' },
+      ],
+      replacementRows: [
+        { id: 'sw-new-1', name: 'Agent', vendor: 'Vendor B' },
+      ],
+    });
+
+    const res = await putSoftware(makeApp(), [{ name: 'Agent', vendor: 'Vendor B' }]);
+
+    expect(res.status).toBe(200);
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it('leaves findings for uninstalled software unlinked (resolved by next correlation pass)', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { updateCalls } = mockSoftwareTx({
+      linkedFindings: [
+        { findingId: 'finding-1', name: 'Old App', vendor: 'Gone Inc.' },
+      ],
+      replacementRows: [
+        { id: 'sw-new-1', name: 'Google Chrome', vendor: 'Google LLC' },
+      ],
+    });
+
+    const res = await putSoftware(makeApp(), [
+      { name: 'Google Chrome', vendor: 'Google LLC' },
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it('skips re-linking entirely when the device has no linked findings', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { tx, updateCalls } = mockSoftwareTx({
+      linkedFindings: [],
+      replacementRows: [{ id: 'sw-new-1', name: 'Google Chrome', vendor: 'Google LLC' }],
+    });
+
+    const res = await putSoftware(makeApp(), [
+      { name: 'Google Chrome', vendor: 'Google LLC' },
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(tx.insert).toHaveBeenCalledTimes(1);
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it('handles an empty software list: wipes rows, inserts nothing, re-links nothing', async () => {
+    mockDeviceLookup({ id: 'device-1', orgId: 'org-1' });
+    const { tx, updateCalls } = mockSoftwareTx({
+      linkedFindings: [
+        { findingId: 'finding-1', name: 'Google Chrome', vendor: 'Google LLC' },
+      ],
+      replacementRows: [],
+    });
+
+    const res = await putSoftware(makeApp(), []);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, count: 0 });
+    expect(tx.delete).toHaveBeenCalledTimes(1);
+    expect(tx.insert).not.toHaveBeenCalled();
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it('returns 404 without opening a transaction when the device is unknown', async () => {
+    mockDeviceLookup(null);
+
+    const res = await putSoftware(makeApp(), [{ name: 'Google Chrome' }]);
+
+    expect(res.status).toBe(404);
+    expect(db.transaction).not.toHaveBeenCalled();
   });
 });

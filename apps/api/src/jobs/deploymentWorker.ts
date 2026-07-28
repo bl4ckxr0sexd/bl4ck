@@ -166,13 +166,13 @@ function buildDeploymentPausedEmailHtml(params: {
             <tr>
               <td style="padding: 0 32px 24px;">
                 <p style="margin: 0; font-size: 12px; color: #6b7280;">
-                  This is an automated notification from Breeze RMM.
+                  This is an automated notification from BL4CK RMM.
                 </p>
               </td>
             </tr>
           </table>
           <p style="margin: 16px 0 0; font-size: 12px; color: #94a3b8;">
-            Breeze RMM
+            BL4CK RMM
           </p>
         </td>
       </tr>
@@ -209,7 +209,7 @@ function buildDeploymentPausedEmailText(params: {
     lines.push(`View deployment: ${dashboardUrl}`, '');
   }
 
-  lines.push('This is an automated notification from Breeze RMM.');
+  lines.push('This is an automated notification from BL4CK RMM.');
 
   return lines.join('\n');
 }

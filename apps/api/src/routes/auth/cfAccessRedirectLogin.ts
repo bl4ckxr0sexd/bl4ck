@@ -16,6 +16,7 @@ import {
 import {
   bindRefreshJtiToFamily,
   createTokenPair,
+  getUserEpochs,
   mintRefreshTokenFamily,
   revokeAllUserTokens,
   revokeRefreshTokenJti,
@@ -23,6 +24,7 @@ import {
 } from '../../services';
 import { createAuditLogAsync } from '../../services/auditService';
 import { TenantInactiveError } from '../../services/tenantStatus';
+import { getEffectiveMfaPolicy } from '../../services/mfaPolicy';
 import { ENABLE_2FA } from './schemas';
 import {
   auditUserLoginFailure,
@@ -166,13 +168,49 @@ cfAccessRedirectLoginRoutes.get('/cf-access-login', async (c) => {
     return loginErrorRedirect('mfa-required');
   }
 
-  const mfaSatisfied = trustsMfa || !(ENABLE_2FA && user.mfaEnabled);
+  // Parity with the password /login handler (routes/auth/login.ts) and the
+  // companion XHR middleware (middleware/cfAccessLogin.ts).
+  //
+  // The old `trustsMfa || !(ENABLE_2FA && user.mfaEnabled)` granted VACUOUS
+  // assurance to any user with no factor — INCLUDING one whose effective
+  // policy requires MFA — so a CF Access login walked straight past forced
+  // enrollment and every hasSatisfiedMfa() gate. `trustsMfa` still satisfies
+  // MFA, but ONLY for a user who actually HAS a factor: the operator is
+  // asserting the edge performed a second factor, not that policy is
+  // irrelevant.
+  //
+  // This handler answers with a 302, not JSON, so there is no body to carry
+  // the `mfaEnrollmentRequired` flag its XHR sibling returns. The `mfa: false`
+  // claim IS the security-relevant half: it is what makes authMiddleware's
+  // forced-enrollment gate 428 the session into /auth/mfa/setup and what keeps
+  // every hasSatisfiedMfa()-gated route closed until a real factor exists.
+  //
+  // Fail-closed on an unresolvable policy: getEffectiveMfaPolicy reads under
+  // runOutsideDbContext+withSystemDbAccessContext (so this pre-auth path can
+  // never silently 0-row under RLS and mistake "no policy row" for "no
+  // policy"), and a role/membership-join failure THROWS rather than returning
+  // a permissive default — the throw aborts before any token is minted, which
+  // is the closed outcome. (A settings-read blip is the resolver's one
+  // deliberate fail-open, shared with /login: a transient error must not lock
+  // a whole tenant out of signing in.)
+  const policy = await getEffectiveMfaPolicy({
+    scope: context.scope,
+    userId: user.id,
+    orgId: context.orgId,
+    partnerId: context.partnerId,
+  });
+  const mfaSatisfied =
+    !ENABLE_2FA ||
+    (user.mfaEnabled && trustsMfa) ||
+    (!user.mfaEnabled && !policy.required);
 
   // Mint a fresh refresh-token family for this login so the rotation chain
   // participates in OAuth 2.1 reuse-detection — same invariant as every
   // other authenticated mint path (see services/refreshTokenFamily.ts and
   // the /login handler).
   const familyId = await mintRefreshTokenFamily(user.id);
+  const epochs = await getUserEpochs(user.id);
+  if (!epochs) throw new Error('user epochs unavailable at token mint');
 
   const tokens = await createTokenPair(
     {
@@ -183,6 +221,8 @@ cfAccessRedirectLoginRoutes.get('/cf-access-login', async (c) => {
       partnerId: context.partnerId,
       scope: context.scope,
       mfa: mfaSatisfied,
+      aep: epochs.authEpoch,
+      mep: epochs.mfaEpoch,
     },
     { refreshFam: familyId }
   );

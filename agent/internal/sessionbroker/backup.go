@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -19,6 +20,19 @@ const (
 
 // backupHelperScopes defines allowed IPC scopes for the backup helper.
 var backupHelperScopes = []string{"backup"}
+
+// backupBinaryName returns the on-disk filename of the breeze-backup helper as
+// installed alongside the agent. Unlike the Windows-only breeze-user-helper,
+// the backup helper is built for every supported OS (see agent/Makefile), so
+// the executable suffix must be applied conditionally: breeze-backup.exe on
+// Windows, breeze-backup elsewhere. Taking goos as a parameter keeps this
+// testable on every platform the agent builds on.
+func backupBinaryName(goos string) string {
+	if goos == "windows" {
+		return "breeze-backup.exe"
+	}
+	return "breeze-backup"
+}
 
 // backupHelper tracks the backup helper process and session.
 type backupHelper struct {
@@ -77,7 +91,7 @@ func (b *Broker) spawnBackupHelper(binaryPath string) (*Session, error) {
 			return nil, fmt.Errorf("failed to find self path: %w", err)
 		}
 		dir := filepath.Dir(self)
-		path = filepath.Join(dir, "bl4ck-backup")
+		path = filepath.Join(dir, backupBinaryName(runtime.GOOS))
 	}
 
 	if _, err := os.Stat(path); err != nil {
@@ -151,8 +165,14 @@ func (b *Broker) StopBackupHelper() {
 	bh.session = nil
 }
 
-// ForwardBackupCommand sends a command to the backup helper and waits for the result.
-func (b *Broker) ForwardBackupCommand(commandID, commandType string, payload []byte, timeout time.Duration) (*ipc.Envelope, error) {
+// ForwardBackupCommand sends a command to the backup helper and waits for the
+// result. async, when true, tells the helper this is a backup_run request
+// that should be acked immediately ({"started":true}) with the real result
+// following later as an unsolicited backup_result envelope — callers must
+// only set it when the connected server has advertised the backup_run_async
+// capability (see websocket.Client.HasServerCapability), since an old server
+// would otherwise parse the ack as a malformed terminal result.
+func (b *Broker) ForwardBackupCommand(commandID, commandType string, payload []byte, timeout time.Duration, async bool) (*ipc.Envelope, error) {
 	b.mu.RLock()
 	var session *Session
 	if b.backup != nil {
@@ -169,6 +189,7 @@ func (b *Broker) ForwardBackupCommand(commandID, commandType string, payload []b
 		CommandType: commandType,
 		Payload:     payload,
 		TimeoutMs:   timeout.Milliseconds(),
+		Async:       async,
 	}
 
 	return session.SendCommand(commandID, backupipc.TypeBackupCommand, req, timeout)

@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, like, or } from 'drizzle-orm';
 import { db } from '../db';
 import {
   backupJobs,
@@ -7,7 +7,10 @@ import {
   backupPolicies,
   configPolicyBackupSettings,
   backupConfigs,
+  IN_FLIGHT_BACKUP_JOB_STATUSES,
+  STALE_BACKUP_REAP_MARKER,
 } from '../db/schema';
+import { captureException } from './sentry';
 import { backupChains } from '../db/schema/applicationBackup';
 import {
   applyGfsTagsToSnapshot,
@@ -20,8 +23,8 @@ import {
   checkBackupProviderCapabilities,
 } from './backupSnapshotStorage';
 import { resolveBackupProtectionForDevice } from './featureConfigResolver';
+import { redactSecretsFromOutput } from './secretRedaction';
 
-export const IN_FLIGHT_BACKUP_JOB_STATUSES = ['pending', 'running'] as const;
 type SnapshotImmutabilityEnforcement = 'application' | 'provider';
 
 type SnapshotProtectionSettings = {
@@ -420,11 +423,35 @@ export async function applyBackupCommandResultToJob(params: {
     updateData.totalSize = result.bytesBackedUp ?? null;
     updateData.backupType = result.backupType ?? null;
     if (result.warning) {
-      updateData.errorLog = result.warning;
+      // #2434: warning/error are agent-supplied free text surfaced in the
+      // backup UI — redact secrets before persisting to errorLog.
+      updateData.errorLog = redactSecretsFromOutput(result.warning);
+    } else {
+      // FIX 7: clear any prior error_log so a job that ultimately SUCCEEDED
+      // doesn't keep showing a leftover error — in particular the stale-reaper
+      // failure note when this completion is flipping a reaped job back to
+      // completed (see the widened status guard below).
+      updateData.errorLog = null;
+    }
+    if (result.errorCount !== undefined) {
+      // Partial success: the agent uploaded some files but N failed — record
+      // the count so the job list doesn't render a green job with 0 errors
+      // over an incomplete restore point.
+      updateData.errorCount = result.errorCount;
+    }
+    if (result.referencedBytes !== undefined) {
+      // Incremental dedup: bytes referenced from a prior snapshot instead of
+      // re-uploaded this run. Only write when the agent reports it — a
+      // legacy agent omits the field entirely, and the column must stay NULL
+      // rather than being coerced to 0.
+      updateData.referencedSize = result.referencedBytes;
+    }
+    if (result.referencedFiles !== undefined) {
+      updateData.referencedFiles = result.referencedFiles;
     }
   } else {
     updateData.status = 'failed';
-    updateData.errorLog = result.error ?? result.warning ?? 'Unknown error';
+    updateData.errorLog = redactSecretsFromOutput(result.error ?? result.warning ?? 'Unknown error');
     if (result.backupType) {
       updateData.backupType = result.backupType;
     }
@@ -434,22 +461,50 @@ export async function applyBackupCommandResultToJob(params: {
     updateData.snapshotId = providerSnapshotId;
   }
 
+  // FIX 7: a genuinely-successful backup whose result lands AFTER the stale
+  // reaper already flagged the job `failed` must still be recorded — otherwise
+  // the real, restorable snapshot sitting in the bucket is stranded with no
+  // backup_snapshots row and the run is permanently mislabelled a failure. A
+  // completed result may therefore flip a job that is still in-flight OR one the
+  // reaper failed (its error_log carries STALE_BACKUP_REAP_MARKER). A user
+  // `cancelled` job and a genuine, non-reaper agent `failed` are NOT resurrected
+  // (they carry no marker / a different status).
+  const isCompletedResult = resultStatus === 'completed';
+  const statusGuard = isCompletedResult
+    ? or(
+        inArray(backupJobs.status, IN_FLIGHT_BACKUP_JOB_STATUSES),
+        and(
+          eq(backupJobs.status, 'failed'),
+          like(backupJobs.errorLog, `%${STALE_BACKUP_REAP_MARKER}%`)
+        )
+      )
+    : inArray(backupJobs.status, IN_FLIGHT_BACKUP_JOB_STATUSES);
+
   const [updatedJob] = await db
     .update(backupJobs)
     .set(updateData)
-    .where(
-      and(
-        eq(backupJobs.id, jobId),
-        inArray(backupJobs.status, IN_FLIGHT_BACKUP_JOB_STATUSES)
-      )
-    )
+    .where(and(eq(backupJobs.id, jobId), statusGuard))
     .returning({
       id: backupJobs.id,
       configId: backupJobs.configId,
       backupType: backupJobs.backupType,
+      backupMode: backupJobs.backupMode,
     });
 
   if (!updatedJob) {
+    if (isCompletedResult && providerSnapshotId) {
+      // A late terminal-success we could NOT record: the job was user-cancelled,
+      // already terminal by other means, or genuinely failed without the reaper
+      // marker. The snapshot exists in storage but now has no backup_snapshots
+      // row — surface it loudly so it is recoverable rather than silently
+      // orphaned (FIX 7 fallback for the non-flippable cases).
+      const orphanMsg =
+        `[BackupPersistence] Dropped a late completed backup result for job ${jobId} ` +
+        `(device ${deviceId}): snapshot ${providerSnapshotId} may be orphaned in storage ` +
+        `with no backup_snapshots row (job was not in-flight and not reaper-failed).`;
+      console.error(orphanMsg);
+      captureException(new Error(orphanMsg));
+    }
     return {
       applied: false,
       snapshotDbId: null,
@@ -468,8 +523,15 @@ export async function applyBackupCommandResultToJob(params: {
   const timestamp = result.snapshot?.timestamp
     ? new Date(result.snapshot.timestamp)
     : now;
+  // A system_image job dispatches a generic backup_run whose result carries no
+  // backupType, so derive it from the job's backup_mode; otherwise the snapshot
+  // (and BMR restore, which keys off snapshot.backupType) mislabels it 'file'.
+  const derivedBackupType =
+    updatedJob.backupMode === 'system_image' ? 'system_image' : undefined;
   const snapshotBackupType =
-    result.backupType ?? updatedJob.backupType ?? 'file';
+    result.backupType ?? derivedBackupType ?? updatedJob.backupType ?? 'file';
+  const systemStateManifest = result.systemStateManifest ?? null;
+  const hardwareProfile = systemStateManifest?.hardwareProfile ?? null;
   const snapshotMetadata: Record<string, unknown> = {
     ...metadata,
     hasIndexedFiles: Boolean(result.snapshot?.files?.length),
@@ -494,6 +556,8 @@ export async function applyBackupCommandResultToJob(params: {
     metadata: snapshotMetadata,
     encryptionKeyId: resolveSnapshotEncryptionKeyId(snapshotMetadata),
     backupType: snapshotBackupType,
+    systemStateManifest,
+    hardwareProfile,
   } as const;
 
   const [existingSnapshot] = await db
@@ -579,16 +643,43 @@ export async function applyBackupCommandResultToJob(params: {
             retainUntil: protection.immutableUntil,
           });
         } catch (err) {
-          console.warn(
-            `[BackupPersistence] Provider immutability unavailable for snapshot ${snapshot.id}; falling back to application enforcement:`,
-            err instanceof Error ? err.message : err
+          // COMPLIANCE EVENT — never let this pass quietly. The operator asked
+          // for provider-enforced WORM (S3 Object Lock, i.e. immutability the
+          // storage provider guarantees and nobody can revoke); we failed to
+          // apply it and are recording the weaker application-level
+          // enforcement, which any admin with DB access can undo. The row is
+          // still written so the DB reflects REALITY rather than claiming a
+          // provider lock that does not exist — but a silent downgrade of a
+          // compliance control is not acceptable, so this escalates to Sentry
+          // at error level rather than a console.warn nobody reads.
+          //
+          // Note this is reachable from an ordinary config mistake: a
+          // malformed stored endpoint now throws out of
+          // checkBackupProviderCapabilities -> buildS3StorageClient ->
+          // coerceS3EndpointUrl, so a typo in the endpoint field would
+          // otherwise silently cost every snapshot its WORM guarantee.
+          const reason = err instanceof Error
+            ? err.message
+            : 'Provider-enforced immutability unavailable';
+          console.error(
+            `[BackupPersistence] WORM DOWNGRADE for snapshot ${snapshot.id}: provider-enforced immutability was requested but could not be applied; recording application-level enforcement instead:`,
+            reason
+          );
+          captureException(
+            err instanceof Error ? err : new Error(reason),
+            undefined,
+            {
+              worm_downgrade: 'true',
+              snapshot_id: snapshot.id,
+              config_id: String(updatedJob.configId ?? 'unknown'),
+              requested_enforcement: 'provider',
+              recorded_enforcement: 'application',
+            }
           );
           protectionUpdate = {
             ...protectionUpdate,
             immutabilityEnforcement: 'application',
-            immutabilityFallbackReason: err instanceof Error
-              ? err.message
-              : 'Provider-enforced immutability unavailable',
+            immutabilityFallbackReason: reason,
           };
         }
       }

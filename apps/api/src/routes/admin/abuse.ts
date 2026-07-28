@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { z } from 'zod';
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, isNotNull, like, ne, type SQL } from 'drizzle-orm';
 import { db, withSystemDbAccessContext } from '../../db';
 import {
   partners,
@@ -11,10 +11,11 @@ import {
   users,
   sessions,
   apiKeys,
+  partnerAbuseSignals,
 } from '../../db/schema';
 import { createAuditLog } from '../../services/auditService';
-import { revokeAllUserTokens } from '../../services/tokenRevocation';
 import { revokeAllPartnerOauthArtifacts } from '../../oauth/grantRevocation';
+import { advanceUserEpochs, revokeAllRefreshFamilies, runPostCommitCleanup } from '../../services/authLifecycle';
 import { restorePartnerTenantAccess } from '../../services/tenantLifecycle';
 import { terminateUserRemoteSessions, TEARDOWN_FAILED } from '../../services/remoteSessionTeardown';
 import { getTrustedClientIpOrUndefined } from '../../services/clientIp';
@@ -186,6 +187,17 @@ abuseRoutes.post(
         const disableResult = await disablePartnerUsersForSuspension(tx, partnerId);
         const userCount = disableResult.length;
 
+        // Task 9: multi-user mutation — advance each disabled user's auth
+        // epoch and durably revoke their refresh-token families in the SAME
+        // transaction as the disable, so a rollback undoes all three
+        // together. RLS on refresh_token_families is user-id-scoped (self OR
+        // system); this transaction already runs under the system context
+        // above, so the revoke is visible/effective for every target user.
+        for (const { id } of disableResult) {
+          await advanceUserEpochs(tx, id, { auth: true });
+          await revokeAllRefreshFamilies(tx, id, 'suspended');
+        }
+
         // Revoke API keys for orgs under this partner.
         const partnerOrgs = await tx
           .select({ id: organizations.id })
@@ -219,25 +231,26 @@ abuseRoutes.post(
       return c.json({ error: 'partner not found' }, 404);
     }
 
-    // Outside the transaction: revoke each affected user's JWTs in Redis.
-    // If Redis is degraded, the DB suspend has already committed but the
-    // existing JWTs would still be honoured until natural expiry — that is
-    // a partial-suspend that the operator MUST know about. We surface the
-    // failure as 500 + audit with result='failure' so they can fail-close
-    // (e.g. flush Redis manually, then re-run the suspend).
+    // Outside the transaction: run the lifecycle service's post-commit
+    // cleanup (Redis token cutoff, permission-cache clear, per-user OAuth-
+    // artifact revocation) for every affected user. Never throws — see
+    // runPostCommitCleanup's doc comment. If the Redis cutoff step failed,
+    // the DB suspend (and the epoch bump + durable refresh-family revocation
+    // already committed inside the transaction) still stands, but the
+    // existing JWT would be honoured until natural expiry — a partial-
+    // suspend the operator MUST know about. We surface that as 500 + audit
+    // with result='failure' so they can fail-close (e.g. flush Redis
+    // manually, then re-run the suspend).
     const tokenRevocationFailures: Array<{ userId: string; error: string }> = [];
-    const revokeResults = await Promise.allSettled(
-      result.affectedUserIds.map((id) => revokeAllUserTokens(id)),
+    const cleanupResults = await Promise.all(
+      result.affectedUserIds.map((id) => runPostCommitCleanup(id)),
     );
-    revokeResults.forEach((settled, idx) => {
-      if (settled.status === 'rejected') {
-        const userId = result.affectedUserIds[idx]!;
-        const err = settled.reason;
+    cleanupResults.forEach((cleanup, idx) => {
+      if (!cleanup.redisOk) {
         tokenRevocationFailures.push({
-          userId,
-          error: err instanceof Error ? err.message : String(err),
+          userId: result.affectedUserIds[idx]!,
+          error: 'Redis token cutoff failed — see server logs for detail',
         });
-        captureException(err, c);
       }
     });
 
@@ -385,6 +398,7 @@ abuseRoutes.post(
           .select({
             id: partners.id,
             paymentMethodAttachedAt: partners.paymentMethodAttachedAt,
+            emailVerifiedAt: partners.emailVerifiedAt,
           })
           .from(partners)
           .where(eq(partners.id, partnerId))
@@ -394,12 +408,11 @@ abuseRoutes.post(
           return { notFound: true as const };
         }
 
-        // Preserve the activation gate: only flip to 'active' if the partner
-        // has a payment method attached. Otherwise, route them back through
-        // the pending-activation flow.
-        const newStatus: 'active' | 'pending' = partner.paymentMethodAttachedAt
-          ? 'active'
-          : 'pending';
+        // Preserve the FULL activation gate (email verification AND payment
+        // method) — unsuspend must not become the one path that activates an
+        // unverified partner. Otherwise route back through pending-activation.
+        const newStatus: 'active' | 'pending' =
+          partner.paymentMethodAttachedAt && partner.emailVerifiedAt ? 'active' : 'pending';
 
         await tx
           .update(partners)
@@ -480,5 +493,232 @@ abuseRoutes.post(
         'Devices that received uninstall commands cannot be auto-restored. Re-enrollment required.',
     });
   }
+);
+
+// ---------------------------------------------------------------------------
+// Abuse-signal acknowledgement (ops tooling).
+//
+// partner_abuse_signals is system-only under forced RLS (see the
+// 2026-07-13-partner-abuse-signals migration) — a request-context query would
+// silently see zero rows, so every read/write below runs under
+// withSystemDbAccessContext, exactly like services/abuseSignals/ does.
+//
+// What acknowledging suppresses (see services/abuseSignals/persistence.ts and
+// runAbuseDigest in services/abuseSignals/index.ts):
+//  - the hourly sweep's re-notify path: an open row that has not yet been
+//    delivered (`delivered_at IS NULL`, e.g. Discord delivery kept failing)
+//    retries on every sweep until `acknowledged_at` is set;
+//  - the weekly digest: acknowledged rows drop out of the
+//    "open unacknowledged signals" severity counts and the watch-tier list.
+// Acknowledging does NOT resolve the row — the sweep keeps updating
+// severity/score on it and will still auto-resolve it as stale when the
+// underlying condition clears.
+
+/** Escape LIKE wildcards so a signalKey filter is a literal prefix match. */
+function escapeLikePrefix(prefix: string): string {
+  return prefix.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+const listSignalsQuerySchema = z.object({
+  status: z.enum(['open', 'acknowledged', 'resolved', 'all']).default('open'),
+  partnerId: z.string().uuid().optional(),
+  signalKey: z.string().trim().min(1).max(64).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).max(100_000).default(0),
+});
+
+const bulkAcknowledgeSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(100),
+});
+
+type AbuseSignalRow = typeof partnerAbuseSignals.$inferSelect;
+
+function toSignalResponse(r: AbuseSignalRow) {
+  return {
+    id: r.id,
+    partnerId: r.partnerId,
+    signalKey: r.signalKey,
+    severity: r.severity,
+    score: r.score,
+    evidence: r.evidence,
+    firstFiredAt: r.firstFiredAt,
+    computedAt: r.computedAt,
+    resolvedAt: r.resolvedAt,
+    acknowledgedAt: r.acknowledgedAt,
+    acknowledgedBy: r.acknowledgedBy,
+    deliveredAt: r.deliveredAt,
+  };
+}
+
+abuseRoutes.get(
+  '/signals',
+  requireMfa(),
+  zValidator('query', listSignalsQuerySchema),
+  async (c) => {
+    const { status, partnerId, signalKey, limit, offset } = c.req.valid('query');
+
+    const conds: SQL[] = [];
+    if (status === 'open') {
+      conds.push(isNull(partnerAbuseSignals.resolvedAt), isNull(partnerAbuseSignals.acknowledgedAt));
+    } else if (status === 'acknowledged') {
+      conds.push(isNull(partnerAbuseSignals.resolvedAt), isNotNull(partnerAbuseSignals.acknowledgedAt));
+    } else if (status === 'resolved') {
+      conds.push(isNotNull(partnerAbuseSignals.resolvedAt));
+    }
+    if (partnerId) {
+      conds.push(eq(partnerAbuseSignals.partnerId, partnerId));
+    }
+    if (signalKey) {
+      conds.push(like(partnerAbuseSignals.signalKey, `${escapeLikePrefix(signalKey)}%`));
+    }
+
+    const rows = await withSystemDbAccessContext(() =>
+      db
+        .select()
+        .from(partnerAbuseSignals)
+        .where(conds.length > 0 ? and(...conds) : undefined)
+        .orderBy(desc(partnerAbuseSignals.computedAt))
+        .limit(limit)
+        .offset(offset),
+    );
+
+    return c.json({ signals: rows.map(toSignalResponse), limit, offset });
+  },
+);
+
+abuseRoutes.post('/signals/:id/acknowledge', requireMfa(), async (c) => {
+  const auth = c.get('auth');
+  const parsedId = z.string().uuid().safeParse(c.req.param('id'));
+  if (!parsedId.success) {
+    return c.json({ error: 'invalid signal id' }, 400);
+  }
+  const id = parsedId.data;
+
+  const result = await withSystemDbAccessContext(async () => {
+    // Guarded write first: the `acknowledged_at IS NULL` predicate makes a
+    // concurrent double-ack race collapse into the idempotent path below.
+    const [updated] = await db
+      .update(partnerAbuseSignals)
+      .set({ acknowledgedAt: new Date(), acknowledgedBy: auth.user.email })
+      .where(and(eq(partnerAbuseSignals.id, id), isNull(partnerAbuseSignals.acknowledgedAt)))
+      .returning();
+    if (updated) {
+      return { notFound: false as const, alreadyAcknowledged: false as const, row: updated };
+    }
+
+    // Nothing written — either the row doesn't exist (404) or it was already
+    // acknowledged (idempotent no-op success returning current state).
+    const [existing] = await db
+      .select()
+      .from(partnerAbuseSignals)
+      .where(eq(partnerAbuseSignals.id, id))
+      .limit(1);
+    if (!existing) {
+      return { notFound: true as const };
+    }
+    return { notFound: false as const, alreadyAcknowledged: true as const, row: existing };
+  });
+
+  if (result.notFound) {
+    return c.json({ error: 'signal not found' }, 404);
+  }
+
+  if (!result.alreadyAcknowledged) {
+    await createAuditLog({
+      orgId: null,
+      actorType: 'user',
+      actorId: auth.user.id,
+      actorEmail: auth.user.email,
+      action: 'abuse_signal.acknowledged',
+      resourceType: 'abuse_signal',
+      resourceId: id,
+      details: {
+        partnerId: result.row.partnerId,
+        signalKey: result.row.signalKey,
+        severity: result.row.severity,
+      },
+      ipAddress: getTrustedClientIpOrUndefined(c),
+      userAgent: c.req.header('user-agent'),
+      result: 'success',
+    });
+  }
+
+  return c.json({
+    signal: toSignalResponse(result.row),
+    alreadyAcknowledged: result.alreadyAcknowledged,
+  });
+});
+
+abuseRoutes.post(
+  '/signals/acknowledge-bulk',
+  requireMfa(),
+  zValidator('json', bulkAcknowledgeSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { ids } = c.req.valid('json');
+    const uniqueIds = [...new Set(ids)];
+
+    const outcome = await withSystemDbAccessContext(async () => {
+      const acked = await db
+        .update(partnerAbuseSignals)
+        .set({ acknowledgedAt: new Date(), acknowledgedBy: auth.user.email })
+        .where(
+          and(
+            inArray(partnerAbuseSignals.id, uniqueIds),
+            isNull(partnerAbuseSignals.acknowledgedAt),
+          ),
+        )
+        .returning({ id: partnerAbuseSignals.id });
+      const ackedIds = new Set(acked.map((r) => r.id));
+
+      // Distinguish already-acknowledged (idempotent success) from unknown ids.
+      const remaining = uniqueIds.filter((sigId) => !ackedIds.has(sigId));
+      const existingRemaining =
+        remaining.length > 0
+          ? await db
+              .select({ id: partnerAbuseSignals.id })
+              .from(partnerAbuseSignals)
+              .where(inArray(partnerAbuseSignals.id, remaining))
+          : [];
+      const existingIds = new Set(existingRemaining.map((r) => r.id));
+
+      return {
+        results: uniqueIds.map((sigId) => ({
+          id: sigId,
+          status: ackedIds.has(sigId)
+            ? ('acknowledged' as const)
+            : existingIds.has(sigId)
+              ? ('already_acknowledged' as const)
+              : ('not_found' as const),
+        })),
+        acknowledgedCount: ackedIds.size,
+        acknowledgedIds: [...ackedIds],
+      };
+    });
+
+    if (outcome.acknowledgedCount > 0) {
+      await createAuditLog({
+        orgId: null,
+        actorType: 'user',
+        actorId: auth.user.id,
+        actorEmail: auth.user.email,
+        action: 'abuse_signal.bulk_acknowledged',
+        resourceType: 'abuse_signal',
+        details: {
+          requestedCount: uniqueIds.length,
+          acknowledgedCount: outcome.acknowledgedCount,
+          acknowledgedIds: outcome.acknowledgedIds,
+        },
+        ipAddress: getTrustedClientIpOrUndefined(c),
+        userAgent: c.req.header('user-agent'),
+        result: 'success',
+      });
+    }
+
+    return c.json({
+      results: outcome.results,
+      acknowledgedCount: outcome.acknowledgedCount,
+    });
+  },
 );
 

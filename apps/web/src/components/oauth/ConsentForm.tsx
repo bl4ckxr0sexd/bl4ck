@@ -1,14 +1,36 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../../stores/auth';
+// Initializes the shared i18next singleton. This page's layout has no Sidebar
+// (which is what pulls i18n in elsewhere), so without this every t() call here
+// renders its raw key.
+import '../../lib/i18n';
 
 interface PartnerOption {
   partnerId: string;
   partnerName: string;
+  // MCP-OAUTH-01: the partner-policy-narrowed scope set for THIS partner
+  // (provider-supported ∩ requested ∩ displayed ∩ that partner's
+  // mcp_allowed_scopes), computed authoritatively by the API. Optional so
+  // older/partial responses degrade to the top-level `scopes` fallback
+  // rather than crashing.
+  effectiveScopes?: string[];
 }
 
 interface InteractionDetails {
   uid: string;
-  client: { client_id: string; client_name: string };
+  client: {
+    client_id: string;
+    // MCP-OAUTH-08: UNVERIFIED, client-supplied DCR metadata. Rendered as
+    // ordinary escaped React text and always labelled unverified — never
+    // treated as a trusted identity.
+    display_name: string;
+    verification: 'unverified';
+    // The exact callback the authorization code will be delivered to, and its
+    // origin. Empty strings signal missing metadata → fail-closed render.
+    redirect_uri: string;
+    redirect_origin: string;
+  };
   scopes: string[];
   resource: string | null;
   partners: PartnerOption[];
@@ -23,18 +45,6 @@ type ViewState =
   | { kind: 'no-tenants' }
   | { kind: 'ready'; details: InteractionDetails }
   | { kind: 'submitting'; details: InteractionDetails };
-
-const SCOPE_LABELS: Record<string, string> = {
-  'mcp:read': 'Read your fleet data (devices, alerts, scripts, automations)',
-  'mcp:write': 'Make non-destructive changes in your fleet (tags, alerts, configuration)',
-  'mcp:execute': 'Run high-risk actions on devices (commands, scripts, remote operations)',
-  openid: 'Confirm your identity',
-  offline_access: 'Stay connected without re-signing in (refresh tokens)',
-};
-
-function describeScope(scope: string): string {
-  return SCOPE_LABELS[scope] ?? scope;
-}
 
 function isHighRiskScope(scope: string): boolean {
   return scope === 'mcp:execute';
@@ -88,6 +98,7 @@ export interface ConsentFormProps {
 }
 
 export default function ConsentForm({ uid }: ConsentFormProps) {
+  const { t } = useTranslation('common');
   const [state, setState] = useState<ViewState>({ kind: 'loading' });
   const [partnerId, setPartnerId] = useState<string>('');
 
@@ -117,7 +128,10 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           if (cancelled) return;
-          setState({ kind: 'error', message: body?.message ?? `Request failed (${res.status})` });
+          setState({
+            kind: 'error',
+            message: body?.message ?? t('longTail.oauth.ConsentForm.errors.requestFailed', { status: res.status }),
+          });
           return;
         }
         const details = (await res.json()) as InteractionDetails;
@@ -130,7 +144,7 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
         setState({ kind: 'ready', details });
       } catch (err) {
         if (cancelled) return;
-        setState({ kind: 'error', message: err instanceof Error ? err.message : 'Network error' });
+        setState({ kind: 'error', message: err instanceof Error ? err.message : t('longTail.oauth.ConsentForm.errors.network') });
       }
     })();
     return () => { cancelled = true; };
@@ -146,29 +160,32 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setState({ kind: 'error', message: body?.message ?? `Submission failed (${res.status})` });
+        setState({
+          kind: 'error',
+          message: body?.message ?? t('longTail.oauth.ConsentForm.errors.submissionFailed', { status: res.status }),
+        });
         return;
       }
       const { redirectTo } = (await res.json()) as { redirectTo: string };
       window.location.href = redirectTo;
     } catch (err) {
-      setState({ kind: 'error', message: err instanceof Error ? err.message : 'Network error' });
+      setState({ kind: 'error', message: err instanceof Error ? err.message : t('longTail.oauth.ConsentForm.errors.network') });
     }
   };
 
-  if (state.kind === 'loading') return <ConsentShell><p className="text-sm text-muted-foreground">Loading authorization request…</p></ConsentShell>;
+  if (state.kind === 'loading') return <ConsentShell><p className="text-sm text-muted-foreground">{t('longTail.oauth.ConsentForm.loading')}</p></ConsentShell>;
 
   if (state.kind === 'unauthenticated') {
     return (
-      <ConsentShell title="Sign in to continue">
+      <ConsentShell title={t('longTail.oauth.ConsentForm.signInTitle')}>
         <p className="text-sm text-muted-foreground">
-          You need to sign in to your BL4CK account before authorizing this connection.
+          {t('longTail.oauth.ConsentForm.signInDescription')}
         </p>
         <a
           href={loginRedirectTarget(uid)}
           className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white transition hover:bg-emerald-700"
         >
-          Sign in
+          {t('longTail.oauth.ConsentForm.signInAction')}
         </a>
       </ConsentShell>
     );
@@ -179,17 +196,15 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
     // Almost always a cookie/storage block — surface a hard stop instead of
     // pinballing the user.
     return (
-      <ConsentShell title="We can't sign you in">
+      <ConsentShell title={t('longTail.oauth.ConsentForm.redirectLoopTitle')}>
         <p className="text-sm text-muted-foreground">
-          Your browser sent you back here without a sign-in cookie. Third-party
-          cookies or site storage may be blocked. Allow cookies for this site
-          and try again, or return to your MCP client and start over.
+          {t('longTail.oauth.ConsentForm.redirectLoopDescription')}
         </p>
         <a
           href={loginRedirectTarget(uid)}
           className="inline-flex h-10 items-center justify-center rounded-md border px-4 text-sm font-medium transition hover:bg-muted"
         >
-          Try again
+          {t('common:actions.retry')}
         </a>
       </ConsentShell>
     );
@@ -197,9 +212,9 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
 
   if (state.kind === 'expired') {
     return (
-      <ConsentShell title="Authorization request expired">
+      <ConsentShell title={t('longTail.oauth.ConsentForm.expiredTitle')}>
         <p className="text-sm text-muted-foreground">
-          This authorization link is no longer valid. Return to your MCP client and start the connection again.
+          {t('longTail.oauth.ConsentForm.expiredDescription')}
         </p>
       </ConsentShell>
     );
@@ -207,10 +222,9 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
 
   if (state.kind === 'no-tenants') {
     return (
-      <ConsentShell title="No tenant available">
+      <ConsentShell title={t('longTail.oauth.ConsentForm.noTenantsTitle')}>
         <p className="text-sm text-muted-foreground">
-          Your account isn't a member of any partner tenant, so it can't authorize an MCP connection.
-          Ask an administrator to add you to a partner before continuing.
+          {t('longTail.oauth.ConsentForm.noTenantsDescription')}
         </p>
       </ConsentShell>
     );
@@ -218,7 +232,7 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
 
   if (state.kind === 'error') {
     return (
-      <ConsentShell title="Something went wrong">
+      <ConsentShell title={t('common:states.error')}>
         <p className="text-sm text-red-600">{state.message}</p>
       </ConsentShell>
     );
@@ -227,15 +241,43 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
   const details = state.details;
   const submitting = state.kind === 'submitting';
 
-  const displayName = details.client.client_name?.trim() || details.client.client_id;
+  // MCP-OAUTH-01 (design §1): render the SELECTED partner's authoritative
+  // effective scope set, not the raw client-requested/displayed set — a
+  // read-only or execute-disabled partner's policy may narrow it. Fall back
+  // to `details.scopes` if no partner is selected yet or the field is
+  // absent, so this never crashes on a partial/older response.
+  const selectedPartner = details.partners.find((p) => p.partnerId === partnerId);
+  const selectedPartnerScopes = selectedPartner?.effectiveScopes ?? details.scopes;
+
+  const displayName = details.client.display_name?.trim() || details.client.client_id;
   const showClientIdSubtitle = displayName !== details.client.client_id;
+
+  // MCP-OAUTH-08: fail closed if we can't show the user where the
+  // authorization code will actually be routed. Approving without a verified
+  // callback destination is exactly the phishing case this screen guards
+  // against, so render a hard stop instead of an Approve button.
+  const redirectUri = details.client.redirect_uri?.trim() ?? '';
+  const redirectOrigin = details.client.redirect_origin?.trim() ?? '';
+  if (!redirectUri || !redirectOrigin) {
+    return (
+      <ConsentShell title={t('longTail.oauth.ConsentForm.missingRedirectTitle')}>
+        <p className="text-sm text-red-600">
+          {t('longTail.oauth.ConsentForm.missingRedirectDescription')}
+        </p>
+      </ConsentShell>
+    );
+  }
 
   return (
     <ConsentShell
-      title={`${displayName} wants to access your BL4CK tenant`}
-      subtitle={showClientIdSubtitle ? `Client ID: ${details.client.client_id}` : undefined}
+      title={t('longTail.oauth.ConsentForm.consentTitle', { displayName })}
+      subtitle={showClientIdSubtitle ? t('longTail.oauth.ConsentForm.clientId', { clientId: details.client.client_id }) : undefined}
     >
-      <ScopeList scopes={details.scopes} />
+      <UnverifiedNotice />
+
+      <CallbackDestination origin={redirectOrigin} />
+
+      <ScopeList scopes={selectedPartnerScopes} />
 
       {details.partners.length > 1 && (
         <TenantPicker
@@ -253,7 +295,7 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
           disabled={submitting || !partnerId}
           className="inline-flex h-10 flex-1 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {submitting ? 'Approving…' : 'Approve'}
+          {submitting ? t('longTail.oauth.ConsentForm.approving') : t('longTail.oauth.ConsentForm.approve')}
         </button>
         <button
           type="button"
@@ -261,12 +303,12 @@ export default function ConsentForm({ uid }: ConsentFormProps) {
           disabled={submitting}
           className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-transparent px-4 text-sm font-medium transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Deny
+          {t('longTail.oauth.ConsentForm.deny')}
         </button>
       </div>
 
       <p className="pt-2 text-xs text-muted-foreground">
-        You can revoke this access anytime from Settings → Connected apps.
+        {t('longTail.oauth.ConsentForm.revokeHint')}
       </p>
     </ConsentShell>
   );
@@ -292,11 +334,56 @@ function ConsentShell({
   );
 }
 
-function ScopeList({ scopes }: { scopes: string[] }) {
-  const items = useMemo(() => (scopes.length ? scopes : ['mcp:read', 'mcp:write']), [scopes]);
+// MCP-OAUTH-08: an always-on "unverified" banner. The display name is
+// self-reported DCR metadata (an attacker can register a client literally
+// named "Microsoft 365"), so we tell the user Breeze has NOT vouched for this
+// integration's identity and to rely on the callback destination below.
+function UnverifiedNotice() {
+  const { t } = useTranslation('common');
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-700/60 dark:bg-amber-950/40">
+      <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+        {t('longTail.oauth.ConsentForm.unverifiedLabel')}
+      </p>
+      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+        {t('longTail.oauth.ConsentForm.unverifiedDescription')}
+      </p>
+    </div>
+  );
+}
+
+// MCP-OAUTH-08: show the EXACT callback origin the authorization code will be
+// delivered to. `origin` is client-controlled but rendered as ordinary
+// escaped React text (never dangerouslySetInnerHTML), so a hostile value can
+// only ever appear as inert text.
+function CallbackDestination({ origin }: { origin: string }) {
+  const { t } = useTranslation('common');
   return (
     <div>
-      <p className="text-sm font-medium">This will allow the app to:</p>
+      <p className="text-sm font-medium">{t('longTail.oauth.ConsentForm.callbackLabel')}</p>
+      <p
+        data-testid="oauth-callback-origin"
+        className="mt-1 font-mono text-sm break-all text-foreground"
+      >
+        {origin}
+      </p>
+    </div>
+  );
+}
+
+function ScopeList({ scopes }: { scopes: string[] }) {
+  const { t } = useTranslation('common');
+  const items = useMemo(() => (scopes.length ? scopes : ['mcp:read', 'mcp:write']), [scopes]);
+  const scopeLabels: Record<string, string> = {
+    'mcp:read': t('longTail.oauth.ConsentForm.scopes.mcpRead'),
+    'mcp:write': t('longTail.oauth.ConsentForm.scopes.mcpWrite'),
+    'mcp:execute': t('longTail.oauth.ConsentForm.scopes.mcpExecute'),
+    openid: t('longTail.oauth.ConsentForm.scopes.openid'),
+    offline_access: t('longTail.oauth.ConsentForm.scopes.offlineAccess'),
+  };
+  return (
+    <div>
+      <p className="text-sm font-medium">{t('longTail.oauth.ConsentForm.scopeIntro')}</p>
       <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
         {items.map((scope) => (
           <li key={scope} className="flex items-start gap-2">
@@ -307,7 +394,7 @@ function ScopeList({ scopes }: { scopes: string[] }) {
               }`}
             />
             <span className={isHighRiskScope(scope) ? 'font-medium text-red-700' : undefined}>
-              {describeScope(scope)}
+              {scopeLabels[scope] ?? scope}
             </span>
           </li>
         ))}
@@ -327,10 +414,11 @@ function TenantPicker({
   onChange: (id: string) => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation('common');
   return (
     <div className="space-y-2">
       <label htmlFor="oauth-tenant" className="text-sm font-medium">
-        Connect to which tenant?
+        {t('longTail.oauth.ConsentForm.tenantPickerLabel')}
       </label>
       <select
         id="oauth-tenant"

@@ -1,7 +1,7 @@
-# BL4CK AI for Office — Outlook add-in
+# Breeze AI for Office — Outlook add-in
 
-Task-pane add-in delivering the governed BL4CK AI assistant to MSP client
-end-users inside Outlook. Spec: `docs/superpowers/specs/2026-06-12-breeze-ai-for-office-design.md`.
+Task-pane add-in delivering the governed Breeze AI assistant to MSP client
+end-users inside Outlook. Spec: `docs/superpowers/specs/ai-mcp/2026-06-12-breeze-ai-for-office-design.md`.
 
 ## Prerequisites
 

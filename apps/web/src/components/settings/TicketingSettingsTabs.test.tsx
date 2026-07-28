@@ -1,5 +1,13 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { grantedActions } = vi.hoisted(() => ({ grantedActions: new Set<string>() }));
+vi.mock('../../lib/authScope', () => ({ getJwtClaims: () => ({ scope: 'partner' }) }));
+vi.mock('../../lib/permissions', () => ({
+  usePermissions: () => ({
+    can: (resource: string, action: string) => grantedActions.has(`${resource}:${action}`),
+  }),
+}));
 
 // Stub child components — we test only the sub-tab group's switching behaviour.
 vi.mock('./TicketCategoriesPage', () => ({
@@ -14,16 +22,32 @@ vi.mock('./TicketStatusesTab', () => ({
 vi.mock('./TicketPrioritiesTab', () => ({
   default: () => <div data-testid="stub-ticket-priorities-tab">PrioritiesStub</div>
 }));
+vi.mock('./InboundEmailCard', () => ({
+  default: () => <div data-testid="stub-inbound-email-card">InboundStub</div>
+}));
+vi.mock('./M365MailboxCard', () => ({
+  default: () => <div data-testid="m365-mailbox-card">MailboxStub</div>
+}));
+vi.mock('./CannedResponsesCard', () => ({
+  default: () => <div data-testid="stub-canned-responses-card">CannedStub</div>
+}));
+vi.mock('./TicketFormsCard', () => ({
+  default: () => <div data-testid="stub-ticket-forms-card">FormsStub</div>
+}));
 
 import TicketingSettingsTabs from './TicketingSettingsTabs';
+import { applyLocale, i18n } from '@/lib/i18n';
 
 describe('TicketingSettingsTabs', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en');
     window.location.hash = '';
+    grantedActions.clear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     window.location.hash = '';
+    await i18n.changeLanguage('en');
   });
 
   it('renders all four sub-tabs and defaults to statuses', () => {
@@ -73,5 +97,31 @@ describe('TicketingSettingsTabs', () => {
     // Embedded mode starts on the default statuses tab regardless of #tab=.
     expect(screen.getByTestId('ticketing-tab-panel-statuses')).toBeInTheDocument();
     expect(screen.queryByTestId('stub-billables-export-card')).toBeNull();
+  });
+
+  it('hides the mailbox settings surface without ticket_mailbox read permission', () => {
+    render(<TicketingSettingsTabs syncHash={false} initialTab="inbound" />);
+
+    expect(screen.getByTestId('stub-inbound-email-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('m365-mailbox-card')).not.toBeInTheDocument();
+  });
+
+  it('shows the mailbox settings surface with ticket_mailbox read permission', () => {
+    grantedActions.add('ticket_mailbox:read');
+
+    render(<TicketingSettingsTabs syncHash={false} initialTab="inbound" />);
+
+    expect(screen.getByTestId('m365-mailbox-card')).toBeInTheDocument();
+  });
+
+  it('updates already-mounted tab labels when the locale changes', async () => {
+    render(<TicketingSettingsTabs />);
+    expect(screen.getByTestId('ticketing-tab-categories')).toHaveTextContent('Categories');
+
+    await act(async () => {
+      await applyLocale('pt-BR');
+    });
+
+    expect(screen.getByTestId('ticketing-tab-categories')).toHaveTextContent('Categorias');
   });
 });

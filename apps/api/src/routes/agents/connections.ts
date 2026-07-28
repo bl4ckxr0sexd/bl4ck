@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db';
 import { devices, deviceConnections } from '../../db/schema';
 import { captureException } from '../../services/sentry';
+import { requireAgentRole } from '../../middleware/requireAgentRole';
 import { submitConnectionsSchema } from './schemas';
 
 // Hard caps that match the device_connections column widths. Agent
@@ -44,6 +45,8 @@ function clampRequired(value: string, max: number): string {
 }
 
 export const connectionsRoutes = new Hono();
+
+connectionsRoutes.use('*', requireAgentRole);
 
 connectionsRoutes.put(
   '/:id/connections',

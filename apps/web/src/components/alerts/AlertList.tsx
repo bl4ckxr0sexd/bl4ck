@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../../lib/i18n';
 import {
   Search,
   ChevronLeft,
@@ -56,6 +58,8 @@ export type Alert = {
   correlationMemberCount?: number;
   correlationChildCount?: number;
   noiseReductionPercent?: number | null;
+  orgId?: string | null;
+  orgName?: string | null;
 };
 
 type AlertListProps = {
@@ -70,6 +74,8 @@ type AlertListProps = {
   submittingId?: string | null;
   pageSize?: number;
   alertCorrelationDisabled?: boolean;
+  /** Fleet (All-organizations) view: show which org each alert belongs to. */
+  showOrgColumn?: boolean;
 };
 
 export default function AlertList({
@@ -83,8 +89,10 @@ export default function AlertList({
   onBulkAction,
   submittingId,
   pageSize = 25,
-  alertCorrelationDisabled = false
+  alertCorrelationDisabled = false,
+  showOrgColumn = false
 }: AlertListProps) {
+  const { t } = useTranslation('alerts');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
@@ -202,7 +210,7 @@ export default function AlertList({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="search"
-            placeholder="Search alerts..."
+            placeholder={t('alertList.searchAlerts')}
             value={query}
             onChange={event => {
               setQuery(event.target.value);
@@ -223,7 +231,7 @@ export default function AlertList({
           )}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
-          Filters
+          {t('alertList.filters')}
           {activeFilterCount > 0 && (
             <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
               {activeFilterCount}
@@ -231,7 +239,7 @@ export default function AlertList({
           )}
         </button>
         <span className="text-xs text-muted-foreground whitespace-nowrap">
-          {filteredAlerts.length} of {alerts.length}
+          {filteredAlerts.length} {t('alertList.of')} {alerts.length}
         </span>
       </div>
 
@@ -246,12 +254,12 @@ export default function AlertList({
             }}
             className="h-8 rounded-md border bg-background px-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
           >
-            <option value="all">All Status</option>
-            <option value="active">Active</option>
-            <option value="acknowledged">Acknowledged</option>
-            <option value="resolved">Resolved</option>
-            <option value="suppressed">Suppressed</option>
-            <option value="dismissed">Dismissed</option>
+            <option value="all">{t('alertList.allStatus')}</option>
+            <option value="active">{t('alertList.active')}</option>
+            <option value="acknowledged">{t('alertList.acknowledged')}</option>
+            <option value="resolved">{t('alertList.resolved')}</option>
+            <option value="suppressed">{t('alertList.suppressed')}</option>
+            <option value="dismissed">{t('alertList.dismissed')}</option>
           </select>
           <select
             value={severityFilter}
@@ -261,12 +269,12 @@ export default function AlertList({
             }}
             className="h-8 rounded-md border bg-background px-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
           >
-            <option value="all">All Severity</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-            <option value="info">Info</option>
+            <option value="all">{t('alertList.allSeverity')}</option>
+            <option value="critical">{t('alertList.critical')}</option>
+            <option value="high">{t('alertList.high')}</option>
+            <option value="medium">{t('alertList.medium')}</option>
+            <option value="low">{t('alertList.low')}</option>
+            <option value="info">{t('alertList.info')}</option>
           </select>
           {availableDevices.length > 0 && (
             <select
@@ -277,7 +285,7 @@ export default function AlertList({
               }}
               className="h-8 rounded-md border bg-background px-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
             >
-              <option value="all">All Devices</option>
+              <option value="all">{t('alertList.allDevices')}</option>
               {availableDevices.map(device => (
                 <option key={device.id} value={device.id}>
                   {device.name}
@@ -293,11 +301,11 @@ export default function AlertList({
             }}
             className="h-8 rounded-md border bg-background px-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
           >
-            <option value="all">All Time</option>
-            <option value="1h">Last Hour</option>
-            <option value="24h">Last 24h</option>
-            <option value="7d">Last 7 Days</option>
-            <option value="30d">Last 30 Days</option>
+            <option value="all">{t('alertList.allTime')}</option>
+            <option value="1h">{t('alertList.lastHour')}</option>
+            <option value="24h">{t('alertList.last24h')}</option>
+            <option value="7d">{t('alertList.last7Days')}</option>
+            <option value="30d">{t('alertList.last30Days')}</option>
           </select>
           {hasActiveFilters && (
             <button
@@ -306,7 +314,7 @@ export default function AlertList({
               className="flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               <X className="h-3 w-3" />
-              Clear all
+              {t('alertList.clearAll')}
             </button>
           )}
         </div>
@@ -315,7 +323,7 @@ export default function AlertList({
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 border-b bg-muted/30 px-4 py-2">
-          <span className="text-sm font-medium">{selectedIds.size} selected</span>
+          <span className="text-sm font-medium">{selectedIds.size} {t('alertList.selected')}</span>
           <div className="relative">
             <button
               type="button"
@@ -324,7 +332,7 @@ export default function AlertList({
               aria-haspopup="menu"
               className="flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted"
             >
-              Bulk Actions
+              {t('alertList.bulkActions')}
               <ChevronDown className="h-3.5 w-3.5" />
             </button>
             {bulkMenuOpen && (
@@ -336,7 +344,7 @@ export default function AlertList({
                   className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm hover:bg-muted"
                 >
                   <CheckCircle className="h-4 w-4" />
-                  Acknowledge
+                  {t('alertList.acknowledge')}
                 </button>
                 <button
                   type="button"
@@ -345,7 +353,7 @@ export default function AlertList({
                   className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm hover:bg-muted"
                 >
                   <CheckCircle className="h-4 w-4 text-success" />
-                  Resolve
+                  {t('alertList.resolve')}
                 </button>
                 <button
                   type="button"
@@ -354,7 +362,7 @@ export default function AlertList({
                   className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm hover:bg-muted"
                 >
                   <BellOff className="h-4 w-4" />
-                  Suppress
+                  {t('alertList.suppress')}
                 </button>
                 <button
                   type="button"
@@ -363,7 +371,7 @@ export default function AlertList({
                   className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm hover:bg-muted"
                 >
                   <XCircle className="h-4 w-4" />
-                  Dismiss permanently
+                  {t('alertList.dismissPermanently')}
                 </button>
               </div>
             )}
@@ -373,7 +381,7 @@ export default function AlertList({
             onClick={() => setSelectedIds(new Set())}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Clear selection
+            {t('alertList.clearSelection')}
           </button>
         </div>
       )}
@@ -387,7 +395,7 @@ export default function AlertList({
                 <input
                   type="checkbox"
                   checked={allSelected}
-                  aria-label="Select all alerts"
+                  aria-label={t('alertList.selectAllAlerts')}
                   ref={el => {
                     if (el) el.indeterminate = someSelected && !allSelected;
                   }}
@@ -395,26 +403,27 @@ export default function AlertList({
                   className="h-4 w-4 rounded border-border"
                 />
               </th>
-              <th className="px-4 py-3">Device</th>
-              <th className="px-4 py-3">Title</th>
-              <th className="px-4 py-3">Severity</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Triggered</th>
-              <th className="px-4 py-3 text-right">Actions</th>
+              <th className="px-4 py-3">{t('alertList.device')}</th>
+              {showOrgColumn && <th className="px-4 py-3">{t('common:labels.organization')}</th>}
+              <th className="px-4 py-3">{t('alertList.title')}</th>
+              <th className="px-4 py-3">{t('alertList.severity')}</th>
+              <th className="px-4 py-3">{t('alertList.status')}</th>
+              <th className="px-4 py-3">{t('alertList.triggered')}</th>
+              <th className="px-4 py-3 text-right">{t('alertList.actions')}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {paginatedAlerts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  No alerts match your filters.
+                <td colSpan={showOrgColumn ? 8 : 7} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  {t('alertList.noAlertsMatchYourFilters')}
                   {hasActiveFilters && (
                     <button
                       type="button"
                       onClick={clearFilters}
                       className="ml-1 text-primary hover:underline"
                     >
-                      Clear filters
+                      {t('alertList.clearFilters')}
                     </button>
                   )}
                 </td>
@@ -438,7 +447,7 @@ export default function AlertList({
                       <input
                         type="checkbox"
                         checked={selectedIds.has(alert.id)}
-                        aria-label={`Select ${alert.title}`}
+                        aria-label={t('alertList.selectAlert', { title: alert.title })}
                         onClick={e => e.stopPropagation()}
                         onChange={e => handleSelectOne(alert.id, e.target.checked)}
                         className="h-4 w-4 rounded border-border"
@@ -455,6 +464,13 @@ export default function AlertList({
                         <ExternalLink className="h-3 w-3 shrink-0" />
                       </a>
                     </td>
+                    {showOrgColumn && (
+                      <td className="max-w-[140px] px-4 py-3">
+                        <span className="block truncate text-sm text-muted-foreground" title={alert.orgName ?? undefined}>
+                          {alert.orgName ?? '—'}
+                        </span>
+                      </td>
+                    )}
                     <td className="max-w-[280px] px-4 py-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium" title={alert.title}>{alert.title}</p>
@@ -464,12 +480,12 @@ export default function AlertList({
                         {hasCorrelationSummary && alertCorrelationDisabled && (
                           <span
                             className="mt-1 inline-flex max-w-full cursor-not-allowed items-center gap-1 rounded-md border border-muted-foreground/30 bg-muted/40 px-1.5 py-0.5 chart-legend-xs font-medium text-muted-foreground"
-                            title="Alert correlation is disabled for this organization"
+                            title={t('alertList.alertCorrelationIsDisabledForThisOrganization')}
                             aria-disabled="true"
                           >
                             <GitBranch className="h-3 w-3 shrink-0" />
                             <span className="truncate">
-                              Grouped incident unavailable: alert correlation disabled
+                              {t('alertList.groupedIncidentUnavailableAlertCorrelationDisabled')}
                             </span>
                           </span>
                         )}
@@ -478,13 +494,13 @@ export default function AlertList({
                             href="/alerts/correlations"
                             onClick={e => e.stopPropagation()}
                             className="mt-1 inline-flex max-w-full items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 chart-legend-xs font-medium text-primary hover:bg-primary/10"
-                            title={`Open incident group ${alert.correlationGroupId}`}
+                            title={t('alertList.openIncidentGroup', { groupId: alert.correlationGroupId })}
                           >
                             <GitBranch className="h-3 w-3 shrink-0" />
                             <span className="truncate">
-                              Grouped incident: {correlationChildCount} related
+                              {t('alertList.groupedIncident')} {correlationChildCount} {t('alertList.related')}
                               {alert.noiseReductionPercent != null
-                                ? ` · ${alert.noiseReductionPercent}% noise cut`
+                                ? t('alertList.noiseCut', { percent: alert.noiseReductionPercent })
                                 : ''}
                             </span>
                           </a>
@@ -492,11 +508,15 @@ export default function AlertList({
                         {alert.anomalyContext && (
                           <span
                             className="mt-1 inline-flex max-w-full items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 chart-legend-xs font-medium text-sky-700"
-                            title="Promoted metric anomaly"
+                            title={t('alertList.promotedMetricAnomaly')}
                           >
                             <Activity className="h-3 w-3 shrink-0" />
                             <span className="truncate">
-                              ML anomaly: {alert.anomalyContext.metricName ?? 'metric'} · {formatAnomalyType(alert.anomalyContext.anomalyType)} · {formatAnomalyConfidence(alert.anomalyContext.confidence)}
+                              {t('alertList.mlAnomalySummary', {
+                                metric: alert.anomalyContext.metricName ?? t('alertList.metricFallback'),
+                                type: formatAnomalyType(alert.anomalyContext.anomalyType),
+                                confidence: formatAnomalyConfidence(alert.anomalyContext.confidence),
+                              })}
                             </span>
                           </span>
                         )}
@@ -511,7 +531,7 @@ export default function AlertList({
                           severityConfig[alert.severity].color
                         )}
                       >
-                        {severityConfig[alert.severity].label}
+                        {t(/* i18n-dynamic */ `alertList.severityLabel.${alert.severity}`)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -521,7 +541,7 @@ export default function AlertList({
                           statusConfig[alert.status].color
                         )}
                       >
-                        {statusConfig[alert.status].label}
+                        {t(/* i18n-dynamic */ `alertList.statusLabel.${alert.status}`)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">
@@ -543,12 +563,12 @@ export default function AlertList({
                                   e.stopPropagation();
                                   onAcknowledge?.(alert);
                                 }}
-                                title="Mark as seen — stops escalation but keeps alert active"
-                                aria-label={`Acknowledge: ${alert.title}`}
+                                title={t('alertList.markAsSeenStopsEscalationButKeeps')}
+                                aria-label={t('alertList.acknowledgeAlert', { title: alert.title })}
                                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
                               >
                                 <CheckCircle className="h-3.5 w-3.5" />
-                                Ack
+                                {t('alertList.ack')}
                               </button>
                             )}
                             {(alert.status === 'active' || alert.status === 'acknowledged') && (
@@ -558,12 +578,12 @@ export default function AlertList({
                                   e.stopPropagation();
                                   onResolve?.(alert);
                                 }}
-                                title="Close this alert — marks the issue as fixed"
-                                aria-label={`Resolve: ${alert.title}`}
+                                title={t('alertList.closeThisAlertMarksTheIssueAs')}
+                                aria-label={t('alertList.resolveAlert', { title: alert.title })}
                                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-success hover:bg-success/10"
                               >
                                 <CheckCircle className="h-3.5 w-3.5" />
-                                Resolve
+                                {t('alertList.resolve')}
                               </button>
                             )}
                             {alert.status !== 'suppressed' && alert.status !== 'resolved' && alert.status !== 'dismissed' && (
@@ -573,12 +593,12 @@ export default function AlertList({
                                   e.stopPropagation();
                                   onSuppress?.(alert);
                                 }}
-                                title="Silence this alert — stops notifications without resolving"
-                                aria-label={`Suppress: ${alert.title}`}
+                                title={t('alertList.silenceThisAlertStopsNotificationsWithoutResolving')}
+                                aria-label={t('alertList.suppressAlert', { title: alert.title })}
                                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
                               >
                                 <BellOff className="h-3.5 w-3.5" />
-                                Mute
+                                {t('alertList.mute')}
                               </button>
                             )}
                             {alert.status !== 'dismissed' && (
@@ -588,12 +608,12 @@ export default function AlertList({
                                   e.stopPropagation();
                                   onDismiss?.(alert);
                                 }}
-                                title="Dismiss permanently — hides this alert for good (warranty expiry won't re-alert for the same end date; other conditions can still open a new alert if they recur)"
-                                aria-label={`Dismiss: ${alert.title}`}
+                                title={t('alertList.dismissPermanentlyHidesThisAlertForGood')}
+                                aria-label={t('alertList.dismissAlert', { title: alert.title })}
                                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
                               >
                                 <XCircle className="h-3.5 w-3.5" />
-                                Dismiss
+                                {t('alertList.dismiss')}
                               </button>
                             )}
                           </>
@@ -612,7 +632,7 @@ export default function AlertList({
       {totalPages > 1 && (
         <div className="flex items-center justify-between border-t px-4 py-3">
           <p className="text-sm text-muted-foreground">
-            {startIndex + 1}–{Math.min(startIndex + pageSize, filteredAlerts.length)} of{' '}
+            {startIndex + 1}–{Math.min(startIndex + pageSize, filteredAlerts.length)} {t('alertList.of')}{' '}
             {filteredAlerts.length}
           </p>
           <div className="flex items-center gap-2">

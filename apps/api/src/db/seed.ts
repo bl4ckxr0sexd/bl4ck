@@ -135,6 +135,10 @@ export const DEFAULT_PERMISSIONS = [
   { resource: 'tickets', action: 'write', description: 'Create and update tickets, comments, and categories' },
   { resource: 'tickets', action: 'manage', description: 'Edit or delete any comment and reassign ticket organization' },
 
+  // Microsoft 365 partner-global ticket mailbox administration
+  { resource: 'ticket_mailbox', action: 'read', description: 'View Microsoft 365 ticket mailbox connection status' },
+  { resource: 'ticket_mailbox', action: 'admin', description: 'Connect, verify, retest, and disable Microsoft 365 ticket mailboxes' },
+
   // Catalog (billing/invoicing program)
   { resource: 'catalog', action: 'read', description: 'View product catalog items and pricing' },
   { resource: 'catalog', action: 'write', description: 'Create and update catalog items, pricing, and bundles' },
@@ -192,6 +196,14 @@ export const DEFAULT_PERMISSIONS = [
   { resource: 'vulnerabilities', action: 'accept_risk',
     description: 'Waive (accept risk) and reopen vulnerability findings' },
 
+  // AI session audit (SR5-09)
+  { resource: 'ai_sessions', action: 'read_all',
+    description: "View all users' AI session history (admin audit dashboard)" },
+
+  // Action intents / durable approvals
+  { resource: 'approvals', action: 'decide',
+    description: 'Decide (approve/deny) pending action-intent approvals' },
+
   // Admin
   { resource: '*', action: '*', description: 'Full administrative access' }
 ];
@@ -215,6 +227,7 @@ export const SYSTEM_ROLES = [
       'scripts:read', 'scripts:execute',
       'alerts:read', 'alerts:acknowledge',
       'tickets:read',
+      'ticket_mailbox:read',
       'reports:read', 'reports:write',
       'sites:read',
       'topology:read',
@@ -230,6 +243,7 @@ export const SYSTEM_ROLES = [
       'scripts:read',
       'alerts:read',
       'tickets:read',
+      'ticket_mailbox:read',
       'reports:read',
       'sites:read',
       'organizations:read'
@@ -273,7 +287,9 @@ export const SYSTEM_ROLES = [
       'topology:read', 'topology:write',
       'remote:access',
       'audit:read',
-      'vulnerabilities:accept_risk'
+      'vulnerabilities:accept_risk',
+      'ai_sessions:read_all',
+      'approvals:decide'
     ]
   },
   {

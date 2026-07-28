@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -32,6 +32,12 @@ vi.mock('./OrgSecuritySettings', () => ({ default: () => <div data-testid="secur
 vi.mock('./OrgEventLogSettings', () => ({ default: () => <div data-testid="event-logs" /> }));
 vi.mock('./OrgRemoteAccessSettings', () => ({ default: () => <div data-testid="remote-access" /> }));
 vi.mock('./OrgTicketSettingsEditor', () => ({ default: () => <div data-testid="org-ticket-settings" /> }));
+vi.mock('../organizations/Pax8OrgTab', () => ({ default: ({ orgId }: { orgId: string }) => <div data-testid="pax8-org-tab">{orgId}</div> }));
+vi.mock('../extensions/ExtensionSlotHost', () => ({
+  default: (props: Record<string, unknown>) => (
+    <div data-testid="extension-slot-host-stub" data-props={JSON.stringify(props)} />
+  ),
+}));
 
 const fetchWithAuthMock = vi.mocked(fetchWithAuth);
 const useOrgStoreMock = vi.mocked(useOrgStore);
@@ -334,6 +340,43 @@ describe('OrgSettingsPage sidebar nav & save-state honesty', () => {
     const link = await screen.findByRole('link', { name: /^remote access$/i });
     expect(link.getAttribute('aria-current')).toBe('page');
     expect(screen.getByTestId('remote-access')).not.toBeNull();
+  });
+
+  it('keeps a selected Pax8 order deep link active through hashchange and back navigation', async () => {
+    window.location.hash = '#pax8/44444444-4444-4444-8444-444444444444';
+    render(<OrgSettingsPage orgId="org-1" />);
+
+    const link = await screen.findByRole('link', { name: /^pax8$/i });
+    expect(link.getAttribute('aria-current')).toBe('page');
+    expect(screen.getByTestId('pax8-org-tab')).toHaveTextContent('org-1');
+
+    act(() => {
+      window.location.hash = '#general';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    await screen.findByTestId('org-name-input');
+
+    act(() => {
+      window.location.hash = '#pax8/55555555-5555-4555-8555-555555555555';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    expect(await screen.findByTestId('pax8-org-tab')).toBeInTheDocument();
+  });
+
+  it('renders the Extensions tab with ONLY the documented organization context — no full org object leak', async () => {
+    window.location.hash = '#extensions';
+    render(<OrgSettingsPage orgId="org-1" />);
+
+    const link = await screen.findByRole('link', { name: /^extensions$/i });
+    expect(link.getAttribute('aria-current')).toBe('page');
+
+    const stub = screen.getByTestId('extension-slot-host-stub');
+    const props = JSON.parse(stub.dataset.props!);
+    expect(props.slot).toBe('organization.settings.sections');
+    expect(props.contractVersion).toBe(1);
+    // EXACT documented shape — no name/slug/status/settings/etc. leak through.
+    expect(props.context).toEqual({ contractVersion: 1, organizationId: 'org-1' });
+    expect(Object.keys(props.context).sort()).toEqual(['contractVersion', 'organizationId'].sort());
   });
 
   it('offers the compact section select for narrow viewports', async () => {

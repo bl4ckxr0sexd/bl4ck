@@ -24,6 +24,7 @@ import {
   withQueueMeta,
 } from './queueSchemas';
 import { attachWorkerObservability } from './workerObservability';
+import { redactOptionalSecretText, redactSecretsDeep } from '../services/secretRedaction';
 
 const { db } = dbModule;
 const runWithSystemDbAccess = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -181,7 +182,7 @@ function parseNumericThreshold(threshold: string | null | undefined): number | n
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function selectExecutionAgentForMonitor(
+export async function selectExecutionAgentForMonitor(
   monitor: {
     orgId: string;
     assetId: string | null;
@@ -199,6 +200,10 @@ async function selectExecutionAgentForMonitor(
   }
 
   if (assetSiteId) {
+    // Site-bound monitor: the executing agent MUST live in the monitor's site.
+    // If no online agent is available there, return null rather than crossing
+    // the site boundary to an arbitrary org agent (SR5-08) — that would direct
+    // a root-level agent in another site to probe this target.
     const [siteAgent] = await db
       .select({ agentId: devices.agentId })
       .from(devices)
@@ -209,11 +214,13 @@ async function selectExecutionAgentForMonitor(
       ))
       .limit(1);
 
-    if (siteAgent?.agentId) {
-      return siteAgent.agentId;
-    }
+    return siteAgent?.agentId ?? null;
   }
 
+  // Unbound monitor (no site scope): org-wide selection is legitimate. Monitors
+  // created by site-restricted callers are now required to be site-bound
+  // (aiToolsMonitoring create gate), so this path is reached only for monitors
+  // an unrestricted caller intentionally left assetless.
   const [onlineAgent] = await db
     .select({ agentId: devices.agentId })
     .from(devices)
@@ -393,6 +400,20 @@ export async function recordMonitorCheckResult(
   monitorId: string,
   result: MonitorCheckResult
 ): Promise<void> {
+  // #2434 chokepoint: monitor check results arrive from agents (the WS
+  // Redis-down direct path AND the BullMQ process-check-result path both
+  // funnel here). The free-text `error` and the raw `details` blob are
+  // persisted to network_monitor_results / network_monitors.lastError /
+  // alert details and surfaced in the web UI — redact secrets once at entry
+  // so every write below (results insert, monitor state, alert evaluation)
+  // is covered.
+  result = {
+    ...result,
+    error: redactOptionalSecretText(result.error),
+    details: result.details != null
+      ? redactSecretsDeep(result.details) as Record<string, unknown>
+      : result.details,
+  };
   const now = new Date();
 
   // Use a transaction to keep results table and monitor state in sync

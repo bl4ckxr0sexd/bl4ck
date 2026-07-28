@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
+import { onedriveHelperInlineSettingsSchema } from '@breeze/shared/validators';
 
 // Hoist mock values so they're available in vi.mock factories
 const {
@@ -9,6 +10,7 @@ const {
   removeFeatureLinkMock,
   listFeatureLinksMock,
   validateFeaturePolicyExistsMock,
+  isBackupProfileReferenceMock,
 } = vi.hoisted(() => ({
   getConfigPolicyMock: vi.fn(),
   addFeatureLinkMock: vi.fn(),
@@ -16,6 +18,7 @@ const {
   removeFeatureLinkMock: vi.fn(),
   listFeatureLinksMock: vi.fn(),
   validateFeaturePolicyExistsMock: vi.fn(),
+  isBackupProfileReferenceMock: vi.fn(),
 }));
 
 vi.mock('../../services/configurationPolicy', async (importOriginal) => {
@@ -28,6 +31,7 @@ vi.mock('../../services/configurationPolicy', async (importOriginal) => {
     removeFeatureLink: removeFeatureLinkMock,
     listFeatureLinks: listFeatureLinksMock,
     validateFeaturePolicyExists: validateFeaturePolicyExistsMock,
+    isBackupProfileReference: isBackupProfileReferenceMock,
   };
 });
 
@@ -105,6 +109,7 @@ describe('featureLinks routes', () => {
     beforeEach(() => {
       getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
       validateFeaturePolicyExistsMock.mockResolvedValue({ valid: true });
+      isBackupProfileReferenceMock.mockResolvedValue(false);
       addFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'pam' });
     });
 
@@ -289,6 +294,44 @@ describe('featureLinks routes', () => {
     });
   });
 
+  describe('feature link reserved export material validation', () => {
+    it.each([
+      'security', 'software_policy', 'peripheral_control',
+      'warranty', 'helper', 'vulnerability',
+    ] as const)('rejects nested reserved material on POST for %s before service work', async (featureType) => {
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType,
+          inlineSettings: {
+            nested: { __breezePatchInlineMirror: 'attacker-value' },
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(addFeatureLinkMock).not.toHaveBeenCalled();
+      expect(await res.text()).not.toMatch(/__breezePatchInlineMirror|attacker-value/u);
+    });
+
+    it('rejects nested reserved material on PATCH before service work', async () => {
+      const res = await app.request(`/${POLICY_ID}/features/${LINK_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inlineSettings: {
+            nested: [{ __breezePatchInlineMirror: 'attacker-value' }],
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(updateFeatureLinkMock).not.toHaveBeenCalled();
+      expect(await res.text()).not.toMatch(/__breezePatchInlineMirror|attacker-value/u);
+    });
+  });
+
   // ============================================================
   // POST /:id/features — org-scoped features rejected on partner-wide (#1724)
   // ============================================================
@@ -371,22 +414,41 @@ describe('featureLinks routes', () => {
       expect(removeFeatureLinkMock).not.toHaveBeenCalled();
     });
 
-    // onedrive_helper is also in ORG_SCOPED_ONLY_FEATURES but isn't accepted by
-    // addFeatureLinkSchema's enum, so it can't reach the route at all — only
-    // backup is exercisable here. patch is deliberately NOT rejected: rings are
+    // onedrive_helper is in ORG_SCOPED_ONLY_FEATURES and is covered by its
+    // own test below. patch is deliberately NOT rejected: rings are
     // partner-axis and the scheduler groups by device org (#1724 follow-up).
-    it('rejects the backup feature on a partner-owned policy → 400 (no insert)', async () => {
+    it('accepts the backup feature on a partner-owned policy (profiles, spec 2026-07-13)', async () => {
+      // backup left ORG_SCOPED_ONLY_FEATURE_TYPES with the profiles model:
+      // settings are dual-axis and partner-wide links resolve each device
+      // org's default destination at job time.
+      addFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'backup' });
       const res = await app.request(`/${POLICY_ID}/features`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Valid body (passes the schema refine) so we exercise the
-        // partner-wide guard, not the generic validator.
-        body: JSON.stringify({ featureType: 'backup', inlineSettings: { enabled: true } }),
+        body: JSON.stringify({
+          featureType: 'backup',
+          inlineSettings: { backupMode: 'file', targets: { paths: ['C:\\Data'] } },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(addFeatureLinkMock).toHaveBeenCalled();
+    });
+
+    it('rejects the onedrive_helper feature on a partner-owned policy → 400 via ORG_SCOPED_ONLY_FEATURES (no insert)', async () => {
+      // onedrive_helper carries a concrete org_id FK (library mappings are
+      // org-owned), so it's in ORG_SCOPED_ONLY_FEATURE_TYPES alongside backup —
+      // this must 400 through the same partner-wide gate, before ever reaching
+      // the onedrive_helper inlineSettings schema validation.
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ featureType: 'onedrive_helper', inlineSettings: {} }),
       });
 
       expect(res.status).toBe(400);
       const body = await res.json();
-      expect(String(body.error)).toContain('partner-wide');
+      expect(String(body.error)).toContain('not supported on partner-wide policies');
       expect(addFeatureLinkMock).not.toHaveBeenCalled();
     });
 
@@ -468,24 +530,25 @@ describe('featureLinks routes', () => {
       );
     });
 
-    it('still rejects linking an org-scoped feature policy (backup) on a partner-owned policy → 400', async () => {
-      // backup is the deliberate org-locked exception (org-owned storage
-      // credentials; #2132 tracks its template/binding design). compliance
-      // graduated to PARTNER_LINKABLE in #2129, sensitive_data / peripheral /
-      // maintenance in #2131 — backup is the last org-only linked type.
+    it('allows linking a partner-wide backup profile on a partner-owned policy (spec 2026-07-13)', async () => {
+      // backup graduated to PARTNER_LINKABLE with the profiles model —
+      // featurePolicyId references a dual-ownership backup_profiles row and
+      // validateFeaturePolicyExists enforces the ownership axes.
+      isBackupProfileReferenceMock.mockResolvedValue(true);
+      addFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'backup' });
       const res = await app.request(`/${POLICY_ID}/features`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           featureType: 'backup',
           featurePolicyId: '44444444-4444-4444-4444-444444444444',
+          inlineSettings: { schedule: { frequency: 'daily', time: '03:00' } },
         }),
       });
 
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(String(body.error)).toContain('not supported on partner-wide policies');
-      expect(addFeatureLinkMock).not.toHaveBeenCalled();
+      expect(res.status).toBe(201);
+      expect(addFeatureLinkMock).toHaveBeenCalled();
+      expect(validateFeaturePolicyExistsMock).toHaveBeenCalled();
     });
 
     it('still allows an org-derived feature (security) on a partner-owned policy', async () => {
@@ -498,6 +561,88 @@ describe('featureLinks routes', () => {
 
       expect(res.status).toBe(201);
       expect(addFeatureLinkMock).toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // POST/PATCH — onedrive_helper inlineSettings validation
+  // ============================================================
+
+  describe('onedrive_helper inline settings validation', () => {
+    beforeEach(() => {
+      getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
+      validateFeaturePolicyExistsMock.mockResolvedValue({ valid: true });
+      addFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'onedrive_helper' });
+    });
+
+    it('POST rejects invalid onedrive settings with 400', async () => {
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'onedrive_helper',
+          inlineSettings: {
+            libraries: [{ libraryId: 'x', displayName: 'X', targetingMode: 'graph_group' }], // no groupId/groupName
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.error).toBe('Invalid onedrive_helper settings');
+      expect(addFeatureLinkMock).not.toHaveBeenCalled();
+    });
+
+    it('POST accepts valid onedrive settings (defaults applied)', async () => {
+      const rawInlineSettings = {
+        libraries: [{ libraryId: 'lib-1', displayName: 'Docs', targetingMode: 'everyone' }],
+      };
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'onedrive_helper',
+          inlineSettings: rawInlineSettings,
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(addFeatureLinkMock).toHaveBeenCalledTimes(1);
+
+      // Schema-derive the expected (defaulted) shape rather than hand-encoding
+      // every field, so this can't silently drift from
+      // onedriveHelperInlineSettingsSchema. Sanity-check the specific defaults
+      // the finding called out, then assert the route actually reassigns
+      // `data.inlineSettings = parsed.data` before calling addFeatureLink —
+      // this fails if that reassignment is removed, since the raw request body
+      // (no defaults filled in) would be passed instead.
+      const expectedSettings = onedriveHelperInlineSettingsSchema.parse(rawInlineSettings);
+      expect(expectedSettings.silentAccountConfig).toBe(true);
+      expect(expectedSettings.filesOnDemand).toBe(true);
+      expect(expectedSettings.restartOnChange).toBe(true);
+      expect(expectedSettings.libraries[0]).toMatchObject({ hiveScope: 'hkcu', enabled: true });
+
+      const [, , , inlineSettingsArg] = addFeatureLinkMock.mock.calls[0]!;
+      expect(inlineSettingsArg).toEqual(expectedSettings);
+    });
+
+    it('PATCH rejects invalid onedrive settings with 400', async () => {
+      getConfigPolicyMock.mockResolvedValue({
+        ...STUB_POLICY,
+        featureLinks: [{ id: LINK_ID, featureType: 'onedrive_helper' }],
+      });
+      const res = await app.request(`/${POLICY_ID}/features/${LINK_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inlineSettings: { kfmFolders: ['Downloads'] },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.error).toBe('Invalid onedrive_helper settings');
+      expect(updateFeatureLinkMock).not.toHaveBeenCalled();
     });
   });
 

@@ -13,14 +13,29 @@
  * many in-scope devices lacked the data for that control.
  */
 
-export type PostureProductCategory = 'edr' | 'mdr' | 'dns_filtering' | 'backup' | 'identity';
+export type PostureProductCategory =
+  | 'antivirus'
+  | 'edr'
+  | 'mdr'
+  | 'dns_filtering'
+  | 'backup'
+  | 'identity';
 
 export type PostureProduct = {
   product: string;
   category: PostureProductCategory;
   active: boolean;
   lastSyncStatus?: string | null;
+  /** Devices the product is installed on / inventoried across (union of evidence). */
   deviceCoverage?: number | null;
+  /**
+   * Devices where the product is actively protecting — for native AV this is the
+   * count with real-time protection ON. Distinct from `deviceCoverage` so the
+   * inventory doesn't imply a single RTP-on device protects the whole fleet
+   * (issue #2517). Null when the product has no per-device evidence (integrations
+   * whose `active` is a connection-health flag, not a per-device count).
+   */
+  activeDeviceCoverage?: number | null;
 };
 
 export type PostureControls = {
@@ -29,7 +44,11 @@ export type PostureControls = {
   unprotectedCount?: number;
   avDefinitionsCurrentPct?: number | null;
   encryptionPct?: number | null;
+  /** In-scope devices whose encryption state was unknown or too stale to assess. */
+  encryptionUnknownCount?: number;
   firewallPct?: number | null;
+  /** In-scope devices whose firewall state was unknown or too stale to assess. */
+  firewallUnknownCount?: number;
   patchCurrentPct?: number | null;
   patchUnknownCount?: number;
   passwordComplexityPct?: number | null;
@@ -41,6 +60,7 @@ export type PostureControls = {
   cisAssessedCount?: number;
   /** Proves an identity provider is CONNECTED, not that MFA is enforced. */
   identityProviderConnected?: boolean;
+  backupRequired?: boolean;
   backupConfigured?: boolean;
   backupEncrypted?: boolean | null;
   dnsFilteringActive?: boolean;

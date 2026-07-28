@@ -14,6 +14,7 @@ import type { AiToolTier } from '@breeze/shared/types/ai';
 import { compactToolResultForChat } from './aiToolOutput';
 import { captureException } from './sentry';
 import type { PreToolUseCallback, PostToolUseCallback } from './aiAgentSdkTools';
+import { sanitizeThrownToolError } from './aiToolErrors';
 
 const TOOL_EXECUTION_TIMEOUT_MS = 60_000;
 
@@ -113,7 +114,7 @@ function makeExistingHandler(
       return { content: [{ type: 'text' as const, text: compactResult }] };
     } catch (err) {
       captureException(err);
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      const errorMsg = sanitizeThrownToolError(toolName, err);
       const durationMs = Date.now() - startTime;
       const safeError = compactToolResultForChat(toolName, JSON.stringify({ error: errorMsg }));
 
@@ -159,6 +160,26 @@ function makeApplyHandler(
 // MCP Server Factory
 // ============================================
 
+// Exported so scriptBuilderTools.guard.test.ts can pin the timeoutSeconds cap
+// to the agent executor's MaxTimeout (3600) — see #2398.
+export const applyScriptMetadataInputShape = {
+  name: z.string().max(255).optional().describe('Script name'),
+  description: z.string().max(2000).optional().describe('Script description'),
+  category: z.enum(['Maintenance', 'Security', 'Monitoring', 'Deployment', 'Backup', 'Network', 'User Management', 'Software', 'Custom']).optional(),
+  osTypes: z.array(z.enum(['windows', 'macos', 'linux'])).optional(),
+  parameters: z.array(z.object({
+    name: z.string(),
+    type: z.enum(['string', 'number', 'boolean', 'select']),
+    defaultValue: z.string().optional(),
+    required: z.boolean().optional(),
+    options: z.string().optional(),
+  })).optional(),
+  runAs: z.enum(['system', 'user', 'elevated']).optional(),
+  // 3600 = agent executor MaxTimeout — higher values are silently clamped
+  // on-device, so don't let the builder propose them (#2398).
+  timeoutSeconds: z.number().int().min(1).max(3600).optional(),
+};
+
 export function createScriptBuilderMcpServer(
   getAuth: () => AuthContext,
   onPreToolUse?: PreToolUseCallback,
@@ -181,21 +202,7 @@ export function createScriptBuilderMcpServer(
     tool(
       'apply_script_metadata',
       'Set script metadata fields in the editor form (name, description, category, OS targets, parameters, etc.). Only include fields you want to change.',
-      {
-        name: z.string().max(255).optional().describe('Script name'),
-        description: z.string().max(2000).optional().describe('Script description'),
-        category: z.enum(['Maintenance', 'Security', 'Monitoring', 'Deployment', 'Backup', 'Network', 'User Management', 'Software', 'Custom']).optional(),
-        osTypes: z.array(z.enum(['windows', 'macos', 'linux'])).optional(),
-        parameters: z.array(z.object({
-          name: z.string(),
-          type: z.enum(['string', 'number', 'boolean', 'select']),
-          defaultValue: z.string().optional(),
-          required: z.boolean().optional(),
-          options: z.string().optional(),
-        })).optional(),
-        runAs: z.enum(['system', 'user', 'elevated']).optional(),
-        timeoutSeconds: z.number().int().min(1).max(86400).optional(),
-      },
+      applyScriptMetadataInputShape,
       makeApplyHandler('apply_script_metadata', onPostToolUse)
     ),
 

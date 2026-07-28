@@ -109,6 +109,24 @@ vi.mock('../services/rate-limit', () => ({
   rateLimiter: vi.fn(async () => ({ allowed: true, remaining: 10, resetAt: new Date() })),
 }));
 
+// Partner-cap enforcement (#2776 task 3.4). Mocked at the wiring level — see
+// enrollmentKeys.test.ts's identically-named helper for rationale.
+const assertTtlWithinCapMock = vi.fn(
+  async (_orgId: string, _ttlMinutes: number | undefined) => null as string | null,
+);
+// clampTtlToCap — the CLAMP-shaped sibling. The child-key mint on this route
+// runs it on the CHILD_ENROLLMENT_KEY_TTL_MINUTES fallback, so it must be
+// present here or the route throws. Permissive default (returns ttlMinutes
+// unchanged) models "no partner cap configured".
+const clampTtlToCapMock = vi.fn(
+  async (_orgId: string, ttlMinutes: number) => ttlMinutes,
+);
+vi.mock('../services/enrollmentDefaults', () => ({
+  assertTtlWithinCap: (...args: [string, number | undefined]) =>
+    assertTtlWithinCapMock(...args),
+  clampTtlToCap: (...args: [string, number]) => clampTtlToCapMock(...args),
+}));
+
 import { enrollmentKeyRoutes } from './enrollmentKeys';
 import { db } from '../db';
 import { createAuditLogAsync } from '../services/auditService';
@@ -171,6 +189,25 @@ function mockDeleteWhere() {
   } as any);
 }
 
+/**
+ * Configure the mocked partner-cap gate for the current test. Mirrors the
+ * real assertTtlWithinCap contract: null when ttlMinutes is undefined or at/
+ * under the cap, an error string naming the cap when it's exceeded.
+ */
+function mockEnrollmentDefaults(opts: { maxTtlMinutes: number }) {
+  assertTtlWithinCapMock.mockImplementation(
+    async (_orgId: string, ttlMinutes: number | undefined) => {
+      if (ttlMinutes === undefined) return null;
+      return ttlMinutes > opts.maxTtlMinutes
+        ? `ttlMinutes exceeds the partner maximum of ${opts.maxTtlMinutes} minutes`
+        : null;
+    },
+  );
+  clampTtlToCapMock.mockImplementation(
+    async (_orgId: string, ttlMinutes: number) => Math.min(ttlMinutes, opts.maxTtlMinutes),
+  );
+}
+
 describe('enrollment key routes — installer download', () => {
   let app: Hono;
 
@@ -180,6 +217,14 @@ describe('enrollment key routes — installer download', () => {
     // that set mockReturnValue for fromEnv would otherwise leak into
     // subsequent tests. Explicitly reset fromEnv to "signing disabled".
     vi.mocked(MsiSigningService.fromEnv).mockReturnValue(null);
+    // Same reasoning for the partner-cap gate: reset to the permissive
+    // default every test unless a test opts into mockEnrollmentDefaults().
+    assertTtlWithinCapMock.mockReset();
+    assertTtlWithinCapMock.mockImplementation(async () => null);
+    clampTtlToCapMock.mockReset();
+    clampTtlToCapMock.mockImplementation(
+      async (_orgId: string, ttlMinutes: number) => ttlMinutes,
+    );
     // Default: Windows bootstrap token issuance succeeds.
     vi.mocked(issueBootstrapTokenForKey).mockResolvedValue({
       id: 'tok-1',
@@ -318,6 +363,43 @@ describe('enrollment key routes — installer download', () => {
       expect(body.length).toBeGreaterThan(0);
     });
 
+    it('windows download encodes a nonstandard port as host_PORT in the filename (#2341)', async () => {
+      // `:` is illegal in Windows filenames — the browser rewrites it at save
+      // time and the agent-side parser never matches, so the device installs
+      // unenrolled with no visible error. The port must ride as `_PORT`.
+      process.env.PUBLIC_API_URL = 'https://self-hosted.example.com:8443';
+      mockSelectFromWhereLimit([makeEnrollmentKey()]);
+
+      const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/windows`, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-disposition')).toBe(
+        'attachment; filename="Bl4ck Agent (ABCDE12345@self-hosted.example.com_8443).msi"',
+      );
+    });
+
+    it('windows download returns 400 for a non-https server URL without burning a token (#2341)', async () => {
+      // The agent always redeems the filename token over https, so an
+      // http-only server can never enroll through this path — fail the
+      // download with the reason instead of serving a dead MSI.
+      process.env.PUBLIC_API_URL = 'http://self-hosted.example.com:8080';
+      mockSelectFromWhereLimit([makeEnrollmentKey()]);
+
+      const res = await app.request(`/enrollment-keys/${KEY_ID}/installer/windows`, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/https/i);
+      expect(body.error).toMatch(/SERVER_URL and ENROLLMENT_KEY/);
+      expect(issueBootstrapTokenForKey).not.toHaveBeenCalled();
+    });
+
     it('windows bootstrap download does not create a child enrollment key', async () => {
       // Windows early-returns after issueBootstrapTokenForKey — no db.insert for a child key.
       mockSelectFromWhereLimit([makeEnrollmentKey()]);
@@ -433,6 +515,39 @@ describe('enrollment key routes — installer download', () => {
         { method: 'GET', headers: { Authorization: 'Bearer token' } },
       );
       expect(res.status).toBe(400);
+    });
+
+    // BL4CK fork divergence from upstream #2776 task 3.4.
+    //
+    // Upstream gates this route on assertTtlWithinCap(orgId, childTtlMinutes)
+    // and 400s an over-cap value. The fork's installer download is FIXED at
+    // 1000 devices / 525_600 minutes and exposes no TTL control at all, so
+    // there is nothing for the cap to police here — and feeding the fixed
+    // 525_600 into the gate would hard-400 EVERY installer download for any
+    // partner with a lower cap, bricking the product. A `ttlMinutes` query
+    // param is accepted for backward compatibility and IGNORED.
+    it('ignores a ttlMinutes below the partner cap and still serves the FIXED 1-year installer', async () => {
+      mockEnrollmentDefaults({ maxTtlMinutes: 1440 });
+      mockSelectFromWhereLimit([makeEnrollmentKey()]);
+
+      const res = await app.request(
+        `/enrollment-keys/${KEY_ID}/installer/windows?ttlMinutes=43200`,
+        { method: 'GET', headers: { Authorization: 'Bearer token' } },
+      );
+
+      // NOT 400 — a lowered partner cap must never break installer downloads.
+      expect(res.status).toBe(200);
+      expect(issueBootstrapTokenForKey).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxUsage: 1000,
+          ttlMinutes: 525600,
+          // ...and the issuance helper is told to skip its own partner clamp,
+          // so the 365 days baked into the shipped media survive intact.
+          bypassPartnerTtlCap: true,
+        }),
+      );
+      // The fixed path must never consult the reject-shaped cap gate.
+      expect(assertTtlWithinCapMock).not.toHaveBeenCalled();
     });
 
     // Query-param validation is enforced by the Hono zValidator middleware

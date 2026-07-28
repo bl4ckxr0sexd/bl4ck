@@ -871,16 +871,24 @@ function isGenuineHardwareError(event: HistoryRow['hardwareErrors'][number]): bo
   return hasHardwareSource;
 }
 
-// Breeze's own services, as they appear in service-failure events: SCM parses
-// "Breeze Agent" / "Breeze Watchdog" on Windows; systemd units are
-// breeze-agent / breeze-watchdog on Linux; launchd labels contain breeze + agent
-// on macOS. Their failures are usually self-inflicted (an auto-update stops the
-// service, which SCM records as 7031 "terminated unexpectedly") and must not
-// count against the customer device's reliability score. Matched loosely on
-// name so the Windows display name and the unix unit names all hit.
+// Our own services, as they appear in service-failure events. This fork ships
+// Windows-only and registers the SCM services as "Bl4ckAgent" / "Bl4ckWatchdog"
+// with binaries bl4ck-agent / bl4ck-watchdog / bl4ck-helper, so "bl4ck" is the
+// brand token that must match. The legacy "breeze" token is retained so devices
+// still running a pre-rebrand agent (and historical rows already stored in
+// device history) keep being classified correctly — dropping it would silently
+// start scoring old agents' self-restarts against the customer.
+// Their failures are usually self-inflicted (an auto-update stops the service,
+// which SCM records as 7031 "terminated unexpectedly") and must not count
+// against the customer device's reliability score. Matched loosely on name so
+// the Windows display name and the binary/unit names all hit.
+const SELF_SERVICE_BRAND_TOKENS = ['bl4ck', 'breeze'];
+
 function isBreezeSelfServiceFailure(serviceName: string | undefined): boolean {
   const name = (serviceName ?? '').toLowerCase();
-  if (!name.includes('breeze')) return false;
+  if (!SELF_SERVICE_BRAND_TOKENS.some((token) => name.includes(token))) return false;
+  // The brand token alone isn't enough — a customer service could share the
+  // word (e.g. "BreezeWorks Sync"). Require one of our component names too.
   return name.includes('agent') || name.includes('watchdog') || name.includes('helper');
 }
 

@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState, useEffect } from 'react';
-import { Plus, X, Building2 } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import DiscoveryProfileList, { type DiscoveryProfile, type DiscoveryProfileStatus } from './DiscoveryProfileList';
 import DiscoveryProfileForm, { type DiscoveryProfileFormValues, type DiscoverySchedule, type SnmpSettings, type ProfileAlertSettings, defaultAlertSettings } from './DiscoveryProfileForm';
 import DiscoveryJobList from './DiscoveryJobList';
@@ -9,8 +11,15 @@ import NetworkTopologyMap from './NetworkTopologyMap';
 import NetworkChangesPanel from './NetworkChangesPanel';
 import { fetchWithAuth } from '../../stores/auth';
 import { useOrgStore } from '../../stores/orgStore';
+import { useOrgScope } from '@/hooks/useOrgScope';
 import { ActionError, runAction } from '../../lib/runAction';
 import { navigateTo } from '../../lib/navigation';
+import { OrgRequiredState } from '../shared/OrgRequiredState';
+import { OrgLoadFailedState } from '../shared/OrgLoadFailedState';
+// Initializes the shared i18next singleton. Islands hydrate independently, so
+// an island that hydrates before whichever other island happens to pull i18n in
+// would otherwise render raw keys (and mismatch the SSR markup).
+import '../../lib/i18n';
 
 const DISCOVERY_TABS = ['assets', 'profiles', 'jobs', 'topology', 'changes'] as const;
 type DiscoveryTab = (typeof DISCOVERY_TABS)[number];
@@ -147,34 +156,34 @@ function scheduleToForm(schedule?: ApiDiscoverySchedule): DiscoverySchedule {
   return { ...fallbackSchedule };
 }
 
-function scheduleToDisplay(schedule?: ApiDiscoverySchedule): { label: string; status: DiscoveryProfileStatus } {
-  if (!schedule) return { label: 'Manual', status: 'draft' };
+function scheduleToDisplay(schedule: ApiDiscoverySchedule | undefined, t: TFunction): { label: string; status: DiscoveryProfileStatus } {
+  if (!schedule) return { label: t('discoveryPage.schedule.manual'), status: 'draft' };
 
   if (schedule.type === 'manual') {
-    return { label: 'Manual', status: 'draft' };
+    return { label: t('discoveryPage.schedule.manual'), status: 'draft' };
   }
 
   if (schedule.type === 'interval') {
     const minutes = schedule.intervalMinutes ?? 0;
     if (minutes > 0 && minutes % 60 === 0) {
       const hours = minutes / 60;
-      return { label: hours === 1 ? 'Every hour' : `Every ${hours} hours`, status: 'active' };
+      return { label: t('discoveryPage.schedule.everyHours', { count: hours }), status: 'active' };
     }
-    return { label: minutes ? `Every ${minutes} min` : 'Interval schedule', status: 'active' };
+    return { label: minutes ? t('discoveryPage.schedule.everyMinutes', { count: minutes }) : t('discoveryPage.schedule.interval'), status: 'active' };
   }
 
   const parsed = parseCronSchedule(schedule.cron);
   if (!parsed) {
-    return { label: schedule.cron ? `Cron: ${schedule.cron}` : 'Cron schedule', status: 'active' };
+    return { label: schedule.cron ? t('discoveryPage.schedule.cronValue', { cron: schedule.cron }) : t('discoveryPage.schedule.cron'), status: 'active' };
   }
 
   switch (parsed.cadence) {
     case 'weekly':
-      return { label: `Weekly on ${parsed.dayOfWeek} at ${parsed.time}`, status: 'active' };
+      return { label: t('discoveryPage.schedule.weekly', { day: t(/* i18n-dynamic */ `discoveryPage.days.${parsed.dayOfWeek.toLowerCase()}`), time: parsed.time }), status: 'active' };
     case 'monthly':
-      return { label: `Monthly on ${parsed.dayOfMonth} at ${parsed.time}`, status: 'active' };
+      return { label: t('discoveryPage.schedule.monthly', { day: parsed.dayOfMonth, time: parsed.time }), status: 'active' };
     default:
-      return { label: `Daily at ${parsed.time}`, status: 'active' };
+      return { label: t('discoveryPage.schedule.daily', { time: parsed.time }), status: 'active' };
   }
 }
 
@@ -207,22 +216,22 @@ function formScheduleToApi(schedule: DiscoverySchedule): ApiDiscoverySchedule {
   return { type: 'cron', cron, timezone: schedule.timezone || 'UTC' };
 }
 
-function formatRelativeTime(isoDate: string): string {
+function formatRelativeTime(isoDate: string, t: TFunction): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return 'just now';
+  if (seconds < 60) return t('discoveryPage.relative.justNow');
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return t('discoveryPage.relative.minutesAgo', { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t('discoveryPage.relative.hoursAgo', { count: hours });
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return t('discoveryPage.relative.daysAgo', { count: days });
   const months = Math.floor(days / 30);
-  return `${months}mo ago`;
+  return t('discoveryPage.relative.monthsAgo', { count: months });
 }
 
-function mapProfileToDisplay(profile: ApiDiscoveryProfile): DiscoveryProfile {
-  const schedule = scheduleToDisplay(profile.schedule);
+function mapProfileToDisplay(profile: ApiDiscoveryProfile, t: TFunction): DiscoveryProfile {
+  const schedule = scheduleToDisplay(profile.schedule, t);
   return {
     id: profile.id,
     name: profile.name,
@@ -230,7 +239,7 @@ function mapProfileToDisplay(profile: ApiDiscoveryProfile): DiscoveryProfile {
     methods: profile.methods ?? [],
     schedule: schedule.label,
     status: schedule.status,
-    lastRun: profile.lastRunAt ? formatRelativeTime(profile.lastRunAt) : undefined
+    lastRun: profile.lastRunAt ? formatRelativeTime(profile.lastRunAt, t) : undefined
   };
 }
 
@@ -244,7 +253,8 @@ function getTabFromHash(): DiscoveryTab {
 }
 
 export default function DiscoveryPage() {
-  const { currentOrgId, currentSiteId, sites, allOrgs } = useOrgStore();
+  const { t } = useTranslation('discovery');
+  const { currentOrgId, sites, fetchSites, allOrgs } = useOrgStore();
   // "All orgs" mode: a partner/multi-org user who has *explicitly* chosen the
   // All-orgs scope via the switcher. Network discovery is inherently
   // org/site/agent-scoped — the API deliberately refuses an unscoped list
@@ -262,6 +272,12 @@ export default function DiscoveryPage() {
   // keying on the bare null would flash this prompt at single-org users on every
   // cold load before hydration completes.
   const allOrgsMode = allOrgs && currentOrgId === null;
+  // Full context resolution for the render gate below. Distinguishes the
+  // transient pre-hydration window (loading → render nothing for that frame)
+  // from a genuine load failure (error → retry card) and a zero-org partner
+  // (empty → org-required prompt), instead of collapsing all three into a
+  // permanently blank page.
+  const scope = useOrgScope();
 
   const [activeTab, setActiveTab] = useState<DiscoveryTab>('assets');
 
@@ -327,11 +343,11 @@ export default function DiscoveryPage() {
   }, [topologyAssetId, allOrgsMode]);
 
   const tabLabels: Record<DiscoveryTab, string> = {
-    profiles: 'Profiles',
-    jobs: 'Jobs',
-    assets: 'Assets',
-    topology: 'Topology',
-    changes: 'Changes'
+    profiles: t('discoveryPage.tabs.profiles'),
+    jobs: t('discoveryPage.tabs.jobs'),
+    assets: t('discoveryPage.tabs.assets'),
+    topology: t('discoveryPage.tabs.topology'),
+    changes: t('discoveryPage.tabs.changes')
   };
   const tabButtons = DISCOVERY_TABS.map((id) => ({ id, label: tabLabels[id] }));
 
@@ -357,22 +373,22 @@ export default function DiscoveryPage() {
       setProfilesError(undefined);
       const response = await fetchWithAuth('/discovery/profiles');
       if (!response.ok) {
-        throw new Error('Failed to fetch discovery profiles');
+        throw new Error(t('discoveryPage.errors.fetchProfiles'));
       }
       const data = await response.json();
       setProfiles(data.data ?? data.profiles ?? data ?? []);
     } catch (err) {
-      setProfilesError(err instanceof Error ? err.message : 'An error occurred');
+      setProfilesError(err instanceof Error ? err.message : t('discoveryPage.errors.generic'));
     } finally {
       setProfilesLoading(false);
     }
-  }, [currentOrgId, allOrgsMode]);
+  }, [currentOrgId, allOrgsMode, t]);
 
   useEffect(() => {
     fetchProfiles();
   }, [fetchProfiles]);
 
-  const displayProfiles = useMemo(() => profiles.map(mapProfileToDisplay), [profiles]);
+  const displayProfiles = useMemo(() => profiles.map(profile => mapProfileToDisplay(profile, t)), [profiles, t]);
 
   const profileSubnets = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -381,6 +397,12 @@ export default function DiscoveryPage() {
     }
     return map;
   }, [profiles]);
+
+  // Sites are fetched lazily now that the org switcher no longer preloads
+  // them; the profile form and changes-panel site filter need the list.
+  useEffect(() => {
+    if (currentOrgId && sites.length === 0) void fetchSites();
+  }, [currentOrgId, sites.length, fetchSites]);
 
   const siteOptions = useMemo(() => sites.map(s => ({ id: s.id, name: s.name })), [sites]);
 
@@ -406,33 +428,33 @@ export default function DiscoveryPage() {
 
     return {
       name: editingProfile.name,
-      siteId: editingProfile.siteId ?? currentSiteId ?? '',
+      siteId: editingProfile.siteId ?? '',
       subnets: editingProfile.subnets ?? [],
       methods: editingProfile.methods ?? [],
       schedule: scheduleToForm(editingProfile.schedule),
       snmp,
       alertSettings: editingProfile.alertSettings ?? defaultAlertSettings
     };
-  }, [editingProfile, currentSiteId]);
+  }, [editingProfile]);
 
   const handleSubmitProfile = async (values: DiscoveryProfileFormValues) => {
     setSavingProfile(true);
     setProfileFormError(undefined);
 
     if (!values.siteId) {
-      setProfileFormError('Please select a site for this discovery profile.');
+      setProfileFormError(t('discoveryPage.errors.selectSite'));
       setSavingProfile(false);
       return;
     }
 
     if (values.snmp.version === 'v3') {
       if (!values.snmp.username?.trim()) {
-        setProfileFormError('SNMPv3 username is required.');
+        setProfileFormError(t('discoveryPage.errors.snmpUsername'));
         setSavingProfile(false);
         return;
       }
       if (!values.snmp.authPassphrase?.trim()) {
-        setProfileFormError('SNMPv3 auth passphrase is required.');
+        setProfileFormError(t('discoveryPage.errors.snmpAuthPassphrase'));
         setSavingProfile(false);
         return;
       }
@@ -480,7 +502,7 @@ export default function DiscoveryPage() {
 
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        throw new Error(data?.error ?? 'Failed to save profile');
+        throw new Error(data?.error ?? t('discoveryPage.errors.saveProfile'));
       }
 
       await fetchProfiles();
@@ -488,14 +510,14 @@ export default function DiscoveryPage() {
       setIsProfileModalOpen(false);
       setProfileFormError(undefined);
     } catch (err) {
-      setProfileFormError(err instanceof Error ? err.message : 'An error occurred');
+      setProfileFormError(err instanceof Error ? err.message : t('discoveryPage.errors.generic'));
     } finally {
       setSavingProfile(false);
     }
   };
 
   const handleDeleteProfile = async (profile: DiscoveryProfile) => {
-    if (!confirm(`Delete profile "${profile.name}"? This will also remove all associated scan jobs.`)) {
+    if (!confirm(t('discoveryPage.confirmDeleteProfile', { name: profile.name }))) {
       return;
     }
 
@@ -507,12 +529,12 @@ export default function DiscoveryPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete profile');
+        throw new Error(t('discoveryPage.errors.deleteProfile'));
       }
 
       await fetchProfiles();
     } catch (err) {
-      setProfilesError(err instanceof Error ? err.message : 'An error occurred');
+      setProfilesError(err instanceof Error ? err.message : t('discoveryPage.errors.generic'));
     }
   };
 
@@ -526,8 +548,8 @@ export default function DiscoveryPage() {
           method: 'POST',
           body: JSON.stringify({ profileId: profile.id })
         }),
-        errorFallback: `Failed to run discovery profile "${profile.name}"`,
-        successMessage: `Discovery scan queued for "${profile.name}"`,
+        errorFallback: t('discoveryPage.errors.runProfile', { name: profile.name }),
+        successMessage: t('discoveryPage.toasts.scanQueued', { name: profile.name }),
         onUnauthorized: () => void navigateTo('/login', { replace: true })
       });
 
@@ -539,7 +561,7 @@ export default function DiscoveryPage() {
         if (err.status === 401) return;
         setProfilesError(err.message);
       } else {
-        setProfilesError(err instanceof Error ? err.message : 'An error occurred');
+        setProfilesError(err instanceof Error ? err.message : t('discoveryPage.errors.generic'));
       }
     } finally {
       setRunningProfileId(null);
@@ -556,23 +578,23 @@ export default function DiscoveryPage() {
           // Detail endpoint not available; fall back to list data with warning
           const match = profiles.find(item => item.id === profile.id);
           if (!match) {
-            setProfilesError('This profile may have been deleted. Please refresh the page.');
+            setProfilesError(t('discoveryPage.errors.profileDeletedRefresh'));
             return;
           }
           setEditingProfile(match);
-          setProfilesError('Profile detail endpoint unavailable. SNMP credentials may not be loaded.');
+          setProfilesError(t('discoveryPage.errors.profileDetailsUnavailable'));
           setIsProfileModalOpen(true);
           return;
         }
         const errData = await response.json().catch(() => null);
-        throw new Error(errData?.error ?? `Failed to load profile details (HTTP ${response.status})`);
+        throw new Error(errData?.error ?? t('discoveryPage.errors.loadProfileDetailsHttp', { status: response.status }));
       }
       const data = await response.json();
       const fullProfile: ApiDiscoveryProfile = data.data ?? data.profile ?? data;
       setEditingProfile(fullProfile);
       setIsProfileModalOpen(true);
     } catch (err) {
-      setProfilesError(err instanceof Error ? err.message : 'Failed to load profile details');
+      setProfilesError(err instanceof Error ? err.message : t('discoveryPage.errors.loadProfileDetails'));
     }
   };
 
@@ -611,9 +633,9 @@ export default function DiscoveryPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Network Discovery</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{t('discoveryPage.title')}</h1>
           <p className="text-muted-foreground">
-            Configure discovery profiles, monitor scans, and manage network assets.
+            {t('discoveryPage.description')}
           </p>
         </div>
         {activeTab === 'profiles' && !allOrgsMode && (
@@ -627,21 +649,15 @@ export default function DiscoveryPage() {
             }}
           >
             <Plus className="h-4 w-4" />
-            New Profile
+            {t('discoveryPage.actions.newProfile')}
           </button>
         )}
       </div>
 
-      {allOrgsMode ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border bg-card p-12 text-center shadow-xs">
-          <Building2 className="h-10 w-10 text-muted-foreground" />
-          <h2 className="mt-4 text-lg font-semibold">Select an organization to view network discovery</h2>
-          <p className="mt-2 max-w-md text-sm text-muted-foreground">
-            Network discovery is scoped to a single organization, site, and agent.
-            Choose an organization in the scope switcher to view its discovered
-            assets, profiles, scan jobs, and topology.
-          </p>
-        </div>
+      {scope.status === 'error' ? (
+        <OrgLoadFailedState error={scope.error} />
+      ) : scope.status === 'loading' ? null : (allOrgsMode || scope.status === 'empty') ? (
+        <OrgRequiredState description={t('discoveryPage.allOrgs.description')} />
       ) : (
         <>
       <div className="flex flex-wrap gap-2">
@@ -707,7 +723,6 @@ export default function DiscoveryPage() {
       {activeTab === 'changes' && (
         <NetworkChangesPanel
           currentOrgId={currentOrgId}
-          currentSiteId={currentSiteId}
           siteOptions={siteOptions}
         />
       )}
@@ -720,10 +735,10 @@ export default function DiscoveryPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold">
-                  {editingProfile ? 'Edit Discovery Profile' : 'New Discovery Profile'}
+                  {editingProfile ? t('discoveryPage.modal.editTitle') : t('discoveryPage.modal.newTitle')}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Configure network scope, scan methods, and scheduling settings.
+                  {t('discoveryPage.modal.description')}
                 </p>
               </div>
               <button
@@ -731,7 +746,7 @@ export default function DiscoveryPage() {
                 onClick={handleCloseProfileModal}
                 className="flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground hover:text-foreground"
                 disabled={savingProfile}
-                aria-label="Close profile settings modal"
+                aria-label={t('discoveryPage.modal.closeAria')}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -743,7 +758,9 @@ export default function DiscoveryPage() {
                 sites={siteOptions}
                 onSubmit={handleSubmitProfile}
                 onCancel={handleCloseProfileModal}
-                submitLabel={editingProfile ? (savingProfile ? 'Updating...' : 'Update Profile') : (savingProfile ? 'Creating...' : 'Create Profile')}
+                submitLabel={editingProfile
+                  ? (savingProfile ? t('discoveryPage.modal.updating') : t('discoveryPage.modal.updateProfile'))
+                  : (savingProfile ? t('discoveryPage.modal.creating') : t('discoveryPage.modal.createProfile'))}
                 disabled={savingProfile}
                 error={profileFormError}
               />

@@ -69,10 +69,6 @@ const (
 	CmdCollectAuditPolicy       = "collect_audit_policy"
 	CmdApplyAuditPolicyBaseline = "apply_audit_policy_baseline"
 
-	// File transfer
-	CmdFileTransfer   = "file_transfer"
-	CmdCancelTransfer = "cancel_transfer"
-
 	// Remote desktop (WebRTC - legacy)
 	CmdStartDesktop = "start_desktop"
 	CmdStopDesktop  = "stop_desktop"
@@ -176,6 +172,11 @@ const (
 	// Log shipping
 	CmdSetLogLevel = "set_log_level"
 
+	// Runtime diagnostics — on-demand pprof capture (#2389). No listening
+	// socket: profiles are captured in-process and returned in the command
+	// result, so nothing is reachable off-box.
+	CmdCapturePprof = "capture_pprof"
+
 	// Dev push (fast dev binary update)
 	// Auto-update management
 	CmdSetAutoUpdate = "set_auto_update"
@@ -229,8 +230,14 @@ const (
 
 // CommandResult represents the result of a command execution
 type CommandResult struct {
-	Status     string `json:"status"` // completed, failed, timeout
-	ExitCode   int    `json:"exitCode,omitempty"`
+	Status string `json:"status"` // completed, failed, timeout
+	// ExitCode is deliberately NOT omitempty (matching websocket.CommandResult):
+	// the server persists `result.exitCode ?? null`, so omitting the zero value
+	// would store NULL exit_code for every successful (exit-0) run (#2474).
+	// Failure paths that never spawn a process must set a synthetic nonzero
+	// exit code (NewErrorResult uses 1) so `exit_code = 0` always means "a
+	// process ran and exited cleanly".
+	ExitCode   int    `json:"exitCode"`
 	Stdout     string `json:"stdout,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
 	Error      string `json:"error,omitempty"`

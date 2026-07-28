@@ -1,13 +1,14 @@
 import { Hono, type Context } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { eq, and, desc, gte, lte, sql, inArray } from 'drizzle-orm';
-import { db, runOutsideDbContext, withDbAccessContext } from '../../db';
+import { db, runOutsideDbContext, withDbAccessContext, withSystemDbAccessContext } from '../../db';
 import { backupSnapshotFiles, backupSnapshots, restoreJobs, devices, deviceCommands } from '../../db/schema';
 import { requireMfa, requirePermission, requireScope } from '../../middleware/auth';
 import { writeRouteAudit } from '../../services/auditEvents';
 import { recordBackupDispatchFailure } from '../../services/backupMetrics';
 import { CommandTypes, queueBackupStopCommand, queueCommandForExecution } from '../../services/commandQueue';
 import { canAccessSite, PERMISSIONS, type UserPermissions } from '../../services/permissions';
+import { resolveBackupProviderConfig, resolveBackupDestinationError } from '../../services/backupProviderConfig';
 import { resolveScopedOrgId } from './helpers';
 import { restoreListSchema, restoreSchema } from './schemas';
 
@@ -62,16 +63,23 @@ async function markRestoreJobFailed(orgId: string, restoreJobId: string, error: 
   });
 }
 
+// Cancels a not-yet-delivered restore dispatch. Runs outside the caller's
+// tenant transaction (device_commands has no RLS and the dispatcher may have
+// committed the row after that transaction began), but under an explicit
+// system context so the DELETE is not a contextless bare-pool write (#1375) —
+// same shape as the agent result paths in agentWs.ts and agents/commands.ts.
 async function removeQueuedRestoreDispatch(commandId: string | null | undefined): Promise<boolean> {
   if (!commandId) return false;
   const deleted = await runOutsideDbContext(async () =>
-    db
-      .delete(deviceCommands)
-      .where(and(
-        eq(deviceCommands.id, commandId),
-        eq(deviceCommands.status, 'pending'),
-      ))
-      .returning({ id: deviceCommands.id })
+    withSystemDbAccessContext(async () =>
+      db
+        .delete(deviceCommands)
+        .where(and(
+          eq(deviceCommands.id, commandId),
+          eq(deviceCommands.status, 'pending'),
+        ))
+        .returning({ id: deviceCommands.id })
+    )
   );
   return deleted.length > 0;
 }
@@ -229,6 +237,27 @@ restoreRoutes.post(
       return c.json({ error: `Device is ${targetDevice.status}, cannot execute command` }, 409);
     }
 
+    // The agent needs the same provider + providerConfig the BACKUP command
+    // used to write this snapshot, so it can build a storage provider to
+    // read it back. Fail loudly rather than dispatch a config-less restore
+    // that the agent can't act on.
+    const backupProviderConfig = snapshot.configId
+      ? await resolveBackupProviderConfig(snapshot.configId, orgId)
+      : null;
+    if (!backupProviderConfig) {
+      // Distinguish a legacy snapshot (configId never recorded → cannot be
+      // auto-restored) from a genuine misconfiguration, so operators aren't
+      // misled into hunting a "missing config" that never existed. We do NOT
+      // fall back to the device's current config — the snapshot's objects may
+      // live at a different destination than the device backs up to today.
+      const { reason, message } = resolveBackupDestinationError(snapshot.configId);
+      recordBackupDispatchFailure(
+        'manual_restore',
+        reason === 'legacy_snapshot' ? 'snapshot_predates_config_tracking' : 'missing_provider_config'
+      );
+      return c.json({ error: message, reason }, 422);
+    }
+
     const [row] = await runInOrg(orgId, async () =>
       db
         .insert(restoreJobs)
@@ -263,6 +292,8 @@ restoreRoutes.post(
             snapshotId: snapshot.snapshotId,
             targetPath: row.targetPath ?? '',
             selectedPaths: payload.restoreType === 'selective' ? (payload.selectedPaths ?? []) : [],
+            provider: backupProviderConfig.provider,
+            providerConfig: backupProviderConfig.providerConfig,
           },
           { userId: auth?.user?.id ?? undefined }
         )

@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type DragEvent } from 'react';
+import { useHashState } from '@/lib/useHashState';
+import { useTranslation } from 'react-i18next';
+import '@/lib/i18n';
 import type { Organization } from './OrganizationList';
 import OrganizationForm from './OrganizationForm';
 import SiteList, { type Site } from './SiteList';
@@ -15,17 +18,18 @@ type OrganizationFormValues = {
   name: string;
   slug: string;
   type: 'customer' | 'internal';
-  status: 'active' | 'trial' | 'suspended' | 'churned';
+  status: 'active' | 'trial' | 'suspended' | 'churned' | 'offboarding';
   maxDevices: number;
   contractStart?: string;
   contractEnd?: string;
 };
 
-const statusLabels: Record<Organization['status'], string> = {
-  active: 'Active',
-  trial: 'Trial',
-  suspended: 'Suspended',
-  churned: 'Churned',
+const statusLabelKeys: Record<Organization['status'], string> = {
+  active: 'organizationsPage.status.active',
+  trial: 'organizationsPage.status.trial',
+  suspended: 'organizationsPage.status.suspended',
+  churned: 'organizationsPage.status.churned',
+  offboarding: 'organizationsPage.status.offboarding',
 };
 
 const statusColors: Record<Organization['status'], string> = {
@@ -33,18 +37,19 @@ const statusColors: Record<Organization['status'], string> = {
   trial: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400',
   suspended: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
   churned: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400',
+  offboarding: 'border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-400',
 };
 
 export default function OrganizationsPage() {
+  const { t } = useTranslation('settings');
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [modalMode, setModalMode] = useState<ModalMode>('closed');
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
-  const [initialOrgId] = useState(() => {
-    if (typeof window === 'undefined') return null;
-    return window.location.hash.replace('#', '') || null;
-  });
+  // Deep-linked org id adopted post-mount (#2421); later hash writes are
+  // harmless because the consumer effect only fires while nothing is selected.
+  const [initialOrgId] = useHashState<string | null>(null, (h) => h || undefined);
   const [submitting, setSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [draggedOrgId, setDraggedOrgId] = useState<string | null>(null);
@@ -83,7 +88,7 @@ export default function OrganizationsPage() {
           void navigateTo('/login', { replace: true });
           return;
         }
-        throw new Error('Failed to fetch organizations');
+        throw new Error(t('organizationsPage.errors.fetchOrganizations'));
       }
       const data = await response.json();
       const organizations = Array.isArray(data?.data)
@@ -95,11 +100,11 @@ export default function OrganizationsPage() {
             : [];
       setOrganizations(organizations);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('organizationsPage.errors.generic'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // Refresh both the local list and the global org store (consumed by the
   // side nav). Using allSettled so a sidebar-refresh hiccup doesn't undo the
@@ -224,11 +229,11 @@ export default function OrganizationsPage() {
       });
       if (!res.ok) throw new Error(`Reorder failed (${res.status})`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save organization order');
+      setError(err instanceof Error ? err.message : t('organizationsPage.errors.saveOrder'));
       // Revert by re-fetching the authoritative order from the server.
       void fetchOrganizations();
     }
-  }, [fetchOrganizations]);
+  }, [fetchOrganizations, t]);
 
   const handleOrgDragStart = (event: DragEvent<HTMLLIElement>, org: Organization) => {
     setDraggedOrgId(org.id);
@@ -288,7 +293,7 @@ export default function OrganizationsPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to save organization');
+        throw new Error(t('organizationsPage.errors.saveOrganization'));
       }
 
       const createdOrg = await response.json().catch(() => null) as { id?: string } | null;
@@ -325,7 +330,7 @@ export default function OrganizationsPage() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('organizationsPage.errors.generic'));
     } finally {
       setSubmitting(false);
     }
@@ -341,7 +346,7 @@ export default function OrganizationsPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete organization');
+        throw new Error(t('organizationsPage.errors.deleteOrganization'));
       }
 
       const deletedId = selectedOrg.id;
@@ -352,7 +357,7 @@ export default function OrganizationsPage() {
         setSelectedOrg(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('organizationsPage.errors.generic'));
     } finally {
       setSubmitting(false);
     }
@@ -415,13 +420,13 @@ export default function OrganizationsPage() {
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(extractApiError(data, `Failed to save site (${response.status})`));
+        throw new Error(extractApiError(data, t('organizationsPage.errors.saveSite', { status: response.status })));
       }
 
       await fetchSites(selectedOrg.id);
       handleCloseSiteModal();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('organizationsPage.errors.generic'));
     } finally {
       setSiteSubmitting(false);
     }
@@ -434,12 +439,12 @@ export default function OrganizationsPage() {
       const response = await fetchWithAuth(`/orgs/sites/${selectedSite.id}`, {
         method: 'DELETE'
       });
-      if (!response.ok) throw new Error('Failed to delete site');
+      if (!response.ok) throw new Error(t('organizationsPage.errors.deleteSite'));
 
       await fetchSites(selectedOrg.id);
       handleCloseSiteModal();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('organizationsPage.errors.generic'));
     } finally {
       setSiteSubmitting(false);
     }
@@ -464,7 +469,7 @@ export default function OrganizationsPage() {
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading organizations...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('organizationsPage.loading')}</p>
         </div>
       </div>
     );
@@ -479,7 +484,7 @@ export default function OrganizationsPage() {
           onClick={fetchOrganizations}
           className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
-          Try again
+          {t('organizationsPage.actions.tryAgain')}
         </button>
       </div>
     );
@@ -490,15 +495,15 @@ export default function OrganizationsPage() {
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Organizations & Sites</h1>
-          <p className="text-muted-foreground">Manage organizations and their sites.</p>
+          <h1 className="text-xl font-semibold tracking-tight">{t('organizationsPage.title')}</h1>
+          <p className="text-muted-foreground">{t('organizationsPage.description')}</p>
         </div>
         <button
           type="button"
           onClick={handleAdd}
           className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90"
         >
-          Add organization
+          {t('organizationsPage.actions.addOrganization')}
         </button>
       </div>
 
@@ -514,11 +519,11 @@ export default function OrganizationsPage() {
         <div className="rounded-lg border bg-card shadow-xs">
           <div className="border-b px-4 py-3">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Organizations
+              {t('organizationsPage.list.title')}
             </h2>
             <input
               type="search"
-              placeholder="Search..."
+              placeholder={t('organizationsPage.list.searchPlaceholder')}
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="mt-2 h-8 w-full rounded-md border bg-background px-2.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
@@ -529,8 +534,8 @@ export default function OrganizationsPage() {
             {filteredOrgs.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                 {organizations.length === 0
-                  ? 'No organizations yet.'
-                  : 'No matching organizations.'}
+                  ? t('organizationsPage.list.empty')
+                  : t('organizationsPage.list.noMatches')}
               </div>
             ) : (
               <ul className="divide-y">
@@ -560,7 +565,7 @@ export default function OrganizationsPage() {
                         <span
                           data-testid="org-drag-handle"
                           className="mt-0.5 cursor-grab text-muted-foreground/40 opacity-0 transition group-hover:opacity-100 active:cursor-grabbing"
-                          title="Drag to reorder"
+                          title={t('organizationsPage.list.dragToReorder')}
                           aria-hidden="true"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -579,10 +584,10 @@ export default function OrganizationsPage() {
                           <span
                             className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${statusColors[org.status]}`}
                           >
-                            {statusLabels[org.status]}
+                            {t(/* i18n-dynamic */ statusLabelKeys[org.status])}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {org.deviceCount} {org.deviceCount === 1 ? 'device' : 'devices'}
+                            {t('organizationsPage.deviceCount', { count: org.deviceCount })}
                           </span>
                         </div>
                       </div>
@@ -596,7 +601,7 @@ export default function OrganizationsPage() {
                             handleEdit(org);
                           }}
                           className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          title="Edit organization"
+                          title={t('organizationsPage.actions.editOrganization')}
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
@@ -610,7 +615,7 @@ export default function OrganizationsPage() {
                             handleDelete(org);
                           }}
                           className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                          title="Delete organization"
+                          title={t('organizationsPage.actions.deleteOrganization')}
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M3 6h18" />
@@ -641,10 +646,10 @@ export default function OrganizationsPage() {
                       <span
                         className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusColors[selectedOrg.status]}`}
                       >
-                        {statusLabels[selectedOrg.status]}
+                        {t(/* i18n-dynamic */ statusLabelKeys[selectedOrg.status])}
                       </span>
                       <span>
-                        {selectedOrg.deviceCount} {selectedOrg.deviceCount === 1 ? 'device' : 'devices'}
+                        {t('organizationsPage.deviceCount', { count: selectedOrg.deviceCount })}
                       </span>
                     </div>
                   </div>
@@ -654,14 +659,14 @@ export default function OrganizationsPage() {
                       onClick={() => handleEdit(selectedOrg)}
                       className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
                     >
-                      Edit
+                      {t('common:actions.edit')}
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDelete(selectedOrg)}
                       className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
                     >
-                      Delete
+                      {t('common:actions.delete')}
                     </button>
                   </div>
                 </div>
@@ -672,7 +677,7 @@ export default function OrganizationsPage() {
                 {sitesLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <div className="h-6 w-6 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                    <span className="ml-3 text-sm text-muted-foreground">Loading sites...</span>
+                    <span className="ml-3 text-sm text-muted-foreground">{t('organizationsPage.sites.loading')}</span>
                   </div>
                 ) : (
                   <SiteList
@@ -699,9 +704,9 @@ export default function OrganizationsPage() {
                   <path d="M10 18h4" />
                 </svg>
               </div>
-              <h3 className="mt-4 text-sm font-medium">No organization selected</h3>
+              <h3 className="mt-4 text-sm font-medium">{t('organizationsPage.emptySelection.title')}</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Select an organization from the list to view its sites.
+                {t('organizationsPage.emptySelection.description')}
               </p>
             </div>
           )}
@@ -713,15 +718,15 @@ export default function OrganizationsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-8">
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="mb-4 rounded-lg border bg-card p-6 shadow-xs">
-              <h2 className="text-lg font-semibold">Add Organization</h2>
+              <h2 className="text-lg font-semibold">{t('organizationsPage.add.title')}</h2>
               <p className="text-sm text-muted-foreground">
-                Create a new organization with the details below.
+                {t('organizationsPage.add.description')}
               </p>
             </div>
             <OrganizationForm
               onSubmit={handleSubmit}
               onCancel={handleCloseModal}
-              submitLabel="Create organization"
+              submitLabel={t('organizationsPage.add.submit')}
               loading={submitting}
             />
           </div>
@@ -732,10 +737,10 @@ export default function OrganizationsPage() {
       {modalMode === 'delete' && selectedOrg && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-8">
           <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-xs">
-            <h2 className="text-lg font-semibold">Delete Organization</h2>
+            <h2 className="text-lg font-semibold">{t('organizationsPage.delete.title')}</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Are you sure you want to delete <span className="font-medium">{selectedOrg.name}</span>?
-              This action cannot be undone.
+              {t('organizationsPage.delete.messagePrefix')} <span className="font-medium">{selectedOrg.name}</span>?
+              {t('organizationsPage.delete.messageSuffix')}
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button
@@ -743,7 +748,7 @@ export default function OrganizationsPage() {
                 onClick={handleCloseModal}
                 className="h-10 rounded-md border px-4 text-sm font-medium text-muted-foreground transition hover:text-foreground"
               >
-                Cancel
+                {t('common:actions.cancel')}
               </button>
               <button
                 type="button"
@@ -751,7 +756,7 @@ export default function OrganizationsPage() {
                 disabled={submitting}
                 className="inline-flex h-10 items-center justify-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {submitting ? 'Deleting...' : 'Delete'}
+                {submitting ? t('organizationsPage.actions.deleting') : t('common:actions.delete')}
               </button>
             </div>
           </div>
@@ -766,17 +771,17 @@ export default function OrganizationsPage() {
               <div>
                 <h2 className="text-lg font-semibold">
                   {siteModalMode === 'edit'
-                    ? 'Edit Site'
+                    ? t('organizationsPage.siteModal.editTitle')
                     : guidingFirstSite
-                      ? `Add the first site for ${selectedOrg?.name}`
-                      : 'Add Site'}
+                      ? t('organizationsPage.siteModal.firstTitle', { organization: selectedOrg?.name })
+                      : t('organizationsPage.siteModal.addTitle')}
                 </h2>
                 <p className="text-sm text-muted-foreground">
                   {siteModalMode === 'edit'
-                    ? 'Update the site details below.'
+                    ? t('organizationsPage.siteModal.editDescription')
                     : guidingFirstSite
-                      ? 'Organizations need at least one site — this is where devices will live. You can add more later.'
-                      : `Add a new site to ${selectedOrg?.name}.`}
+                      ? t('organizationsPage.siteModal.firstDescription')
+                      : t('organizationsPage.siteModal.addDescription', { organization: selectedOrg?.name })}
                 </p>
               </div>
               {guidingFirstSite && (
@@ -785,7 +790,7 @@ export default function OrganizationsPage() {
                   onClick={handleCloseSiteModal}
                   className="shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
                 >
-                  Skip for now
+                  {t('organizationsPage.siteModal.skip')}
                 </button>
               )}
             </div>
@@ -801,10 +806,10 @@ export default function OrganizationsPage() {
               }
               submitLabel={
                 siteModalMode === 'edit'
-                  ? 'Save changes'
+                  ? t('organizationsPage.siteModal.saveChanges')
                   : guidingFirstSite
-                    ? 'Create first site'
-                    : 'Create site'
+                    ? t('organizationsPage.siteModal.createFirst')
+                    : t('organizationsPage.siteModal.create')
               }
               loading={siteSubmitting}
             />
@@ -816,10 +821,10 @@ export default function OrganizationsPage() {
       {siteModalMode === 'delete' && selectedSite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-8">
           <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-xs">
-            <h2 className="text-lg font-semibold">Delete Site</h2>
+            <h2 className="text-lg font-semibold">{t('organizationsPage.deleteSite.title')}</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Are you sure you want to delete <span className="font-medium">{selectedSite.name}</span>?
-              This action cannot be undone.
+              {t('organizationsPage.deleteSite.messagePrefix')} <span className="font-medium">{selectedSite.name}</span>?
+              {t('organizationsPage.deleteSite.messageSuffix')}
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button
@@ -827,7 +832,7 @@ export default function OrganizationsPage() {
                 onClick={handleCloseSiteModal}
                 className="h-10 rounded-md border px-4 text-sm font-medium text-muted-foreground transition hover:text-foreground"
               >
-                Cancel
+                {t('common:actions.cancel')}
               </button>
               <button
                 type="button"
@@ -835,7 +840,7 @@ export default function OrganizationsPage() {
                 disabled={siteSubmitting}
                 className="inline-flex h-10 items-center justify-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {siteSubmitting ? 'Deleting...' : 'Delete'}
+                {siteSubmitting ? t('organizationsPage.actions.deleting') : t('common:actions.delete')}
               </button>
             </div>
           </div>

@@ -1,7 +1,10 @@
 package agentapp
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,7 +15,156 @@ import (
 
 	"github.com/breeze-rmm/agent/internal/collectors"
 	"github.com/breeze-rmm/agent/internal/config"
+	"github.com/breeze-rmm/agent/internal/logging"
 )
+
+func TestProcessStartupFieldsContainRoleEvidenceOnly(t *testing.T) {
+	startup := ProcessStartup{
+		Binary:             "breeze-agent.exe",
+		ExecutablePath:     `C:\Program Files\Breeze\breeze-agent.exe`,
+		PID:                42,
+		ParentPID:          4,
+		WindowsSessionID:   7,
+		LaunchMode:         "user-helper",
+		HelperRole:         "user",
+		LifecycleKey:       "7-user",
+		MainBinaryFallback: true,
+		Version:            "0.70.0",
+		CreatedAt:          time.Unix(100, 0),
+	}
+	fields := processStartupFields(startup)
+	for _, key := range []string{"pid", "parentPid", "windowsSessionId", "launchMode", "helperRole", "lifecycleKey", "mainBinaryFallback"} {
+		if _, ok := fields[key]; !ok {
+			t.Fatalf("missing field %q", key)
+		}
+	}
+	for _, forbidden := range []string{"authToken", "helperAuthToken", "mtlsKey"} {
+		if _, ok := fields[forbidden]; ok {
+			t.Fatalf("forbidden field %q", forbidden)
+		}
+	}
+}
+
+func TestLogProcessStartupEmitsOneStructuredEvent(t *testing.T) {
+	var output bytes.Buffer
+	logging.Init("json", "info", &output)
+	t.Cleanup(func() { logging.Init("text", "info", nil) })
+
+	startup := ProcessStartup{
+		Binary:             "breeze-agent.exe",
+		ExecutablePath:     `C:\Program Files\Breeze\breeze-agent.exe`,
+		PID:                42,
+		ParentPID:          4,
+		WindowsSessionID:   7,
+		LaunchMode:         "user-helper",
+		HelperRole:         "user",
+		LifecycleKey:       "7-user",
+		MainBinaryFallback: true,
+		Version:            "0.70.0",
+		CreatedAt:          time.Unix(100, 0),
+	}
+	logProcessStartup(startup)
+
+	got := output.String()
+	if count := strings.Count(got, `"msg":"process startup"`); count != 1 {
+		t.Fatalf("process startup event count = %d, want 1; log=%s", count, got)
+	}
+	for _, evidence := range []string{
+		`"windowsSessionId":7`,
+		`"launchMode":"user-helper"`,
+		`"helperRole":"user"`,
+		`"lifecycleKey":"7-user"`,
+		`"mainBinaryFallback":true`,
+	} {
+		if !strings.Contains(got, evidence) {
+			t.Fatalf("process startup log missing %s: %s", evidence, got)
+		}
+	}
+	for _, forbidden := range []string{"authToken", "helperAuthToken", "mtlsKey"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("process startup log contains forbidden field %q: %s", forbidden, got)
+		}
+	}
+}
+
+func TestCachedMainProcessStartupUsesGuardRecord(t *testing.T) {
+	mainProcessStartupCache.Lock()
+	original := mainProcessStartupCache.startup
+	mainProcessStartupCache.startup = ProcessStartup{}
+	mainProcessStartupCache.Unlock()
+	t.Cleanup(func() {
+		mainProcessStartupCache.Lock()
+		mainProcessStartupCache.startup = original
+		mainProcessStartupCache.Unlock()
+	})
+
+	want := ProcessStartup{
+		Binary:           "breeze-agent.exe",
+		ExecutablePath:   `C:\Program Files\Breeze\breeze-agent.exe`,
+		PID:              42,
+		ParentPID:        4,
+		WindowsSessionID: 7,
+		LaunchMode:       "service-run",
+		Version:          "0.70.0",
+		CreatedAt:        time.Unix(100, 0),
+	}
+	cacheMainProcessStartup(want)
+	if got := cachedMainProcessStartup(); got != want {
+		t.Fatalf("cachedMainProcessStartup() = %+v, want %+v", got, want)
+	}
+}
+
+func TestRunAgentDuplicateStopsBeforeInitialization(t *testing.T) {
+	testRunAgentGuardFailureStopsBeforeInitialization(t, ErrMainAgentAlreadyRunning, exitAlreadyRunning)
+}
+
+func TestRunAgentSecurityFailureStopsBeforeInitialization(t *testing.T) {
+	testRunAgentGuardFailureStopsBeforeInitialization(t, errors.New("lock ACL verification failed"), exitInstanceGuardError)
+}
+
+func testRunAgentGuardFailureStopsBeforeInitialization(t *testing.T, guardErr error, wantExit int) {
+	t.Helper()
+
+	origAcquire := acquireMainAgentGuardFn
+	origExit := mainAgentExitFn
+	origMarker := writeInstanceGuardMarkerFn
+	origWriteEvent := writeInstanceGuardEventFn
+	origReconcile := reconcileServiceUnitIfNeededFn
+	origStart := startAgentFn
+	t.Cleanup(func() {
+		acquireMainAgentGuardFn = origAcquire
+		mainAgentExitFn = origExit
+		writeInstanceGuardMarkerFn = origMarker
+		writeInstanceGuardEventFn = origWriteEvent
+		reconcileServiceUnitIfNeededFn = origReconcile
+		startAgentFn = origStart
+	})
+
+	reconciled, started, markerWritten, exitCode := false, false, false, 0
+	acquireMainAgentGuardFn = func(ProcessStartup) (mainAgentGuard, error) {
+		return nil, guardErr
+	}
+	writeInstanceGuardMarkerFn = writeInstanceGuardMarker
+	writeInstanceGuardEventFn = func(source, message string) error {
+		markerWritten = true
+		if source != "Bl4ckAgent" || !strings.Contains(message, guardErr.Error()) {
+			t.Errorf("marker = source:%q message:%q", source, message)
+		}
+		return nil
+	}
+	mainAgentExitFn = func(code int) { exitCode = code }
+	reconcileServiceUnitIfNeededFn = func() { reconciled = true }
+	startAgentFn = func(*config.Config) (*agentComponents, error) {
+		started = true
+		return nil, nil
+	}
+
+	runAgent()
+
+	if exitCode != wantExit || reconciled || started || !markerWritten {
+		t.Fatalf("exit=%d, want=%d reconciled=%v started=%v marker=%v", exitCode, wantExit, reconciled, started, markerWritten)
+	}
+}
 
 // TestHelperWarnLimiterBudget verifies that the first `limit` calls with the
 // same message all emit WARN (emit=true, suppressed=0), and that the (limit+1)th
@@ -400,6 +552,69 @@ func TestTrimEnrollInputs(t *testing.T) {
 	}
 }
 
+func TestResolveBackupServerURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		enrollSeed    string
+		bootstrapSeed string
+		primaryURL    string
+		want          string
+		wantErr       bool
+	}{
+		{
+			name:          "enroll wins over bootstrap",
+			enrollSeed:    "https://enroll.example.com",
+			bootstrapSeed: "https://bootstrap.example.com",
+			primaryURL:    "https://primary.example.com",
+			want:          "https://enroll.example.com",
+		},
+		{
+			name:          "bootstrap fallback",
+			bootstrapSeed: "https://bootstrap.example.com",
+			primaryURL:    "https://primary.example.com",
+			want:          "https://bootstrap.example.com",
+		},
+		{
+			name:       "both empty",
+			primaryURL: "https://primary.example.com",
+		},
+		{
+			name:       "equal to primary skipped",
+			enrollSeed: "https://primary.example.com",
+			primaryURL: "https://primary.example.com",
+		},
+		{
+			name:       "invalid http non-localhost skipped",
+			enrollSeed: "http://backup.example.com",
+			primaryURL: "https://primary.example.com",
+			wantErr:    true,
+		},
+		{
+			name:       "valid https accepted",
+			enrollSeed: "https://backup.example.com",
+			primaryURL: "https://primary.example.com",
+			want:       "https://backup.example.com",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := resolveBackupServerURL(tc.enrollSeed, tc.bootstrapSeed, tc.primaryURL)
+			if got != tc.want {
+				t.Errorf("resolveBackupServerURL(%q, %q, %q) = %q, want %q", tc.enrollSeed, tc.bootstrapSeed, tc.primaryURL, got, tc.want)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Errorf("resolveBackupServerURL(%q, %q, %q) err = %v, wantErr %v", tc.enrollSeed, tc.bootstrapSeed, tc.primaryURL, err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // writeEnrolledConfig writes a minimal agent.yaml + secrets.yaml pair
 // that config.Load will parse into a config with both AgentID and
 // AuthToken set (IsEnrolled returns true).
@@ -591,6 +806,42 @@ func TestAssertHostnameNonEmpty(t *testing.T) {
 			err := assertHostnameNonEmpty(tc.info)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("got err=%v, wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLogPAMActuatorStrategy verifies the startup PAM-strategy log: known
+// strategies (and the empty/default case) log at INFO, and an unrecognized
+// non-empty value logs a WARN calling out the fallback to sendinput, so a
+// typo like "token-launch" is visible in agent logs instead of silently
+// falling back (the VM validation doc requires confirming from logs which
+// strategy is active).
+func TestLogPAMActuatorStrategy(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		wantLevel  string
+	}{
+		{"sendinput is INFO", "sendinput", "INFO"},
+		{"token_launch is INFO", "token_launch", "INFO"},
+		{"empty defaults to INFO", "", "INFO"},
+		{"unrecognized value is WARN", "token-launch", "WARN"},
+		{"garbage value is WARN", "not-a-strategy", "WARN"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			l := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+			logPAMActuatorStrategy(l, tc.configured)
+
+			out := buf.String()
+			if !strings.Contains(out, "level="+tc.wantLevel) {
+				t.Fatalf("configured=%q: got log %q, want level=%s", tc.configured, out, tc.wantLevel)
+			}
+			if tc.wantLevel == "WARN" && !strings.Contains(out, tc.configured) {
+				t.Fatalf("configured=%q: WARN log %q should mention the bad configured value", tc.configured, out)
 			}
 		})
 	}

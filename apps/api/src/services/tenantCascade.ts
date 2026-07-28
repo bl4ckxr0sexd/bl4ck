@@ -7,7 +7,7 @@
  *
  * The list is authoritative. A contract test
  * (`__tests__/integration/tenantCascade.integration.test.ts`) cross-
- * checks `ORG_CASCADE_DELETE_ORDER` against `information_schema.columns`
+ * checks `getOrgCascadeDeleteOrder()` against `information_schema.columns`
  * and the documented `INTENTIONAL_UNSCOPED` allowlist mirror — a new
  * `org_id`-columned table that isn't in the cascade list will fail CI.
  *
@@ -38,6 +38,7 @@
 
 import { sql } from 'drizzle-orm';
 import * as dbModule from '../db';
+import { withExtensionOrgCascade } from '../extensions/tenancyRegistry';
 import { createAuditLog } from './auditService';
 // Self-import so cascadeDeletePartner calls cascadeDeleteOrg /
 // topologicalCascadeOrder through the module namespace. This keeps those
@@ -60,9 +61,10 @@ import * as self from './tenantCascade';
  * The contract test (`tenantCascade.integration.test.ts`) verifies this
  * list is the complete set — any new `org_id` table breaks CI.
  */
-export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
+const CORE_ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'access_reviews',
   'account_deletion_requests',
+  'action_intents',
   'agent_logs',
   'ai_action_plans',
   'ai_budgets',
@@ -92,6 +94,7 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'backup_configs',
   'backup_jobs',
   'backup_policies',
+  'backup_profiles',
   'backup_sla_configs',
   'backup_sla_events',
   'backup_snapshots',
@@ -120,8 +123,16 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'config_policy_onedrive_settings',
   'configuration_policies',
   'contract_billing_periods',
+  'contract_documents',
   'contract_lines',
   'contract_renewal_notices',
+  // contract_template_versions sorts before contract_templates: localeCompare
+  // puts '_' (versions) before 's' (templates) at the diverging character —
+  // same prefix-extension trap as custom_field_definitions/customer_email_domains
+  // above. FK-safe order is verified at runtime by topologicalCascadeOrder(),
+  // not by this hand order, but membership must include both.
+  'contract_template_versions',
+  'contract_templates',
   'contracts',
   'custom_field_definitions',
   // NB: sorts AFTER custom_field_definitions — localeCompare puts the '_' in
@@ -143,6 +154,10 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'device_groups',
   'device_hardware',
   'device_ip_history',
+  // #2138 — linked multi-boot profiles. The topo-sort deletes `devices` before
+  // this (devices carries the FK to device_link_groups), so members are cleared
+  // first and the group rows delete cleanly.
+  'device_link_groups',
   'device_metrics',
   'device_network',
   'device_patches',
@@ -192,6 +207,7 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'log_correlations',
   'log_search_queries',
   'm365_connections',
+  'm365_consent_sessions',
   'maintenance_windows',
   'metric_anomalies',
   'metric_anomaly_candidates',
@@ -219,6 +235,8 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'patch_jobs',
   'pax8_company_mappings',
   'pax8_contract_line_links',
+  'pax8_order_lines',
+  'pax8_orders',
   'pax8_subscription_snapshots',
   'peripheral_events',
   'peripheral_policies',
@@ -235,6 +253,7 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'quote_blocks',
   'quote_images',
   'quote_lines',
+  'quote_recipients',
   'quotes',
   'recovery_boot_media_artifacts',
   'recovery_key_access_events',
@@ -271,6 +290,7 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'sensitive_data_findings',
   'sensitive_data_policies',
   'sensitive_data_scans',
+  'service_principals',
   'service_process_check_results',
   'sites',
   'sla_compliance',
@@ -288,6 +308,19 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   'sso_verified_domains',
   'storage_encryption_keys',
   'ticket_alert_links',
+  // ticket_form_org_links (spec 2026-07-11): org allowlist for partner-wide
+  // ticket_forms. Own org_id column is a direct FK to organizations (ON
+  // DELETE CASCADE already clears rows on org delete; listed here anyway per
+  // the cascade contract test's requirement that every org_id-columned table
+  // be enumerated for auditability). localeCompare sorts this BEFORE
+  // 'ticket_forms' (underscore < 's'), not after — verified against the
+  // alphabetization contract test in tenantCascade.integration.test.ts.
+  'ticket_form_org_links',
+  // ticket_forms (spec 2026-07-10): dual-axis (org_id XOR partner_id) —
+  // partner-wide forms are cleared via cascadeDeletePartner's dynamic
+  // partner_id sweep (information_schema-driven), not a static list; this
+  // entry only covers the org-owned axis of the GDPR org cascade.
+  'ticket_forms',
   'ticket_parts',
   'tickets',
   'time_entries',
@@ -312,6 +345,13 @@ export const ORG_CASCADE_DELETE_ORDER: ReadonlyArray<string> = Object.freeze([
   // organizations is id-keyed (no org_id column). Cleared last.
   'organizations',
 ]);
+
+export function getOrgCascadeDeleteOrder(): readonly string[] {
+  return withExtensionOrgCascade(CORE_ORG_CASCADE_DELETE_ORDER);
+}
+
+/** @deprecated Static core-only snapshot retained for call sites that predate extensions. */
+export const ORG_CASCADE_DELETE_ORDER = CORE_ORG_CASCADE_DELETE_ORDER;
 
 /**
  * Tables that hold FK references INTO the cascade set but are themselves
@@ -376,9 +416,9 @@ interface FkEdge {
 
 /**
  * Read foreign-key edges from pg_catalog and return a topological order
- * of `ORG_CASCADE_DELETE_ORDER` where children come before parents.
+ * of `getOrgCascadeDeleteOrder()` where children come before parents.
  *
- * Tables not in `ORG_CASCADE_DELETE_ORDER` are ignored — they're either
+ * Tables not in `getOrgCascadeDeleteOrder()` are ignored — they're either
  * out-of-scope or handled by `ASSOCIATED_SYSTEM_SCOPED_TABLES`.
  *
  * Self-referential FKs (e.g. devices.parent_id → devices.id) are
@@ -390,7 +430,7 @@ interface FkEdge {
  * partial cascade.
  */
 export async function topologicalCascadeOrder(
-  tables: Iterable<string> = ORG_CASCADE_DELETE_ORDER,
+  tables: Iterable<string> = getOrgCascadeDeleteOrder(),
 ): Promise<string[]> {
   const tableSet = new Set(tables);
   const edges = (await dbModule.db.execute(sql`
@@ -745,7 +785,7 @@ export async function cascadeDeletePartner(
   // cascadeDeleteOrg manages its own per-statement withSystemDbAccessContext calls;
   // do NOT wrap these calls in an outer context (would nest transactions).
   // NB: org_id-direct tables (e.g. topology_layout, #1728) are purged here too,
-  // since cascadeDeleteOrg walks the full ORG_CASCADE_DELETE_ORDER per child org.
+  // since cascadeDeleteOrg walks the full getOrgCascadeDeleteOrder() result per child org.
   for (const row of orgRows) {
     const orgStats = await self.cascadeDeleteOrg(row.id, performedBy);
     totalRowsDeleted += orgStats.totalRowsDeleted;

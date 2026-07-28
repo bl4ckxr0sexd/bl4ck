@@ -43,10 +43,26 @@ API connects to Postgres as unprivileged `breeze_app`. Every tenant-scoped table
 1. Pick a shape; add policies in the same migration that creates the table — never defer.
 2. Migration must be idempotent (`IF NOT EXISTS` / `DO $$`). Never edit a shipped migration.
 3. Add to the relevant allowlist in `rls-coverage.integration.test.ts` in the same PR (shapes 2-6).
-4. Run the contract test locally (needs real DB).
-5. Verify as `breeze_app`: `docker exec -it breeze-postgres psql -U breeze_app -d breeze` and forge a cross-tenant insert — must fail with `new row violates row-level security policy`.
+4. **Register the table in every cascade list that applies (see below). RLS coverage does NOT imply cascade coverage — they are separate contracts, and this step is the one that gets missed.**
+5. Run the contract tests locally (needs real DB).
+6. Verify as `breeze_app`: `docker exec -it breeze-postgres psql -U breeze_app -d breeze` and forge a cross-tenant insert — must fail with `new row violates row-level security policy`.
 
-For production backfills of `org_id` on hot tables (>1M rows), batch via `UPDATE ... WHERE ctid IN (... LIMIT N)` loops before `SET NOT NULL`. Full narrative and rationale: `docs/superpowers/plans/2026-04-11-rls-coverage-gaps.md`.
+**Cascade registration (step 4) — a new `org_id` table is NOT done until it's in these:**
+
+| If the table… | Add it to | Enforced by (CI job) |
+|---|---|---|
+| has an `org_id` column (**always**) | `CORE_ORG_CASCADE_DELETE_ORDER` in `services/tenantCascade.ts` — alphabetical, `organizations` last | `tenantCascade.integration.test.ts` (**Integration Tests**) |
+| has a `device_id` column | `CORE_DEVICE_CASCADE_DELETE_TABLES` in `routes/devices/core.ts` | `cascadeDelete.test.ts` (**Test API**) |
+| has `device_id` **and** a denormalized `org_id` | also `CORE_DEVICE_ORG_DENORMALIZED_TABLES` (same file) | `moveOrg.coverage.test.ts` (**Test API**) |
+| is append-only (REVOKE DELETE + immutability trigger) | also `AUDIT_ADMIN_REQUIRED_TABLES` in `tenantCascade.ts` | runtime `permission denied` during erasure |
+
+Why this list exists: missing a cascade list is a **latent GDPR org-erasure bug** — the org delete either strands rows under a dead tenant or aborts on an FK violation. It has shipped or blocked CI five times (#1359, #1351, #1365, #2179, #2514). Code review has caught it **0/5**; the contract tests caught it **5/5**. Treat it as a mechanical grep (`grep -rn '<table>' apps/api/src/services/tenantCascade.ts`), not a judgement call.
+
+**Check the FK direction, not just membership.** Ordering is children-before-parents. An FK declared without an explicit `ON DELETE` defaults to `NO ACTION`, so a referencing table must be deleted *first* or the cascade raises an FK violation. Alphabetical order often satisfies this by luck (`api_keys` < `service_principals`) — verify, don't assume. `tenantCascade.integration.test.ts` asserts five properties: alphabetised by `localeCompare` with `organizations` last; every `org_id` table present; no entry naming a non-existent table; every cascade table exactly once; FK children before parents.
+
+Only the device-side lists fail in the **Test API** unit job (they read the Drizzle schema statically). The org cascade list only fails under **Integration Tests**, so a PR on a stale base can go green and then red main after merge.
+
+For production backfills of `org_id` on hot tables (>1M rows), batch via `UPDATE ... WHERE ctid IN (... LIMIT N)` loops before `SET NOT NULL`. Full narrative and rationale: `docs/superpowers/plans/tenancy-rls/2026-04-11-rls-coverage-gaps.md`.
 
 ### Partner-Wide First (config/policy tables) — epic #2135
 
@@ -106,7 +122,7 @@ if (err instanceof ActionError && err.status === 401) return; // let auth redire
 if (!(err instanceof ActionError)) showToast({ type: 'error', ... }); // non-401 ActionError already toasted by runAction
 ```
 
-The `no-silent-mutations` test (`apps/web/src/lib/__tests__/no-silent-mutations.test.ts`) guards the adopted set. Legitimate exceptions (typed service layers, aggregate/partial-success handlers with inline error UI) are recorded in `apps/web/src/lib/runActionAllowlist.ts`. Spec: `docs/superpowers/specs/2026-05-15-ws-a-action-feedback-design.md`.
+The `no-silent-mutations` test (`apps/web/src/lib/__tests__/no-silent-mutations.test.ts`) guards the adopted set. Legitimate exceptions (typed service layers, aggregate/partial-success handlers with inline error UI) are recorded in `apps/web/src/lib/runActionAllowlist.ts`. Spec: `docs/superpowers/specs/web-ui/2026-05-15-ws-a-action-feedback-design.md`.
 
 ---
 
@@ -233,11 +249,23 @@ Droplets pull from `/opt/breeze` and use mutable image tags driven by `BREEZE_VE
 ssh root@<droplet> "cd /opt/breeze && \
   cp .env .env.bak-pre-<new-version> && \
   sed -i 's/^BREEZE_VERSION=.*/BREEZE_VERSION=<new-version>/' .env && \
-  docker compose pull api web && \
-  docker compose up -d binaries-init api web"
+  docker compose pull api web portal && \
+  docker compose up -d binaries-init api web portal"
 ```
 
 Then `curl -sf https://<region>.2breeze.app/health` to verify (200 = healthy).
+
+**The service list is hand-maintained and WILL go stale — always assert version parity after deploying.** The line names services explicitly (not a bare `docker compose pull && up -d`) because `billing` builds from a local `breeze-billing:local` image with no registry to pull from, and a bare `up -d` would needlessly bounce `caddy`/`redis`/`tunnel`. The cost is that adding a new first-party service silently breaks the rollout: `portal` was added in v0.94.0, never made it into the deploy line, and sat on `0.94.0` through five releases while `/health` reported `0.98.1` — a portal fix from v0.97.0 was invisible in production for 11 days (2026-07-20). Watchtower is not a backstop: it runs `WATCHTOWER_LABEL_ENABLE=true` and no service carries the label, so it updates nothing.
+
+`/health` is served by the API and cannot detect this, so enumerate what is actually running instead of trusting the list:
+
+```bash
+ssh root@<droplet> "cd /opt/breeze && set -a && . ./.env && set +a && \
+  docker ps -a --format '{{.Names}}\t{{.Image}}' | grep 'ghcr.io/lanternops/breeze/' | \
+  while IFS=\$'\t' read -r n i; do t=\${i##*:}; \
+    [ \"\$t\" = \"\$BREEZE_VERSION\" ] && echo \"OK    \$n \$t\" || echo \"SKEW  \$n \$t (expected \$BREEZE_VERSION)\"; done"
+# every line must be OK; any SKEW means that service was never rolled.
+```
 
 **Required env vars added by v0.65+ — droplets without these refuse to start:**
 

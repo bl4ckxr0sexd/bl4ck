@@ -16,6 +16,7 @@ import { escapeLike } from '../utils/sql';
 import { AI_SYSTEM_PROMPT_BASE } from './aiAgentSystemPrompt';
 import { getActiveDeviceContext } from './brainDeviceContext';
 import { sanitizePageContext } from './aiInputSanitizer';
+import { looksLikeInternalErrorDetail } from './aiToolErrors';
 
 // Current model id so the Claude Agent SDK can price it natively. A stale id makes the
 // SDK report total_cost_usd: 0 → $0.00 cost tracking (issue #1326). Successor to the
@@ -159,10 +160,33 @@ export async function createSession(
   return { id: session.id, orgId, delegantM365ConnectionId };
 }
 
-export async function getSession(sessionId: string, auth: AuthContext) {
+/**
+ * Load a single session for the caller.
+ *
+ * OWNER-BOUND by default (SR5-09): the row must belong to `auth.user.id`, not
+ * merely to an org the caller can reach. The session transcript (systemPrompt,
+ * contextSnapshot, sdkSessionId, raw message content) is private to the user who
+ * created it; an org peer with organizations:read must NOT be able to load
+ * another user's session via `GET /sessions/:id`, its messages, or any
+ * owner-driven mutation route (title/close/interrupt/pause/approve/plan/ticket).
+ * The org condition is still applied underneath as defense-in-depth.
+ *
+ * `allowAnyOwnerInOrg: true` relaxes the owner check to an org-only lookup. It is
+ * ONLY for genuine admin/moderation routes (unflag) and internal callers that
+ * re-assert authorization themselves (`handleApproval`, which independently
+ * asserts owner for SR5-10). Never pass it from an ordinary user-facing route.
+ */
+export async function getSession(
+  sessionId: string,
+  auth: AuthContext,
+  options: { allowAnyOwnerInOrg?: boolean } = {},
+) {
   const conditions = [eq(aiSessions.id, sessionId)];
   const orgCondition = auth.orgCondition(aiSessions.orgId);
   if (orgCondition) conditions.push(orgCondition);
+  if (!options.allowAnyOwnerInOrg) {
+    conditions.push(eq(aiSessions.userId, auth.user.id));
+  }
 
   const [session] = await db
     .select()
@@ -350,6 +374,30 @@ export async function handleApproval(
     .limit(1);
 
   if (!execution || execution.status !== 'pending') return false;
+
+  if (execution.intentId) {
+    // Intent-backed (Tier-3 durable action-intents flow, spec §6.1): this
+    // execution's real approval state lives on action_intents.status, decided
+    // by services/actionIntents/intentService.ts's approver fan-out — NOT by
+    // this route. Flipping ai_tool_executions here would report success while
+    // nothing was actually decided (whole-branch review CRITICAL-3): the chat
+    // flow blocks on waitForIntentDecision reading action_intents.status, so
+    // a bare status flip is a silent no-op that times the session out.
+    //
+    // This also must NOT fall through to the SR5-10 owner-only check below —
+    // the intents model is a FOUR-EYES approval (the requester is usually NOT
+    // an eligible approver of their own intent), the opposite of the
+    // session-owner self-approval this function otherwise implements. Decide
+    // via the /approvals surface (mobile push or the Approvals queue)
+    // instead. Route callers use isIntentBackedExecution() to turn this
+    // `false` into an honest "pending" response instead of a bare 404.
+    console.warn(
+      '[AI] Self-approve attempt on intent-backed execution rejected (four-eyes model):',
+      JSON.stringify({ executionId, intentId: execution.intentId, actorId: auth.user.id }),
+    );
+    return false;
+  }
+
   if (expectedSessionId && execution.sessionId !== expectedSessionId) {
     // SECURITY: a caller approved an execution via a session route that does not
     // own it (cross-session approval-forgery attempt). We keep returning `false`
@@ -367,9 +415,29 @@ export async function handleApproval(
     return false;
   }
 
-  // Verify the session belongs to the user's org
-  const session = await getSession(execution.sessionId, auth);
+  // Internal org-scoped lookup (owner is asserted explicitly below, so this must
+  // NOT owner-bind — otherwise a valid owner-check couldn't read session.userId).
+  const session = await getSession(execution.sessionId, auth, { allowAnyOwnerInOrg: true });
   if (!session) return false;
+
+  // SR5-10 (SECURITY-CRITICAL): the approver MUST be the session owner. Approving
+  // resumes the paused tool under the ORIGINAL (queuing user's) session
+  // authorization; letting an org peer approve would execute a privileged action
+  // the victim queued, laundering it through the victim's grants/MFA/site scope.
+  // Owner-only is the minimal correct rule (a designated-approver model would
+  // have to independently re-satisfy the pending action's constraints).
+  if (session.userId !== auth.user.id) {
+    console.warn(
+      '[AI] Cross-user approval denied:',
+      JSON.stringify({
+        executionId,
+        sessionId: execution.sessionId,
+        sessionOwnerId: session.userId,
+        actorId: auth.user.id,
+      }),
+    );
+    return false;
+  }
 
   await db
     .update(aiToolExecutions)
@@ -381,6 +449,25 @@ export async function handleApproval(
     .where(eq(aiToolExecutions.id, executionId));
 
   return true;
+}
+
+/**
+ * Whether a tool execution is bound to a durable action_intents row (Tier-3
+ * chat flow — services/actionIntents/intentService.ts's createActionIntent).
+ * Used by the sessions-approve routes to turn a `handleApproval` `false`
+ * into an honest "pending, decide via /approvals" response instead of a bare
+ * "not found" 404 when the false was actually due to the four-eyes guard
+ * above (whole-branch review CRITICAL-3), without changing handleApproval's
+ * boolean contract for the (unrelated, unchanged) non-intent paths.
+ */
+export async function isIntentBackedExecution(executionId: string): Promise<boolean> {
+  const [execution] = await db
+    .select({ intentId: aiToolExecutions.intentId })
+    .from(aiToolExecutions)
+    .where(eq(aiToolExecutions.id, executionId))
+    .limit(1);
+
+  return !!execution?.intentId;
 }
 
 // ============================================
@@ -672,8 +759,16 @@ const SAFE_ERROR_PATTERNS = [
 export function sanitizeErrorForClient(err: unknown): string {
   if (err instanceof Error) {
     const msg = err.message;
-    // Only allow messages that match known safe patterns
-    if (SAFE_ERROR_PATTERNS.some(pattern => pattern.test(msg))) {
+    // Only allow messages that match known safe patterns AND do not look like
+    // driver/runtime output (#2603). Without the second check the allowlist is
+    // too loose: `/permission/i` admits `permission denied for table devices`
+    // and `/invalid input/i` admits `invalid input syntax for type uuid: "abc"`,
+    // both of which disclose schema. looksLikeInternalErrorDetail is the single
+    // authority for "is this internal detail".
+    if (
+      !looksLikeInternalErrorDetail(msg) &&
+      SAFE_ERROR_PATTERNS.some(pattern => pattern.test(msg))
+    ) {
       // Double-check: strip any file paths or stack traces that might have slipped in
       const cleaned = msg.replace(/\s+at\s+\S+/g, '').replace(/[A-Za-z]:\\[^\s]+/g, '').replace(/\/[^\s]*\/[^\s]*/g, '').trim();
       return cleaned || 'An internal error occurred. Please try again.';

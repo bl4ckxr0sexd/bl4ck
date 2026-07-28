@@ -345,6 +345,18 @@
       ]
     },
     {
+      "pattern": "apps/api/src/routes/servicePrincipals.ts",
+      "docs": [
+        "reference/api-keys.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/db/requestDatabaseConfig.ts",
+      "docs": [
+        "deploy/environment.mdx"
+      ]
+    },
+    {
       "pattern": "agent/internal/backup/**",
       "docs": [
         "backup/overview.mdx",
@@ -900,6 +912,38 @@
       ]
     },
     {
+      "pattern": "apps/api/src/services/m365ControlPlane/**",
+      "docs": [
+        "features/identity-integrations.mdx",
+        "features/identity-console.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/m365ControlPlane/runtimeConfig.ts",
+      "docs": [
+        "deploy/environment.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/routes/m365CustomerGraphRead.ts",
+      "docs": [
+        "features/identity-integrations.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/routes/m365ConsentCallback.ts",
+      "docs": [
+        "features/identity-integrations.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/m365-graph-read-executor/**",
+      "docs": [
+        "deploy/environment.mdx",
+        "deploy/production.mdx"
+      ]
+    },
+    {
       "pattern": "apps/api/src/services/aiToolsGoogle.ts",
       "docs": [
         "features/identity-console.mdx",
@@ -1368,13 +1412,40 @@
     {
       "pattern": "apps/api/src/routes/pax8.ts",
       "docs": [
-        "features/integrations.mdx"
+        "features/distributor-integrations.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/routes/pax8Orders.ts",
+      "docs": [
+        "features/distributor-integrations.mdx"
       ]
     },
     {
       "pattern": "apps/api/src/services/pax8SyncService.ts",
       "docs": [
-        "features/integrations.mdx"
+        "features/distributor-integrations.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/pax8Order*.ts",
+      "docs": [
+        "features/distributor-integrations.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/quoteToPax8Order.ts",
+      "docs": [
+        "features/quotes.mdx",
+        "features/distributor-integrations.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/aiToolsCatalog.ts",
+      "docs": [
+        "features/mcp-server.mdx",
+        "features/ai.mdx",
+        "features/distributor-integrations.mdx"
       ]
     },
     {
@@ -1568,7 +1639,27 @@
     {
       "pattern": "apps/api/src/services/quoteService.ts",
       "docs": [
+        "features/quotes.mdx",
         "features/product-catalog.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/quotePdf.ts",
+      "docs": [
+        "features/quotes.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/quoteEmail.ts",
+      "docs": [
+        "features/quotes.mdx"
+      ]
+    },
+    {
+      "pattern": "agent/scripts/install/**",
+      "docs": [
+        "agents/installation.mdx",
+        "backup/overview.mdx"
       ]
     },
     {
@@ -1895,6 +1986,115 @@
       "pattern": "apps/web/src/components/devices/DeviceList.tsx",
       "docs": [
         "features/devices.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/m365ControlPlane/writeActionRuntimeConfig.ts",
+      "docs": [
+        "deploy/environment.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/m365ControlPlane/writeActionService.ts",
+      "docs": [
+        "deploy/environment.mdx",
+        "features/ai.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/m365ControlPlane/graphActionsExecutorClient.ts",
+      "docs": [
+        "deploy/environment.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/actionIntents/**",
+      "docs": [
+        "features/ai.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/actionIntents/intentApprovers.ts",
+      "docs": [
+        "features/ai.mdx",
+        "reference/users-and-roles.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/googleToolsHeadless.ts",
+      "docs": [
+        "features/ai.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/m365ToolsHeadless.ts",
+      "docs": [
+        "features/ai.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/jobs/quoteSendQueue.ts",
+      "docs": [
+        "features/quotes.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/services/aiGuardrails.ts",
+      "docs": [
+        "features/ai.mdx",
+        "features/mcp-server.mdx",
+        "features/ai-computer-control.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/oauth/redirectUriPolicy.ts",
+      "docs": [
+        "features/mcp-server.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/routes/authenticator.ts",
+      "docs": [
+        "features/approval-security.mdx",
+        "features/mobile.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/web/src/components/dashboard/**",
+      "docs": [
+        "features/alerts.mdx"
+      ]
+    },
+    {
+      "pattern": "packages/shared/src/utils/s3Endpoint.ts",
+      "docs": [
+        "backup/storage.mdx"
+      ]
+    },
+    {
+      "pattern": "packages/shared/src/types/postureReport.ts",
+      "docs": [
+        "features/reports.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/routes/portal/quotes.ts",
+      "docs": [
+        "features/quotes.mdx",
+        "features/portal.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/routes/docs.ts",
+      "docs": [
+        "deploy/environment.mdx"
+      ]
+    },
+    {
+      "pattern": "apps/api/src/routes/actionIntents.ts",
+      "docs": [
+        "features/ai.mdx",
+        "features/identity-console.mdx"
       ]
     }
   ]

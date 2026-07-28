@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../../lib/i18n';
 import { ArrowLeft } from 'lucide-react';
 import AlertRuleForm, { type AlertRuleFormValues } from './AlertRuleForm';
 import type { NotificationChannel } from './NotificationChannelList';
 import { fetchWithAuth } from '../../stores/auth';
 import { useOrgStore } from '../../stores/orgStore';
-import { getJwtClaims } from '@/lib/authScope';
+import { useDefaultOwnerScope } from '@/hooks/useDefaultOwnerScope';
 import { navigateTo } from '@/lib/navigation';
 import { extractApiError } from '@/lib/apiError';
 
@@ -18,6 +20,7 @@ type AlertRuleEditPageProps = {
 };
 
 export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEditPageProps) {
+  const { t } = useTranslation('alerts');
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
@@ -27,16 +30,14 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
   const [devices, setDevices] = useState<Device[]>([]);
   const [notificationChannels, setNotificationChannels] = useState<NotificationChannel[]>([]);
   const { currentOrgId } = useOrgStore();
-  const allOrgs = useOrgStore((s) => s.allOrgs);
 
   // Ownership axis (#2128, mirrors software/security policies): partner-scope
   // creators may own the rule partner-wide ("all orgs" — targets every device
   // under the partner, uses each org's default alert routing). Gate on the
   // JWT scope; default to partner-wide when viewing All orgs. Create-only.
-  const { scope: jwtScope, partnerId: jwtPartnerId } = getJwtClaims();
-  const isPartnerScope = jwtScope === 'partner' && !!jwtPartnerId;
+  const { isPartnerScope, defaultOwnerScope } = useDefaultOwnerScope();
   const [ownerScope, setOwnerScope] = useState<'organization' | 'partner'>(
-    isPartnerScope && (allOrgs || !currentOrgId) ? 'partner' : 'organization'
+    defaultOwnerScope
   );
 
   const fetchRule = useCallback(async () => {
@@ -52,7 +53,7 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
           return;
         }
         const errData = await response.json().catch(() => null);
-        throw new Error(extractApiError(errData, 'Failed to fetch alert rule'));
+        throw new Error(extractApiError(errData, t('alertRuleEditPage.failedToFetchAlertRule')));
       }
       const data = await response.json();
       const rule = data.rule ?? data.data ?? data;
@@ -70,11 +71,11 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
         autoResolve: rule.autoResolve ?? false
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('alertRuleEditPage.genericError'));
     } finally {
       setLoading(false);
     }
-  }, [ruleId, isNew]);
+  }, [ruleId, isNew, t]);
 
   const fetchSites = useCallback(async () => {
     try {
@@ -188,12 +189,12 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
           return;
         }
         const data = await response.json().catch(() => null);
-        throw new Error(extractApiError(data, 'Failed to save alert rule'));
+        throw new Error(extractApiError(data, t('alertRuleEditPage.failedToSaveAlertRule')));
       }
 
       void navigateTo('/alerts/rules');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('alertRuleEditPage.genericError'));
     } finally {
       setSaving(false);
     }
@@ -208,7 +209,7 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading alert rule...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('alertRuleEditPage.loadingAlertRule')}</p>
         </div>
       </div>
     );
@@ -223,7 +224,7 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
           onClick={fetchRule}
           className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
-          Try again
+          {t('alertRuleEditPage.tryAgain')}
         </button>
       </div>
     );
@@ -240,12 +241,12 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
         </a>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">
-            {isNew ? 'Create Alert Rule' : 'Edit Alert Rule'}
+            {isNew ? t('alertRuleEditPage.createAlertRule') : t('alertRuleEditPage.editAlertRule')}
           </h1>
           <p className="text-muted-foreground">
             {isNew
-              ? 'Define conditions that trigger alerts.'
-              : 'Modify the alert rule configuration.'}
+              ? t('alertRuleEditPage.defineConditionsThatTriggerAlerts')
+              : t('alertRuleEditPage.modifyTheAlertRuleConfiguration')}
           </p>
         </div>
       </div>
@@ -258,7 +259,7 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
 
       {isNew && isPartnerScope && (
         <fieldset className="space-y-2 rounded-md border p-4" data-testid="alert-rule-owner">
-          <legend className="px-1 text-xs font-medium uppercase text-muted-foreground">Scope</legend>
+          <legend className="px-1 text-xs font-medium uppercase text-muted-foreground">{t('alertRuleEditPage.scope')}</legend>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="radio"
@@ -268,7 +269,7 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
               onChange={() => setOwnerScope('partner')}
               data-testid="alert-rule-owner-partner"
             />
-            All organizations <span className="text-muted-foreground">(partner-wide — targets every device; each org's default notification routing applies)</span>
+            {t('alertRuleEditPage.allOrganizations')} <span className="text-muted-foreground">{t('alertRuleEditPage.partnerWideTargetsEveryDeviceEachOrg')}</span>
           </label>
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -279,7 +280,7 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
               onChange={() => setOwnerScope('organization')}
               data-testid="alert-rule-owner-org"
             />
-            This organization only
+            {t('alertRuleEditPage.thisOrganizationOnly')}
           </label>
         </fieldset>
       )}
@@ -288,7 +289,7 @@ export default function AlertRuleEditPage({ ruleId, isNew = false }: AlertRuleEd
         onSubmit={handleSubmit}
         onCancel={handleCancel}
         defaultValues={defaultValues}
-        submitLabel={isNew ? 'Create Rule' : 'Save Changes'}
+        submitLabel={isNew ? t('alertRuleEditPage.createRule') : t('common:actions.save')}
         loading={saving}
         sites={sites}
         groups={groups}

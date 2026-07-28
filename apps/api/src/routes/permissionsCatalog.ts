@@ -15,6 +15,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   scripts: 'Scripts',
   alerts: 'Alerts',
   tickets: 'Tickets',
+  ticket_mailbox: 'Ticket Mailbox (Microsoft 365)',
   time_entries: 'Time Entries',
   users: 'Users',
   organizations: 'Organizations',
@@ -30,7 +31,9 @@ const RESOURCE_LABELS: Record<string, string> = {
   contracts: 'Contracts',
   sso: 'Single Sign-On',
   topology: 'Network Topology',
-  vulnerabilities: 'Vulnerabilities'
+  vulnerabilities: 'Vulnerabilities',
+  ai_sessions: 'AI Sessions',
+  approvals: 'Approvals'
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -45,7 +48,9 @@ const ACTION_LABELS: Record<string, string> = {
   manage: 'Manage',
   send: 'Send',
   admin: 'Administer',
-  accept_risk: 'Accept Risk'
+  accept_risk: 'Accept Risk',
+  read_all: 'Read All',
+  decide: 'Decide'
 };
 
 // GET /permissions/catalog - Returns the authoritative list of assignable

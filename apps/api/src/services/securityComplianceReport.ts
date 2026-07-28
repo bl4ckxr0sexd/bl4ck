@@ -5,7 +5,6 @@ import {
   backupConfigs,
   c2cConnections,
   devicePatches,
-  deviceVulnerabilities,
   devices,
   dnsFilterIntegrations,
   elevationRequests,
@@ -21,13 +20,19 @@ import {
   s1Agents,
   securityPostureOrgSnapshots,
   securityStatus,
-  sites,
-  vulnerabilities
+  sites
 } from '../db/schema';
 import { securityCompliancePostureConfigSchema } from '../routes/reports/schemas';
-import type { PostureSummary, PostureProduct } from '@breeze/shared';
+import type { PostureSummary } from '@breeze/shared';
 import { canAccessSite, type UserPermissions } from './permissions';
 import { resolveSiteAllowedDeviceIds, type ReportResult } from './reportGenerationService';
+import {
+  buildSecurityProductInventory,
+  categoryForEndpointProvider,
+  prettySecurityProvider,
+  type SecurityProductEvidence
+} from './securityComplianceReportProducts';
+import { loadOpenVulnerabilityCounts } from './securityComplianceReportVulnerabilities';
 
 const pct = (num: number, denom: number): number =>
   denom === 0 ? 0 : Math.round((num / denom) * 100);
@@ -53,26 +58,11 @@ function protectionLabel(opts: {
 }): string {
   const parts = [...opts.managed];
   if (opts.nativeProvider && opts.nativeProvider !== 'other') {
-    parts.push(prettyProvider(opts.nativeProvider));
+    parts.push(prettySecurityProvider(opts.nativeProvider));
   }
   if (parts.length === 0) return 'None detected';
   const rtp = opts.rtp === true ? ' (RTP on)' : opts.rtp === false ? ' (RTP off)' : '';
   return parts.join(' + ') + rtp;
-}
-
-function prettyProvider(p: string): string {
-  const map: Record<string, string> = {
-    windows_defender: 'Defender',
-    sentinelone: 'SentinelOne',
-    crowdstrike: 'CrowdStrike',
-    bitdefender: 'Bitdefender',
-    sophos: 'Sophos',
-    malwarebytes: 'Malwarebytes',
-    eset: 'ESET',
-    kaspersky: 'Kaspersky',
-    elastic_defend: 'Elastic Defend'
-  };
-  return map[p] ?? p;
 }
 
 /**
@@ -101,7 +91,8 @@ function localAdminCount(summary: unknown): number | null {
 function emptySummary(
   orgRow: { id: string; name: string } | undefined,
   generatedAt: string,
-  includeCis = true
+  includeCis = true,
+  backupRequired = true
 ) {
   return {
     org: { id: orgRow?.id ?? '', name: orgRow?.name ?? 'Unknown' },
@@ -112,7 +103,9 @@ function emptySummary(
       anyAvCoveragePct: null,
       unprotectedCount: 0,
       encryptionPct: null,
+      encryptionUnknownCount: 0,
       firewallPct: null,
+      firewallUnknownCount: 0,
       patchCurrentPct: null,
       patchUnknownCount: 0,
       passwordComplexityPct: null,
@@ -124,6 +117,7 @@ function emptySummary(
       cisIncluded: includeCis,
       cisAssessedCount: 0,
       identityProviderConnected: false,
+      backupRequired,
       backupConfigured: false,
       backupEncrypted: null,
       dnsFilteringActive: false,
@@ -180,7 +174,7 @@ export async function generateSecurityCompliancePostureReport(
       rows: [],
       rowCount: 0,
       generatedAt,
-      summary: emptySummary(orgRow, generatedAt, cfg.includeCis)
+      summary: emptySummary(orgRow, generatedAt, cfg.includeCis, cfg.backupRequired)
     };
   }
 
@@ -209,7 +203,7 @@ export async function generateSecurityCompliancePostureReport(
       rows: [],
       rowCount: 0,
       generatedAt,
-      summary: emptySummary(orgRow, generatedAt, cfg.includeCis)
+      summary: emptySummary(orgRow, generatedAt, cfg.includeCis, cfg.backupRequired)
     };
   }
 
@@ -222,7 +216,8 @@ export async function generateSecurityCompliancePostureReport(
       encryptionStatus: securityStatus.encryptionStatus,
       firewallEnabled: securityStatus.firewallEnabled,
       passwordPolicySummary: securityStatus.passwordPolicySummary,
-      localAdminSummary: securityStatus.localAdminSummary
+      localAdminSummary: securityStatus.localAdminSummary,
+      updatedAt: securityStatus.updatedAt
     })
     .from(securityStatus)
     .where(and(eq(securityStatus.orgId, orgId), inArray(securityStatus.deviceId, deviceIds)));
@@ -258,24 +253,7 @@ export async function generateSecurityCompliancePostureReport(
     pendingByDevice.set(p.deviceId, e);
   }
 
-  const vulnRows = await db
-    .select({ deviceId: deviceVulnerabilities.deviceId, severity: vulnerabilities.severity })
-    .from(deviceVulnerabilities)
-    .innerJoin(vulnerabilities, eq(deviceVulnerabilities.vulnerabilityId, vulnerabilities.id))
-    .where(
-      and(
-        eq(deviceVulnerabilities.orgId, orgId),
-        inArray(deviceVulnerabilities.deviceId, deviceIds),
-        eq(deviceVulnerabilities.status, 'open')
-      )
-    );
-  const vulnByDevice = new Map<string, { critical: number; high: number }>();
-  for (const v of vulnRows) {
-    const e = vulnByDevice.get(v.deviceId) ?? { critical: 0, high: 0 };
-    if (v.severity === 'critical') e.critical += 1;
-    else if (v.severity === 'high') e.high += 1;
-    vulnByDevice.set(v.deviceId, e);
-  }
+  const vulnByDevice = await loadOpenVulnerabilityCounts(deviceIds);
 
   const [dns] = await db
     .select({ isActive: dnsFilterIntegrations.isActive, provider: dnsFilterIntegrations.provider, lastSyncStatus: dnsFilterIntegrations.lastSyncStatus })
@@ -407,12 +385,19 @@ export async function generateSecurityCompliancePostureReport(
     if (isManaged || hasNativeAv) anyAv += 1;
     if (!protectedDevice) unprotected += 1;
 
+    // Firewall/encryption are live device states that stop updating when a device
+    // goes offline, so a row older than the cutoff is treated as unknown rather
+    // than counted as a current pass/fail. (updatedAt is NOT NULL in schema; a
+    // null age can only be a legacy/edge row, which we fail-open as fresh.)
+    const ssAgeDays = ss ? daysAgo(ss.updatedAt) : null;
+    const ssFresh = Boolean(ss) && (ssAgeDays == null || ssAgeDays <= cfg.maxSecurityStatusAgeDays);
+
     const enc = ss?.encryptionStatus ?? 'unknown';
-    if (ss && enc !== 'unknown') {
+    if (ssFresh && enc !== 'unknown') {
       encAssessed += 1;
       if (enc === 'encrypted') encrypted += 1;
     }
-    if (ss && ss.firewallEnabled != null) {
+    if (ss && ssFresh && ss.firewallEnabled != null) {
       fwAssessed += 1;
       if (ss.firewallEnabled === true) firewall += 1;
     }
@@ -453,8 +438,8 @@ export async function generateSecurityCompliancePostureReport(
       protectionManaged: isManaged,
       realTimeProtection: rtp,
       avDefinitionsAgeDays: avAge,
-      encryption: ss ? enc : 'no data',
-      firewall: ss ? ss.firewallEnabled : null,
+      encryption: ssFresh ? enc : 'no data',
+      firewall: ss && ssFresh ? ss.firewallEnabled : null,
       localAdmins: admins,
       patchAssessed: patchScannedDevices.has(d.id),
       pendingPatches: pend.total,
@@ -473,14 +458,41 @@ export async function generateSecurityCompliancePostureReport(
   const dnsSyncStatus = dns?.lastSyncStatus ?? null;
   const dnsActive = Boolean(dns) && dnsSyncStatus !== 'error';
 
-  const securityProducts: PostureProduct[] = [];
-  if (huntressDevices.size > 0) securityProducts.push({ product: 'Huntress', category: 'mdr', active: true, lastSyncStatus: null, deviceCoverage: huntressDevices.size });
-  if (s1Devices.size > 0) securityProducts.push({ product: 'SentinelOne', category: 'edr', active: true, lastSyncStatus: null, deviceCoverage: s1Devices.size });
-  if (dns) securityProducts.push({ product: prettyDnsProvider(dns.provider), category: 'dns_filtering', active: dnsActive, lastSyncStatus: dnsSyncStatus, deviceCoverage: null });
-  if (backup) securityProducts.push({ product: `Backup (${backup.provider})`, category: 'backup', active: true, lastSyncStatus: null, deviceCoverage: null });
-  if (c2c) securityProducts.push({ product: `SaaS backup (${c2c.provider})`, category: 'backup', active: true, lastSyncStatus: null, deviceCoverage: null });
-  if (m365) securityProducts.push({ product: 'Microsoft 365', category: 'identity', active: true, lastSyncStatus: null, deviceCoverage: null });
-  if (google) securityProducts.push({ product: 'Google Workspace', category: 'identity', active: true, lastSyncStatus: null, deviceCoverage: null });
+  const productEvidence: SecurityProductEvidence[] = [];
+  if (huntressDevices.size > 0) {
+    productEvidence.push({
+      product: 'Huntress',
+      category: 'mdr',
+      active: true,
+      lastSyncStatus: null,
+      deviceIds: huntressDevices
+    });
+  }
+  if (s1Devices.size > 0) {
+    productEvidence.push({
+      product: 'SentinelOne',
+      category: 'edr',
+      active: true,
+      lastSyncStatus: null,
+      deviceIds: s1Devices
+    });
+  }
+  for (const row of ssRows) {
+    if (row.provider === 'other') continue;
+    productEvidence.push({
+      product: prettySecurityProvider(row.provider),
+      category: categoryForEndpointProvider(row.provider),
+      active: row.realTimeProtection === true,
+      lastSyncStatus: null,
+      deviceIds: [row.deviceId]
+    });
+  }
+  if (dns) productEvidence.push({ product: prettyDnsProvider(dns.provider), category: 'dns_filtering', active: dnsActive, lastSyncStatus: dnsSyncStatus });
+  if (backup) productEvidence.push({ product: `Backup (${backup.provider})`, category: 'backup', active: true, lastSyncStatus: null });
+  if (c2c) productEvidence.push({ product: `SaaS backup (${c2c.provider})`, category: 'backup', active: true, lastSyncStatus: null });
+  if (m365) productEvidence.push({ product: 'Microsoft 365', category: 'identity', active: true, lastSyncStatus: null });
+  if (google) productEvidence.push({ product: 'Google Workspace', category: 'identity', active: true, lastSyncStatus: null });
+  const securityProducts = buildSecurityProductInventory(productEvidence);
 
   const summary = {
       org: { id: orgRow?.id ?? orgId, name: orgRow?.name ?? 'Unknown' },
@@ -491,7 +503,9 @@ export async function generateSecurityCompliancePostureReport(
         anyAvCoveragePct: pctOrNull(anyAv, deviceCount),
         unprotectedCount: unprotected,
         encryptionPct: pctOrNull(encrypted, encAssessed),
+        encryptionUnknownCount: deviceCount - encAssessed,
         firewallPct: pctOrNull(firewall, fwAssessed),
+        firewallUnknownCount: deviceCount - fwAssessed,
         patchCurrentPct: pctOrNull(patchCurrent, patchScanned),
         patchUnknownCount: deviceCount - patchScanned,
         passwordComplexityPct: pctOrNull(pwPass, pwAssessed),
@@ -505,6 +519,7 @@ export async function generateSecurityCompliancePostureReport(
         // Proves an identity provider is CONNECTED, not that MFA is enforced.
         // Real MFA enforcement is privilegedAccess.mfaStepUpEnforced.
         identityProviderConnected: Boolean(m365 || google),
+        backupRequired: cfg.backupRequired,
         backupConfigured: Boolean(backup || c2c),
         backupEncrypted: backup ? Boolean(backup.encryption) : null,
         dnsFilteringActive: dnsActive,

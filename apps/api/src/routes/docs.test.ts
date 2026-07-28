@@ -14,7 +14,6 @@ vi.mock('../services', () => ({
   }),
   verifyToken: vi.fn(),
   generateMFASecret: vi.fn().mockReturnValue('MFASECRET123'),
-  verifyMFAToken: vi.fn(),
   generateOTPAuthURL: vi.fn().mockReturnValue('otpauth://totp/...'),
   generateQRCode: vi.fn().mockResolvedValue('data:image/png;base64,...'),
   generateRecoveryCodes: vi.fn().mockReturnValue(['CODE-0001', 'CODE-0002']),
@@ -103,7 +102,7 @@ describe('docs routes', () => {
       expect(res.headers.get('content-type')).toContain('text/html');
       const body = await res.text();
       expect(body).toContain('SwaggerUIBundle');
-      expect(body).toContain('Breeze RMM API');
+      expect(body).toContain('BL4CK RMM API');
     });
   });
 

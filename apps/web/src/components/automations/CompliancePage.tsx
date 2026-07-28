@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft } from 'lucide-react';
 import ComplianceDashboard, {
   type DeviceCompliance,
@@ -7,12 +8,17 @@ import ComplianceDashboard, {
 } from './ComplianceDashboard';
 import { fetchWithAuth } from '../../stores/auth';
 import { navigateTo } from '@/lib/navigation';
+// Initializes the shared i18next singleton. Islands hydrate independently, so
+// an island that hydrates before whichever other island happens to pull i18n in
+// would otherwise render raw keys (and mismatch the SSR markup).
+import '../../lib/i18n';
 
 type CompliancePageProps = {
   policyId?: string;
 };
 
 export default function CompliancePage({ policyId }: CompliancePageProps) {
+  const { t } = useTranslation('scripts');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [overallCompliance, setOverallCompliance] = useState({
@@ -37,7 +43,7 @@ export default function CompliancePage({ policyId }: CompliancePageProps) {
 
       const response = await fetchWithAuth(url);
       if (!response.ok) {
-        throw new Error('Failed to fetch compliance data');
+        throw new Error(t('compliancePage.errors.fetch'));
       }
       const data = await response.json();
 
@@ -52,11 +58,11 @@ export default function CompliancePage({ policyId }: CompliancePageProps) {
       setNonCompliantDevices(data.nonCompliantDevices ?? []);
       setPolicyName(data.policyName);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('compliancePage.errors.generic'));
     } finally {
       setLoading(false);
     }
-  }, [policyId]);
+  }, [policyId, t]);
 
   useEffect(() => {
     fetchComplianceData();
@@ -75,7 +81,7 @@ export default function CompliancePage({ policyId }: CompliancePageProps) {
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading compliance data...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('compliancePage.loading')}</p>
         </div>
       </div>
     );
@@ -90,7 +96,7 @@ export default function CompliancePage({ policyId }: CompliancePageProps) {
           onClick={fetchComplianceData}
           className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
-          Try again
+          {t('common:actions.retry')}
         </button>
       </div>
     );
@@ -107,12 +113,14 @@ export default function CompliancePage({ policyId }: CompliancePageProps) {
         </a>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">
-            {policyId ? `Compliance: ${policyName ?? 'Policy'}` : 'Compliance Dashboard'}
+            {policyId
+              ? t('compliancePage.policyTitle', { policy: policyName ?? t('compliancePage.policyFallback') })
+              : t('compliancePage.title')}
           </h1>
           <p className="text-muted-foreground">
             {policyId
-              ? 'View compliance status for this policy.'
-              : 'Overview of policy compliance across all devices.'}
+              ? t('compliancePage.description.policy')
+              : t('compliancePage.description.overview')}
           </p>
         </div>
       </div>

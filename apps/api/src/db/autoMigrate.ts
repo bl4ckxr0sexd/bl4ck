@@ -2,16 +2,75 @@
 // entrypoint (db:migrate) that, via seed, gates on NODE_ENV. See #917 (L-6).
 import '../config/normalizeNodeEnv';
 import { createHash } from 'node:crypto';
+import { readdirSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
+import { discoverExtensions } from '../extensions/discovery';
 import { ensureAppRole } from './ensureAppRole';
 import { seed } from './seed';
 
 const MIGRATION_FILE_PATTERN = /^\d{4}-.*\.sql$/;
 // IMPORTANT: MIGRATION_TABLE is a hardcoded constant — never accept user input.
-const MIGRATION_TABLE = 'breeze_migrations';
+// Exported so the extension migrator writes namespaced rows into the SAME
+// ledger (`<extension>/<file>`) through the same table name, never a copy.
+export const MIGRATION_TABLE = 'breeze_migrations';
+
+export interface PlannedMigration {
+  ledgerName: string;
+  filePath: string;
+}
+
+/** Core filenames (already discovered+sorted) + extension files, extensions last. */
+export function planMigrations(
+  coreFilenames: string[],
+  extensionsRoot?: string,
+): PlannedMigration[] {
+  const core: PlannedMigration[] = coreFilenames.map((filename) => ({
+    ledgerName: filename,
+    filePath: path.join(resolveMigrationsDir(), filename),
+  }));
+  const extensions: PlannedMigration[] = [];
+
+  for (const extension of discoverExtensions(extensionsRoot)) {
+    if (!extension.migrationsDir) continue;
+    const files = readdirSync(extension.migrationsDir)
+      .filter((name) => MIGRATION_FILE_PATTERN.test(name))
+      .sort((a, b) => a.localeCompare(b));
+    for (const filename of files) {
+      extensions.push({
+        ledgerName: `${extension.name}/${filename}`,
+        filePath: path.join(extension.migrationsDir, filename),
+      });
+    }
+  }
+
+  return [...core, ...extensions];
+}
+
+/** Split ledger rows into checksum-verifiable vs skip (absent extension). */
+export function partitionLedgerRows(
+  ledgerFilenames: string[],
+  extensionsRoot?: string,
+): { verify: string[]; skip: string[] } {
+  const presentExtensions = new Set(
+    discoverExtensions(extensionsRoot).map((extension) => extension.name),
+  );
+  const verify: string[] = [];
+  const skip: string[] = [];
+
+  for (const filename of ledgerFilenames) {
+    const slash = filename.indexOf('/');
+    if (slash === -1 || presentExtensions.has(filename.slice(0, slash))) {
+      verify.push(filename);
+    } else {
+      skip.push(filename);
+    }
+  }
+
+  return { verify, skip };
+}
 
 /**
  * Compute a SHA-256 hex hash of SQL content for checksum tracking.
@@ -62,6 +121,65 @@ export const CHECKSUM_RECONCILIATIONS: Record<
     from: 'e7047df7bf793525af48e8bd0f6ce9eadee38b8fdb10227bf7b387595fb44384',
     to: '83cf9d01bf2030bb1cf063c4624c3847d9eac71ce90ae4d511228a98d14eaca6',
     reason: '#1936: guard patch_approvals org_id backfill for already partner-scoped reruns; note why step-3 dedup needs no org_id guard',
+  },
+  '2026-07-16-td-synnex-sftp-price-file.sql': {
+    from: '8e08c23f4e1dfc6ceeb8c4624d9536c037f4062d287598b2ae106c3529d5dc08',
+    to: 'dc7be5f3209a46f4120f653eb4575ec5b64a6a23126e937a412afad7f26efc6a',
+    reason: '0.95.1: GRANT/REVOKE CREATE ON SCHEMA public around ALTER FUNCTION ... OWNER TO breeze_search so a NOSUPERUSER migrator (DO managed doadmin) can complete the owner change. v0.95.0 succeeded only on superuser DBs; heal those (already applied) instead of crashing their upgrade.',
+  },
+  // #2622 (v0.97.1) rewrote 8 shipped v0.97.0 migrations to move custom-GUC
+  // elevation (`SET "breeze.scope" = 'system'`) out of SECURITY DEFINER function
+  // ATTRIBUTES and into in-body `set_config()` save/restore, because a NOSUPERUSER
+  // migrator (DO managed doadmin) cannot set a dotted GUC via a function attribute
+  // (42501). #2622 edited them in place on the premise that they were unrecorded on
+  // every prod DB — true only for the hosted droplets, where v0.97.0 crash-looped
+  // before recording them. A SELF-HOSTER on a SUPERUSER Postgres (stock compose
+  // `postgres` role) applied all 8 successfully under v0.97.0 and recorded the
+  // ORIGINAL checksums, so their v0.97.1 upgrade crashes on the first mismatch
+  // (2026-07-27-a). The heal only updates the recorded checksum — it never re-runs
+  // the file — and the functions already installed from the original v0.97.0 files
+  // are correct on a superuser DB (the attribute form works there); the rewrite only
+  // matters for NOSUPERUSER fresh installs. So healing from->to is safe for any DB
+  // that recorded the original. Same class as #994 (2026-05-25-b/c). See v0.97.2.
+  '2026-07-27-a-feature-policy-reference-ownership.sql': {
+    from: '9952e3f19bef5dd3b7c220da12b78eeb2913b8ff104ccff36d2b296e30ded5d1',
+    to: '457a7b60e3ed3cfd07129555884586571b48dabc8b0faed8d8d00c7a9aadbe4d',
+    reason: '#2622 (v0.97.1): move breeze.scope elevation from function attribute to in-body set_config wrapper/_impl split; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
+  },
+  '2026-07-27-c-backup-feature-settings-parity.sql': {
+    from: '580c79814c1b052b1e0c754734f5443d8301754d4166f711a8e90a4537d18d1f',
+    to: 'ac2bfad2139259d07413a06d868404c9fbf4a48c95fc6d7293fe924422fc9f9a',
+    reason: '#2622 (v0.97.1): move breeze.scope elevation from function attribute to in-body set_config; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
+  },
+  '2026-07-29-serialize-config-policy-assignment-integrity.sql': {
+    from: '1f86a8d5cfb959b8a05d5cb024a8ea9469ed4f1415c9fd1cc8ab4531b4da9dad',
+    to: '764823aaad4d70f79aba2a825ad03312e5f67298fa3b8b90c254c60f39231dbc',
+    reason: '#2622 (v0.97.1): move breeze.scope elevation from function attribute to in-body set_config; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
+  },
+  '2026-07-30-serialize-bulk-config-assignment-target-moves.sql': {
+    from: 'b2cdbe2abbcae223383d8b08441827d577f029324a49c71b8772b60dbb4aecce',
+    to: 'f29f46d509fc61fe189e705b71cbe1990f4782268c59213c0fbe0e531edda52b',
+    reason: '#2622 (v0.97.1): move breeze.scope elevation from function attribute to in-body set_config; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
+  },
+  '2026-08-01-a-serialize-feature-policy-references.sql': {
+    from: '59155c400eb121d928410921c2ba9398292c6ef5d9281d448583181b94604517',
+    to: '33ce95085962995061b610a2b136922f00cba952520c8f2c8c2c6a0e88459da0',
+    reason: '#2622 (v0.97.1): move breeze.scope elevation from function attribute to in-body set_config; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
+  },
+  '2026-08-01-b-serialize-backup-policy-references.sql': {
+    from: '1521cebd097f33636076c681f8f2ffaca717eac67f3ed109e8156038de5846fc',
+    to: '38db1a87a05ff1b48e66cc1e5882e12abdcbd5312aaf7abfc4a6a484c410f77f',
+    reason: '#2622 (v0.97.1): move breeze.scope elevation from function attribute to in-body set_config; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
+  },
+  '2026-08-01-c-serialize-onedrive-policy-references.sql': {
+    from: '39f7be62ec5711780aea7fcd9d55b5b5078fd2b1c34e0f60258b559fadb50405',
+    to: '7b719a186561f6fb2ece633fd974547dcc5bde995d4867e0ce905e964aae7658',
+    reason: '#2622 (v0.97.1): move breeze.scope elevation from function attribute to in-body set_config; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
+  },
+  '2026-08-01-d-harden-feature-reference-serialization.sql': {
+    from: '9183e3acd9c145b76f1bcdcb25f7982826aafe5465fb5ee126fe35df03dfd0e8',
+    to: '6be4c7fa5b808e4ca51f63824f6d5b286f0b8dfc081ed8a43cc33f731fdb6148',
+    reason: '#2622 (v0.97.1): advisory-lock gate function had breeze.scope attributes dropped outright; superuser DBs applied the original v0.97.0 file, heal their recorded checksum instead of crashing the upgrade.',
   },
 };
 
@@ -188,30 +306,6 @@ export function splitSqlStatements(content: string): string[] {
 }
 
 /**
- * Build a connection string for the unprivileged `breeze_app` role by taking
- * an admin DATABASE_URL and swapping in the app user+password. Returns null
- * if no password is available or the admin URL can't be parsed — callers
- * should treat null as "cannot auto-configure, require DATABASE_URL_APP".
- *
- * Exported for unit testing.
- */
-export function deriveAppConnectionString(
-  adminUrl: string,
-  appUser: string,
-  appPassword: string | undefined,
-): string | null {
-  if (!appPassword) return null;
-  try {
-    const url = new URL(adminUrl);
-    url.username = appUser;
-    url.password = appPassword;
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Determine the database state based on whether key tables exist.
  *
  * - `fresh`  — no `users` table → run every migration from scratch
@@ -274,8 +368,12 @@ async function loadApplied(client: postgres.Sql): Promise<Map<string, string>> {
   return new Map(rows.map((row) => [row.filename, row.checksum]));
 }
 
-/** Record a migration as applied. */
-async function recordMigration(
+/**
+ * Record a migration as applied. Exported so the extension migrator inserts its
+ * namespaced ledger row (`<extension>/<file>`) through the exact same statement
+ * and table as the core boot loop — no duplicated INSERT logic.
+ */
+export async function recordMigration(
   sql: postgres.Sql | postgres.TransactionSql,
   filename: string,
   checksum: string,
@@ -330,6 +428,8 @@ export async function autoMigrate(): Promise<void> {
       console.log('[auto-migrate] No migration files found, skipping');
       return;
     }
+
+    const migrationPlan = planMigrations(allFiles);
 
     // ── 4. Load already-applied checksums ────────────────────────────────
     const applied = await loadApplied(client);
@@ -388,12 +488,22 @@ export async function autoMigrate(): Promise<void> {
     }
 
     // ── 6. Validate checksums for already-applied migrations ─────────────
-    for (const filename of allFiles) {
+    const { verify: ledgerRowsToVerify, skip: ledgerRowsToSkip } = partitionLedgerRows([
+      ...applied.keys(),
+    ]);
+    for (const filename of ledgerRowsToSkip) {
+      console.warn(
+        `[auto-migrate] skipping checksum for ${filename} — extension not present`,
+      );
+    }
+    const verifiableLedgerRows = new Set(ledgerRowsToVerify);
+    for (const migration of migrationPlan) {
+      const filename = migration.ledgerName;
+      if (!verifiableLedgerRows.has(filename)) continue;
       const priorChecksum = applied.get(filename);
       if (!priorChecksum) continue;
 
-      const sqlPath = path.join(migrationsDir, filename);
-      const content = await readFile(sqlPath, 'utf8');
+      const content = await readFile(migration.filePath, 'utf8');
       const currentChecksum = hashSql(content);
 
       if (priorChecksum !== currentChecksum) {
@@ -434,11 +544,11 @@ export async function autoMigrate(): Promise<void> {
 
     // ── 7. Apply pending migrations ──────────────────────────────────────
     let appliedCount = 0;
-    for (const filename of allFiles) {
+    for (const migration of migrationPlan) {
+      const filename = migration.ledgerName;
       if (applied.has(filename)) continue;
 
-      const sqlPath = path.join(migrationsDir, filename);
-      const content = await readFile(sqlPath, 'utf8');
+      const content = await readFile(migration.filePath, 'utf8');
       const checksum = hashSql(content);
 
       // Migrations marked with `-- @no-transaction` at the top run OUTSIDE
@@ -497,54 +607,6 @@ export async function autoMigrate(): Promise<void> {
     // ── 7b. Re-run ensureAppRole so any tables created in step 7 receive
     //        the standard privilege grants. Idempotent.
     await ensureAppRole();
-
-    // Resolve the app connection string. Preference order:
-    //   1. DATABASE_URL_APP (explicit, operator-provided)
-    //   2. Derived from DATABASE_URL by swapping user → breeze_app and
-    //      password → BREEZE_APP_DB_PASSWORD / POSTGRES_PASSWORD
-    //   3. DATABASE_URL itself — but the probe below will then hard-fail
-    //      because that's the superuser connection
-    const explicitAppUrl = process.env.DATABASE_URL_APP;
-    const derivedAppUrl = explicitAppUrl
-      ? null
-      : deriveAppConnectionString(
-          connectionString,
-          'breeze_app',
-          process.env.BREEZE_APP_DB_PASSWORD || process.env.POSTGRES_PASSWORD,
-        );
-    if (!explicitAppUrl && derivedAppUrl) {
-      console.log(
-        '[auto-migrate] DATABASE_URL_APP not set — derived unprivileged app connection from DATABASE_URL',
-      );
-    }
-    const appConnString = explicitAppUrl || derivedAppUrl || connectionString;
-
-    const appClient = postgres(appConnString, { max: 1 });
-    try {
-      const rows = await appClient`
-        SELECT current_user AS "user", rolsuper, rolbypassrls
-        FROM pg_roles
-        WHERE rolname = current_user
-      `;
-      const me = rows[0];
-      if (!me) {
-        throw new Error(
-          'App DB role verification returned no row for current_user — cannot confirm RLS enforcement. Refusing to start.',
-        );
-      }
-      console.log(
-        `[auto-migrate] App DB user: ${me.user} (super=${me.rolsuper}, bypassrls=${me.rolbypassrls})`,
-      );
-      if (me.rolbypassrls || me.rolsuper) {
-        throw new Error(
-          `App DB user "${me.user}" has BYPASSRLS or SUPERUSER — RLS policies would not be enforced. `
-            + 'Refusing to start. Either set DATABASE_URL_APP to a non-superuser connection string, '
-            + 'or set BREEZE_APP_DB_PASSWORD / POSTGRES_PASSWORD so the app URL can be derived automatically.',
-        );
-      }
-    } finally {
-      await appClient.end();
-    }
 
     // ── 8. Auto-seed if no users exist ───────────────────────────────────
     const userCheck = await client`SELECT id FROM users LIMIT 1`;

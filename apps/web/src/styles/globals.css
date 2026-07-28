@@ -65,11 +65,14 @@
 
   --color-warning: hsl(var(--warning));
   --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-warning-strong: hsl(var(--warning-strong));
 
   /* web-only vs portal: the info color pair (portal has no --color-info).
      The sans family is intentionally NOT mapped here — see the NB below. */
   --color-info: hsl(var(--info));
   --color-info-foreground: hsl(var(--info-foreground));
+
+  --color-chart-neutral: hsl(var(--chart-neutral));
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -34263,10 +34266,23 @@
     --success-foreground: 0 0% 100%;
     --warning: 36 88% 50%;
     --warning-foreground: 28 60% 16%;
+    /* Non-text warning INDICATOR (rings, outlines): the bright --warning is only
+       ~2.3:1 against a light card — below the 3:1 non-text minimum — so thin
+       affordances like the unsaved-edit ring use this darker amber (~4.6:1). */
+    --warning-strong: 30 85% 38%;
     /* Info — a clear sky-blue, distinct from the slate-blue primary so an
        "info"/"updating" state never reads as a primary action. */
     --info: 205 85% 38%;
     --info-foreground: 0 0% 100%;
+
+    /* Chart neutral — the "inactive / not yet" segment in status charts
+       (offline devices, pending patches). Deliberately low-chroma and far
+       from --success in lightness so the green↔gray adjacency stays
+       separable under color-vision deficiency; muted-foreground sits too
+       close to success in lightness to serve here. Chart segments using it
+       must always carry visible labels + counts (it's below 3:1 against
+       the card by design, like a meter track). */
+    --chart-neutral: 220 12% 72%;
 
     /* Warm borders and inputs */
     --border: 220 16% 90%;
@@ -34307,8 +34323,15 @@
     --success-foreground: 152 50% 8%;
     --warning: 40 90% 52%;
     --warning-foreground: 28 60% 10%;
+    /* Bright amber already clears 3:1 on dark cards — indicator == warning here. */
+    --warning-strong: 40 90% 52%;
     --info: 205 80% 62%;
     --info-foreground: 210 60% 10%;
+
+    /* Chart neutral — darker than the bright dark-mode success so the
+       green↔gray pair separates by lightness under CVD (same rationale and
+       labeling requirement as the light-mode value above). */
+    --chart-neutral: 224 14% 34%;
 
     /* Warm dark borders */
     --border: 224 18% 18%;

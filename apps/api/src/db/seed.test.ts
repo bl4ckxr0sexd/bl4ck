@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PERMISSION_GRANTS } from '@breeze/shared';
 import { resolveBootstrapAdminConfig, DEFAULT_PERMISSIONS, SYSTEM_ROLES } from './seed';
 
 describe('resolveBootstrapAdminConfig', () => {
@@ -119,6 +120,25 @@ describe('SYSTEM_ROLES ⊆ DEFAULT_PERMISSIONS', () => {
   });
 });
 
+describe('ticket mailbox permissions', () => {
+  it('registers and seeds the ticket mailbox permissions', () => {
+    expect(PERMISSION_GRANTS.TICKET_MAILBOX_READ).toEqual({ resource: 'ticket_mailbox', action: 'read' });
+    expect(PERMISSION_GRANTS.TICKET_MAILBOX_ADMIN).toEqual({ resource: 'ticket_mailbox', action: 'admin' });
+    expect(DEFAULT_PERMISSIONS).toEqual(expect.arrayContaining([
+      expect.objectContaining({ resource: 'ticket_mailbox', action: 'read' }),
+      expect.objectContaining({ resource: 'ticket_mailbox', action: 'admin' }),
+    ]));
+  });
+
+  it('grants mailbox read to partner technicians/viewers but not mailbox admin', () => {
+    for (const roleName of ['Partner Technician', 'Partner Viewer']) {
+      const role = SYSTEM_ROLES.find((candidate) => candidate.name === roleName)!;
+      expect(role.permissions).toContain('ticket_mailbox:read');
+      expect(role.permissions).not.toContain('ticket_mailbox:admin');
+    }
+  });
+});
+
 describe('vulnerability risk-acceptance RBAC', () => {
   const byName = (name: string) => SYSTEM_ROLES.find((r) => r.name === name);
 
@@ -156,6 +176,40 @@ describe('vulnerability risk-acceptance RBAC', () => {
       'organizations:read',
       'vulnerabilities:accept_risk',
     ]);
+  });
+});
+
+describe('approvals:decide permission (action intents approval layer, §4)', () => {
+  const byName = (name: string) => SYSTEM_ROLES.find((r) => r.name === name);
+
+  it('defines approvals:decide in DEFAULT_PERMISSIONS', () => {
+    expect(
+      DEFAULT_PERMISSIONS.some(
+        (p) => p.resource === 'approvals' && p.action === 'decide',
+      ),
+    ).toBe(true);
+  });
+
+  it('registers approvals:decide in the shared PERMISSION_GRANTS registry', () => {
+    expect(PERMISSION_GRANTS.APPROVALS_DECIDE).toEqual({ resource: 'approvals', action: 'decide' });
+  });
+
+  it('grants approvals:decide to Org Admin', () => {
+    expect(byName('Org Admin')?.permissions).toContain('approvals:decide');
+  });
+
+  it('does NOT grant approvals:decide to Org Technician', () => {
+    expect(byName('Org Technician')?.permissions).not.toContain('approvals:decide');
+  });
+
+  it('does NOT grant approvals:decide to Org Viewer', () => {
+    expect(byName('Org Viewer')?.permissions).not.toContain('approvals:decide');
+  });
+
+  it('Partner Admin covers approvals:decide via the wildcard grant (does not need a redundant literal entry)', () => {
+    const role = byName('Partner Admin');
+    expect(role?.permissions).toContain('*:*');
+    expect(role?.permissions).not.toContain('approvals:decide');
   });
 });
 

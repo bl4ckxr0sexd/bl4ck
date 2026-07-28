@@ -11,7 +11,7 @@
  * is additionally filtered to `isActive` rows.
  */
 
-import { and, asc, eq, ilike } from 'drizzle-orm';
+import { and, asc, eq, ilike, or, sql } from 'drizzle-orm';
 import type {
   BundleComponentInput,
   CreateCatalogItemInput,
@@ -33,6 +33,22 @@ import {
   updateCatalogItem,
   type CatalogActor
 } from './catalogService';
+import { missingParamsJson, zodErrorToJson } from './aiToolValidation';
+import { lookupEcExpressProducts, TdSynnexEcExpressError, type TdSynnexEcProduct } from './tdSynnexEcExpress';
+
+/**
+ * Params each manage_catalog action requires, presence-checked BEFORE any
+ * `String(...)` coercion so a missing id can't become the literal string
+ * "undefined" and die downstream as an opaque uuid/DB 500 (#2362 sweep).
+ */
+const MANAGE_CATALOG_REQUIRED: Record<string, readonly string[]> = {
+  create_item: ['item'],
+  update_item: ['catalogId', 'item'],
+  archive_item: ['catalogId'],
+  set_org_price: ['catalogId', 'orgId', 'override'],
+  remove_org_price: ['catalogId', 'orgId'],
+  set_bundle_components: ['catalogId', 'components'],
+};
 
 function actorFromAuth(auth: AuthContext): CatalogActor {
   return {
@@ -49,6 +65,135 @@ function serviceErrorToJson(err: unknown): string | null {
   return null;
 }
 
+type CatalogItemRow = typeof catalogItems.$inferSelect;
+
+/**
+ * Top-level catalog columns exposed to AI/MCP output. This is an ALLOWLIST, not
+ * a blocklist: internal IDs (`partnerId`, `createdBy`) and any future column
+ * added to `catalog_items` are dropped by construction — never leaked by
+ * forgetting to strip them. `costBasis`/`markupPercent` are further redacted for
+ * org-scoped callers (see AI_ITEM_ORG_REDACTED_FIELDS).
+ */
+const AI_ITEM_FIELDS = [
+  'id',
+  'name',
+  'itemType',
+  'sku',
+  'description',
+  'billingType',
+  'billingFrequency',
+  'commitmentTermMonths',
+  'unitPrice',
+  'costBasis',
+  'markupPercent',
+  'unitOfMeasure',
+  'taxable',
+  'taxCategory',
+  'isBundle',
+  'isActive',
+  'createdAt',
+  'updatedAt',
+] as const satisfies readonly (keyof CatalogItemRow)[];
+
+/**
+ * Normalized distributor sub-fields kept from `attributes.distributor`. Also an
+ * allowlist: the verbatim `raw` provider payload — and any future/unknown
+ * distributor sub-field an importer might add — are dropped by construction.
+ * `cost` is additionally redacted for org-scoped callers.
+ */
+const AI_DISTRIBUTOR_FIELDS = [
+  'cost',
+  'msrp',
+  'warehouses',
+  'mfgPartNo',
+  'synnexSku',
+  'status',
+  'importedAt',
+] as const;
+
+/** Top-level cost/margin fields hidden from org-scoped (customer) callers. */
+const AI_ITEM_ORG_REDACTED_FIELDS = ['costBasis', 'markupPercent'] as const;
+
+function pickAllowed(src: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key in src) out[key] = src[key];
+  }
+  return out;
+}
+
+/**
+ * Shape a catalog row for AI/MCP output using explicit allowlists.
+ *
+ * - Top-level fields are projected via AI_ITEM_FIELDS, so internal IDs and any
+ *   future column can never leak by omission (the reason this replaced the prior
+ *   blocklist that named individual fields to strip).
+ * - `attributes` is free-form jsonb: partner-authored keys pass through, but the
+ *   `distributor` sub-object is rebuilt from AI_DISTRIBUTOR_FIELDS so the raw
+ *   import blob and any future distributor sub-field are dropped.
+ * - Cost/margin fields (`costBasis`, `markupPercent`, `distributor.cost`) are
+ *   redacted for org-scoped callers. The catalog is partner-axis (RLS shape 3)
+ *   and org-scoped tokens carry the owning org's partnerId (so they pass the
+ *   partnerId gate) but get an RLS context without partner access, so the
+ *   partner-scoped SELECT returns 0 rows today — effectively partner-only. This
+ *   redaction is defense-in-depth so a future system-context execution path can
+ *   never leak distributor cost / margin to a customer (org) token.
+ */
+function sanitizeCatalogItemForAi(item: CatalogItemRow, auth: AuthContext): Record<string, unknown> {
+  const out = pickAllowed(item as unknown as Record<string, unknown>, AI_ITEM_FIELDS);
+
+  const attrs = item.attributes;
+  if (attrs && typeof attrs === 'object' && !Array.isArray(attrs)) {
+    const attrsCopy: Record<string, unknown> = { ...(attrs as Record<string, unknown>) };
+    const dist = attrsCopy.distributor;
+    if (dist && typeof dist === 'object' && !Array.isArray(dist)) {
+      attrsCopy.distributor = pickAllowed(dist as Record<string, unknown>, AI_DISTRIBUTOR_FIELDS);
+    }
+    out.attributes = attrsCopy;
+  }
+
+  if (auth.scope === 'organization') {
+    for (const field of AI_ITEM_ORG_REDACTED_FIELDS) delete out[field];
+    const outAttrs = out.attributes;
+    if (outAttrs && typeof outAttrs === 'object' && !Array.isArray(outAttrs)) {
+      const dist = (outAttrs as Record<string, unknown>).distributor;
+      if (dist && typeof dist === 'object' && !Array.isArray(dist)) {
+        delete (dist as Record<string, unknown>).cost;
+      }
+    }
+  }
+
+  return out;
+}
+
+// Allowlist for AI/MCP distributor-lookup output. Public fields (list price,
+// availability, identifiers) are always safe. Margin-sensitive fields (reseller
+// cost + the discount it derives from) are added only for seller scopes.
+const AI_DISTRIBUTOR_PRODUCT_PUBLIC_FIELDS = [
+  'source', 'synnexSku', 'mfgPartNo', 'status', 'name', 'description',
+  'currency', 'msrp', 'totalQty', 'warehouses', 'weight', 'parcelShippable',
+] as const;
+const AI_DISTRIBUTOR_PRODUCT_MARGIN_FIELDS = ['cost', 'discount'] as const;
+
+/**
+ * Allowlist-project a live distributor product for AI/MCP output — never a
+ * blocklist, so a field TD SYNNEX or an importer adds later can't auto-leak. The
+ * raw SOAP payload is dropped by construction (not in the allowlist). The
+ * margin-sensitive fields (`cost` AND the `discount` it's derivable from) are
+ * included only for seller scopes (partner/system); the tool's handler already
+ * refuses organization scope, so this is defense-in-depth if that gate loosens.
+ */
+function sanitizeDistributorProductForAi(p: TdSynnexEcProduct, auth: AuthContext): Record<string, unknown> {
+  const src = p as unknown as Record<string, unknown>;
+  const out = pickAllowed(src, AI_DISTRIBUTOR_PRODUCT_PUBLIC_FIELDS);
+  if (auth.scope === 'partner' || auth.scope === 'system') {
+    for (const key of AI_DISTRIBUTOR_PRODUCT_MARGIN_FIELDS) {
+      if (key in src) out[key] = src[key];
+    }
+  }
+  return out;
+}
+
 export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
   aiTools.set('search_catalog', {
     tier: 2 as AiToolTier,
@@ -56,15 +201,22 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
     definition: {
       name: 'search_catalog',
       description:
-        'Search the partner product catalog (hardware, software, services, and bundles) by name or type. Read-only.',
+        'Search the partner product catalog (hardware, software, services, and bundles). The search term matches item name, SKU, and distributor part numbers (manufacturer part number / SYNNEX SKU). Optional filters: item type, bundle flag. Read-only.',
       input_schema: {
         type: 'object' as const,
         properties: {
-          search: { type: 'string', description: 'Name substring to match' },
+          search: {
+            type: 'string',
+            description: 'Substring to match against item name, SKU, or distributor part number (mfgPartNo / synnexSku)'
+          },
           itemType: {
             type: 'string',
             enum: ['hardware', 'software', 'service'],
             description: 'Filter by item type'
+          },
+          isBundle: {
+            type: 'boolean',
+            description: 'Filter to bundles only (true) or non-bundles only (false)'
           },
           limit: { type: 'number', description: 'Max results (default 25, max 100)' }
         },
@@ -82,8 +234,21 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
           eq(catalogItems.itemType, input.itemType as 'hardware' | 'software' | 'service')
         );
       }
+      if (typeof input.isBundle === 'boolean') {
+        conditions.push(eq(catalogItems.isBundle, input.isBundle));
+      }
       if (input.search) {
-        conditions.push(ilike(catalogItems.name, `%${escapeLikePattern(String(input.search))}%`));
+        const pattern = `%${escapeLikePattern(String(input.search))}%`;
+        // Match name, the item's own SKU, and the normalized distributor part
+        // numbers stored on imported items (attributes.distributor.mfgPartNo /
+        // .synnexSku) — "find the item for SKU 14703953" is a natural quoting ask.
+        const searchCondition = or(
+          ilike(catalogItems.name, pattern),
+          ilike(catalogItems.sku, pattern),
+          sql`${catalogItems.attributes} -> 'distributor' ->> 'mfgPartNo' ILIKE ${pattern}`,
+          sql`${catalogItems.attributes} -> 'distributor' ->> 'synnexSku' ILIKE ${pattern}`
+        );
+        if (searchCondition) conditions.push(searchCondition);
       }
       const limit = Math.min(Math.max(1, Number(input.limit) || 25), 100);
       const rows = await db
@@ -100,6 +265,61 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
         .orderBy(asc(catalogItems.name))
         .limit(limit);
       return JSON.stringify({ items: rows, showing: rows.length });
+    }
+  });
+
+  aiTools.set('lookup_distributor_product', {
+    tier: 2 as AiToolTier,
+    deviceArgs: [],
+    definition: {
+      name: 'lookup_distributor_product',
+      description:
+        'Live TD SYNNEX (EC Express) price & availability lookup for a SINGLE distributor SKU or manufacturer part number. Returns reseller cost, MSRP, currency, total stock, and per-warehouse availability. Read-only, but makes an outbound call to the distributor (partner-scoped). Use this to price a distributor product that is NOT yet in the catalog before adding it to a quote; for items already in the catalog use search_catalog instead.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          query: {
+            type: 'string',
+            maxLength: 40,
+            description: 'Exactly one TD SYNNEX SKU (all digits) or manufacturer part number to look up.'
+          }
+        },
+        required: ['query']
+      }
+    },
+    handler: async (input, auth) => {
+      if (input.query == null || String(input.query).trim() === '') {
+        return JSON.stringify({ error: 'Provide a SYNNEX SKU or manufacturer part number in "query"' });
+      }
+      // Seller-side tool: it calls the PARTNER's TD SYNNEX contract (a billed
+      // outbound call) and returns margin data. Organization-scoped callers (an
+      // MSP's customers) must not reach it — and an org MCP token carries the
+      // owning partner's partnerId, so a bare partnerId-presence check is NOT
+      // enough. Gate on scope, matching the web route's requireScope('partner',
+      // 'system'). This also makes the margin redaction in the sanitizer moot for
+      // org (they never get a product back at all).
+      if (auth.scope === 'organization') {
+        return JSON.stringify({ error: 'Distributor lookup is not available to organization-scoped callers' });
+      }
+      const partnerId = auth.partnerId;
+      if (!partnerId) {
+        return JSON.stringify({ error: 'Distributor lookup is partner-scoped; no partner in context' });
+      }
+      try {
+        const products = await lookupEcExpressProducts(String(input.query), actorFromAuth(auth));
+        return JSON.stringify({
+          products: products.map((p) => sanitizeDistributorProductForAi(p, auth)),
+          showing: products.length
+        });
+      } catch (err) {
+        // Surface the typed provider/no-results error to the model instead of a
+        // generic 500, so it can retry with a different SKU or fall back to a
+        // manual line — never a blind retry loop.
+        if (err instanceof TdSynnexEcExpressError) {
+          return JSON.stringify({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
     }
   });
 
@@ -137,8 +357,9 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
       if (!item) {
         return JSON.stringify({ error: 'Catalog item not found' });
       }
+      const sanitized = sanitizeCatalogItemForAi(item, auth);
       if (!item.isBundle) {
-        return JSON.stringify({ item });
+        return JSON.stringify({ item: sanitized });
       }
       const components = await db
         .select({
@@ -155,7 +376,13 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
             eq(catalogBundleComponents.partnerId, partnerId)
           )
         );
-      return JSON.stringify({ item, components });
+      // Same org-scope defense-in-depth as the item's cost fields:
+      // revenueAllocation is the partner's internal revenue split.
+      const sanitizedComponents =
+        auth.scope === 'organization'
+          ? components.map(({ revenueAllocation: _ra, ...rest }) => rest)
+          : components;
+      return JSON.stringify({ item: sanitized, components: sanitizedComponents });
     }
   });
 
@@ -195,10 +422,17 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
     },
     handler: async (input, auth) => {
       const actor = actorFromAuth(auth);
-      const s = (k: string) => (input[k] == null ? undefined : String(input[k]));
+
+      const action = String(input.action);
+      const required = MANAGE_CATALOG_REQUIRED[action];
+      if (!required) {
+        return JSON.stringify({ error: `Unknown action: ${action}`, code: 'VALIDATION_ERROR' });
+      }
+      const missing = missingParamsJson(input, action, required);
+      if (missing) return missing;
 
       try {
-        switch (input.action) {
+        switch (action) {
           case 'create_item':
             return JSON.stringify(await createCatalogItem(input.item as CreateCatalogItemInput, actor));
           case 'update_item':
@@ -229,10 +463,10 @@ export function registerCatalogTools(aiTools: Map<string, AiTool>): void {
               actor
             ));
           default:
-            return JSON.stringify({ error: `Unknown action: ${s('action')}` });
+            return JSON.stringify({ error: `Unknown action: ${action}`, code: 'VALIDATION_ERROR' });
         }
       } catch (err) {
-        const json = serviceErrorToJson(err);
+        const json = serviceErrorToJson(err) ?? zodErrorToJson(err);
         if (json) return json;
         throw err;
       }

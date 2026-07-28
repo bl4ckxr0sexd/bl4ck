@@ -66,6 +66,11 @@ vi.mock('../db/schema', () => ({
     devicesFailed: 'scriptExecutionBatches.devicesFailed',
   },
   backupJobs: {},
+  // Real services/backupProgress.ts and services/backupResultPersistence.ts run
+  // in these tests and import these two from ../db/schema, so the mock must
+  // provide them (otherwise inArray(status, undefined) throws mid-handler).
+  IN_FLIGHT_BACKUP_JOB_STATUSES: ['pending', 'running'] as const,
+  STALE_BACKUP_REAP_MARKER: '[stale-backup-reaper]',
   restoreJobs: {
     id: 'restoreJobs.id',
     commandId: 'restoreJobs.commandId',
@@ -149,22 +154,55 @@ vi.mock('../services/auditService', () => ({
 vi.mock('../services/auditEvents', () => ({
   ANONYMOUS_ACTOR_ID: '00000000-0000-0000-0000-000000000000',
   writeAuditEvent: vi.fn(),
+  requestLikeFromSnapshot: vi.fn(() => ({ req: { header: () => undefined } })),
 }));
 
 vi.mock('../services/tenantStatus', () => ({
-  isAgentTenantActive: vi.fn(async () => true),
+  getAgentTenantState: vi.fn(async () => 'active'),
 }));
 
-import { db } from '../db';
-import { devices } from '../db/schema';
+vi.mock('../services/commandDispatch', () => ({
+  claimPendingCommandForDelivery: vi.fn(),
+  releaseClaimedCommandDelivery: vi.fn(),
+  claimPendingCommandsForDevice: vi.fn(async () => []),
+}));
+
+// Task 7 backup-result guard-ordering tests exercise the REAL
+// services/backupProgress.ts predicates/appliers (unit-tested separately in
+// backupProgress.test.ts) through the agentWs message-handling path, so only
+// the Redis-backed expectation service and the DB-writing job-completion
+// persister are mocked here — everything else in the guard chain is real.
+vi.mock('../services/agentWorkExpectation', () => ({
+  claimConsumeOnce: vi.fn(),
+  consumeDispatchedExpectation: vi.fn(),
+  recordDispatchedExpectation: vi.fn(),
+  refreshDispatchedExpectation: vi.fn(),
+}));
+
+vi.mock('../services/backupResultPersistence', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/backupResultPersistence')>();
+  return {
+    ...actual,
+    applyBackupCommandResultToJob: vi.fn(),
+  };
+});
+
+import { db, runOutsideDbContext, withSystemDbAccessContext } from '../db';
+import { devices, deviceCommands } from '../db/schema';
 import {
   createAgentWsHandlers,
   createAgentWsRoutes,
   validateAgentToken,
+  disconnectAgent,
+  isAgentConnected,
+  sendCommandToAgent,
   __resetCrossTenantDropsForTest,
   AGENT_WS_CAPABILITIES,
 } from './agentWs';
-import { isAgentTenantActive } from '../services/tenantStatus';
+import { isRedisAvailable } from '../services/redis';
+import { claimPendingCommandsForDevice } from '../services/commandDispatch';
+import { writeAuditEvent } from '../services/auditEvents';
+import { getAgentTenantState } from '../services/tenantStatus';
 import { enqueueDiscoveryResults } from '../jobs/discoveryWorker';
 import { enqueueSnmpPollResults } from '../jobs/snmpWorker';
 import { enqueueMonitorCheckResult } from '../jobs/monitorWorker';
@@ -175,6 +213,11 @@ import { updateRestoreJobFromResult } from '../services/restoreResultPersistence
 import { rateLimiter } from '../services/rate-limit';
 import { revokeViewerSession } from '../services/viewerTokenRevocation';
 import { publishEvent } from '../services/eventBus';
+import {
+  consumeDispatchedExpectation,
+  refreshDispatchedExpectation,
+} from '../services/agentWorkExpectation';
+import { applyBackupCommandResultToJob } from '../services/backupResultPersistence';
 
 function wsMock() {
   return {
@@ -208,7 +251,7 @@ describe('validateAgentToken — tenant-status gate', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(isAgentTenantActive).mockResolvedValue(true);
+    vi.mocked(getAgentTenantState).mockResolvedValue('active');
   });
 
   it('accepts a valid agent token for an active tenant', async () => {
@@ -217,12 +260,24 @@ describe('validateAgentToken — tenant-status gate', () => {
     const result = await validateAgentToken('agent-1', TOKEN);
 
     expect(result).toEqual({ ok: true, ctx: { deviceId: 'device-1', orgId: 'org-1', role: 'agent' } });
-    expect(isAgentTenantActive).toHaveBeenCalledWith('org-1');
+    expect(getAgentTenantState).toHaveBeenCalledWith('org-1');
   });
 
   it('refuses the upgrade when the device tenant is not active', async () => {
     queueDeviceSelect(deviceRow);
-    vi.mocked(isAgentTenantActive).mockResolvedValue(false);
+    vi.mocked(getAgentTenantState).mockResolvedValue(null);
+
+    const result = await validateAgentToken('agent-1', TOKEN);
+
+    expect(result).toEqual({ ok: false, reason: 'unauthorized' });
+  });
+
+  // #2774 — a draining (offboarding) tenant keeps its REST drain surface but
+  // must NOT get a WS session: ~20 push call sites bypass device_commands, so
+  // any accepted socket is a fully-capable control channel.
+  it('refuses the upgrade for a draining (offboarding) tenant', async () => {
+    queueDeviceSelect(deviceRow);
+    vi.mocked(getAgentTenantState).mockResolvedValue('draining');
 
     const result = await validateAgentToken('agent-1', TOKEN);
 
@@ -386,7 +441,6 @@ describe('WS lifecycle status writes — terminal-status guard (#2230)', () => {
   it('excludes decommissioned/quarantined rows when a WS heartbeat flips a device online', async () => {
     const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
     const { whereMock, setMock } = rigStatusUpdateCapture();
-    // getPendingCommands device lookup — no row, so no command claim follows.
     vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any);
 
     const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
@@ -482,6 +536,52 @@ describe('agent websocket command results', () => {
 
     expect(db.update).toHaveBeenCalledTimes(1);
     expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+  });
+
+  it('stores capture_pprof stdout byte-for-byte on the WS leg (secret redaction would corrupt the base64 profiles, #2401)', async () => {
+    const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([
+        {
+          id: 'cmd-pprof',
+          type: 'capture_pprof',
+          payload: { profile: 'heap' },
+          deviceId: 'device-123'
+        }
+      ]) as any);
+
+    const updateChain = updateResult([{ id: 'cmd-pprof' }]);
+    vi.mocked(db.update).mockReturnValue(updateChain as any);
+
+    // Contains substrings the redaction patterns fire on (case-insensitive
+    // AKIA + 16 alnum; token=...); must be persisted unmodified.
+    const pprofStdout = JSON.stringify({
+      capturedAt: '2026-07-12T10:00:00Z',
+      heapProfileBase64: `QUJDakiAABCDEF1234567890abToken=abcdefgh12345678REVG${'Zm9v'.repeat(100)}`,
+      heapProfileBytes: 4096,
+    });
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '22222222-2222-4222-8222-222222222222',
+        status: 'completed',
+        exitCode: 0,
+        stdout: pprofStdout,
+        stderr: 'password=supersecret123'
+      })
+    } as any, ws as any);
+
+    expect(db.update).toHaveBeenCalledTimes(1);
+    const stored = updateChain.set.mock.calls[0]![0] as { result: { stdout: string; stderr: string } };
+    expect(stored.result.stdout).toBe(pprofStdout);
+    // stderr is NOT exempt.
+    expect(stored.result.stderr).toContain('[REDACTED]');
+    expect(stored.result.stderr).not.toContain('supersecret123');
   });
 
   it('rejects watchdog-targeted command results on the agent websocket', async () => {
@@ -684,6 +784,69 @@ describe('agent websocket command results', () => {
     expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
   });
 
+  // BREEZE-H: the command_result handler runs inside a held org-scoped
+  // transaction; BullMQ enqueues must be wrapped in runOutsideDbContext so
+  // the #1105 tripwire in bullmqQueue passes and nested DB work routes to
+  // the pool (the wrap does not release the outer transaction's connection —
+  // dispatching after the context closes is the deeper #1105 fix).
+  it('enqueues an accepted monitor result via runOutsideDbContext (#1105, BREEZE-H)', async () => {
+    const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
+
+    // onOpen: register the socket so sendCommandToAgent records the
+    // orphaned-result expectation the monitor result is matched against.
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any);
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+    await handlers.onOpen({}, ws as any);
+
+    sendCommandToAgent('agent-123', {
+      id: 'mon-monitor-1-123',
+      type: 'network_ping',
+      payload: { monitorId: 'monitor-1' },
+    } as any);
+
+    vi.mocked(isRedisAvailable).mockReturnValue(true);
+    let outsideDepth = 0;
+    vi.mocked(runOutsideDbContext).mockImplementation((fn: any) => {
+      outsideDepth++;
+      try {
+        return fn();
+      } finally {
+        outsideDepth--;
+      }
+    });
+    // Record (not assert) inside the mock: the handler catches enqueue errors,
+    // so a failing expect() inside the implementation would be swallowed.
+    let enqueuedOutsideContext: boolean | null = null;
+    vi.mocked(enqueueMonitorCheckResult).mockImplementation(async () => {
+      enqueuedOutsideContext = outsideDepth > 0;
+      return 'job-1';
+    });
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: 'mon-monitor-1-123',
+        status: 'completed',
+        result: {
+          monitorId: 'monitor-1',
+          status: 'online',
+          responseMs: 12
+        }
+      })
+    } as any, ws as any);
+
+    expect(enqueueMonitorCheckResult).toHaveBeenCalledTimes(1);
+    expect(enqueueMonitorCheckResult).toHaveBeenCalledWith(
+      'monitor-1',
+      expect.objectContaining({ monitorId: 'monitor-1', status: 'online', responseMs: 12 }),
+      expect.objectContaining({ source: 'route:agentWs:monitor-result' })
+    );
+    expect(enqueuedOutsideContext).toBe(true);
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+  });
+
   it('drops terminal output for sessions not owned by the connected agent', async () => {
     const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
 
@@ -733,6 +896,33 @@ describe('agent websocket command results', () => {
 
     expect(db.update).not.toHaveBeenCalled();
     expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+  });
+
+  // #2307: fielded agents confirm desk-stop with result {"stopped": true}.
+  // The strict result schema must accept the key instead of dropping the
+  // message as a malformed desk-command_result.
+  it('accepts a desk-stop result carrying {"stopped": true} without a malformed-drop warn (#2307)', async () => {
+    const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: 'desk-stop-session-123',
+        status: 'completed',
+        result: { stopped: true }
+      })
+    } as any, ws as any);
+
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('Dropping malformed desk-command_result')
+    );
+    // Message passes the fast-path schema and is acked like any other result.
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+    warnSpy.mockRestore();
   });
 
   it('rejects desktop disconnect results with mismatched session IDs', async () => {
@@ -851,7 +1041,7 @@ describe('agent websocket command results', () => {
     expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
   });
 
-  it('rejects malformed critical verification payloads before readiness processing', async () => {
+  it('fails the backup_verifications record when a critical verification payload is malformed (not left running)', async () => {
     const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
 
     vi.mocked(db.select)
@@ -874,14 +1064,70 @@ describe('agent websocket command results', () => {
         type: 'command_result',
         commandId: '66666666-6666-4666-8666-666666666666',
         status: 'completed',
+        // Missing the required `status` field — schema rejects, so the result is
+        // a genuine malformed payload deepJsonParse cannot rescue.
         result: {
           filesVerified: 10
         }
       })
     } as any, ws as any);
 
-    expect(vi.mocked(processBackupVerificationResult)).not.toHaveBeenCalled();
+    // device_commands still transitions to failed...
     expect(db.update).toHaveBeenCalled();
+    // ...AND the linked backup_verifications row is driven to a terminal failed
+    // state via the normal failure path (IMPORTANT #1, #2556) rather than being
+    // stranded in 'running'/'pending' until the 30-min stale-timeout sweep.
+    expect(vi.mocked(processBackupVerificationResult)).toHaveBeenCalledTimes(1);
+    const [commandId, handed] = vi.mocked(processBackupVerificationResult).mock.calls[0]! as [
+      string,
+      { status: string; error?: string }
+    ];
+    expect(commandId).toBe('66666666-6666-4666-8666-666666666666');
+    expect(handed.status).toBe('failed');
+    expect(handed.error).toContain('Rejected malformed backup_verify result');
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+  });
+
+  it('fails the backup_verifications record when verification stdout exceeds the size limit', async () => {
+    const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([
+        {
+          id: 'cmd-verify-2',
+          type: 'backup_verify',
+          payload: {},
+          deviceId: 'device-123'
+        }
+      ]) as any);
+
+    vi.mocked(db.update).mockReturnValue(updateResult([{ id: 'cmd-verify-2' }]) as any);
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    // stdout beyond CRITICAL_RESULT_STDOUT_MAX_BYTES (1 MiB) trips
+    // ensureCriticalResultSizeLimits, which is the second way a critical result
+    // gets rejected.
+    const oversizeStdout = 'x'.repeat(1_048_576 + 16);
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '77777777-7777-4777-8777-777777777777',
+        status: 'completed',
+        stdout: oversizeStdout,
+      })
+    } as any, ws as any);
+
+    expect(db.update).toHaveBeenCalled();
+    expect(vi.mocked(processBackupVerificationResult)).toHaveBeenCalledTimes(1);
+    const [, handed] = vi.mocked(processBackupVerificationResult).mock.calls[0]! as [
+      string,
+      { status: string; error?: string }
+    ];
+    expect(handed.status).toBe('failed');
+    expect(handed.error).toContain('exceeds');
     expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
   });
 
@@ -1195,5 +1441,760 @@ describe('agent websocket command results', () => {
     const app = createAgentWsRoutes(((_handler: unknown) => async (_c: any) => new Response('ws', { status: 101 })) as any);
     const res = await app.request('/agent-overlimit/ws');
     expect(res.status).toBe(429);
+  });
+});
+
+// Task 7 — backup command_result non-terminal guards. Unit coverage for the
+// extracted predicates/appliers (isBackupStartedAck, isLegacyBackupTimeoutResult,
+// applyBackupStartedAck, tryParseBackupResultPayload) lives in
+// backupProgress.test.ts. These tests instead exercise the REAL guard
+// placement inside agentWs's orphaned command_result path — a backup job's
+// commandId has no device_commands row, so a result for it always resolves
+// via processOrphanedCommandResult — proving the started-ack and legacy
+// timeout guards return BEFORE consumeDispatchedExpectation runs (so the
+// one-shot expectation survives for the real terminal result), while a
+// genuine failure or a completed result still falls through to consume it.
+describe('backup command_result non-terminal guards (guard ordering integration)', () => {
+  const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
+  const jobId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const backupJobRow = { id: jobId, orgId: 'org-123', deviceId: 'device-123', agentId: 'agent-123' };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('started-ack result bumps lastProgressAt, refreshes the dispatch TTL, and does NOT consume the expectation (job stays in-flight)', async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([]) as any) // device_commands: no row → orphaned path
+      .mockReturnValueOnce(selectAgentDevice([]) as any) // discoveryJobs: none
+      .mockReturnValueOnce(selectWithInnerJoin([backupJobRow]) as any); // backupJobs: found
+
+    const updateChain = updateResult([{ id: jobId }]);
+    vi.mocked(db.update).mockReturnValue(updateChain as any);
+    vi.mocked(refreshDispatchedExpectation).mockResolvedValue(true);
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: jobId,
+        status: 'completed',
+        result: JSON.stringify({ started: true }),
+      })
+    } as any, ws as any);
+
+    // applyBackupStartedAck's update only bumps progress/updatedAt — no
+    // `status` key — so the (pending|running) job never transitions.
+    expect(db.update).toHaveBeenCalledTimes(1);
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toHaveProperty('lastProgressAt');
+    expect(setArg.status).toBeUndefined();
+
+    expect(refreshDispatchedExpectation).toHaveBeenCalledWith('backup', 'device-123', jobId);
+    expect(consumeDispatchedExpectation).not.toHaveBeenCalled();
+    expect(applyBackupCommandResultToJob).not.toHaveBeenCalled();
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+  });
+
+  it('started-ack on an already-terminal job is a no-op: does not log the "started-ack" line (FIX 10)', async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([]) as any)
+      .mockReturnValueOnce(selectAgentDevice([]) as any)
+      .mockReturnValueOnce(selectWithInnerJoin([backupJobRow]) as any);
+
+    // Guarded update matches zero rows → applyBackupStartedAck returns false.
+    vi.mocked(db.update).mockReturnValue(updateResult([]) as any);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: jobId,
+        status: 'completed',
+        result: JSON.stringify({ started: true }),
+      })
+    } as any, ws as any);
+
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('started-ack from agent'));
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('Ignoring started-ack for already-terminal backup job'));
+    expect(refreshDispatchedExpectation).not.toHaveBeenCalled();
+    expect(consumeDispatchedExpectation).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    debugSpy.mockRestore();
+  });
+
+  it('legacy "command timed out" result is dropped without consuming the expectation or failing the job', async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([]) as any)
+      .mockReturnValueOnce(selectAgentDevice([]) as any)
+      .mockReturnValueOnce(selectWithInnerJoin([backupJobRow]) as any);
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: jobId,
+        status: 'failed',
+        error: 'command timed out after 10m0s',
+      })
+    } as any, ws as any);
+
+    expect(db.update).not.toHaveBeenCalled();
+    expect(consumeDispatchedExpectation).not.toHaveBeenCalled();
+    expect(applyBackupCommandResultToJob).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Ignoring legacy 10-minute timed-out result'));
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+
+    warnSpy.mockRestore();
+  });
+
+  it('a genuine (non-timeout) failure result still consumes the expectation and fails the job', async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([]) as any)
+      .mockReturnValueOnce(selectAgentDevice([]) as any)
+      .mockReturnValueOnce(selectWithInnerJoin([backupJobRow]) as any);
+
+    vi.mocked(consumeDispatchedExpectation).mockResolvedValue({ ok: true });
+    vi.mocked(applyBackupCommandResultToJob).mockResolvedValue({
+      applied: true,
+      snapshotDbId: null,
+      providerSnapshotId: null,
+    });
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: jobId,
+        status: 'failed',
+        error: 'disk full',
+      })
+    } as any, ws as any);
+
+    expect(consumeDispatchedExpectation).toHaveBeenCalledWith('backup', 'device-123', jobId);
+    expect(applyBackupCommandResultToJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId,
+        orgId: 'org-123',
+        deviceId: 'device-123',
+        resultStatus: 'failed',
+      })
+    );
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+  });
+
+  it('a completed result still consumes the expectation and completes the job', async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([]) as any)
+      .mockReturnValueOnce(selectAgentDevice([]) as any)
+      .mockReturnValueOnce(selectWithInnerJoin([backupJobRow]) as any);
+
+    vi.mocked(consumeDispatchedExpectation).mockResolvedValue({ ok: true });
+    vi.mocked(applyBackupCommandResultToJob).mockResolvedValue({
+      applied: true,
+      snapshotDbId: 'snap-db-1',
+      providerSnapshotId: 'snap-1',
+    });
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: jobId,
+        status: 'completed',
+        result: JSON.stringify({ snapshotId: 'snap-1', filesBackedUp: 5, bytesBackedUp: 1000 }),
+      })
+    } as any, ws as any);
+
+    expect(consumeDispatchedExpectation).toHaveBeenCalledWith('backup', 'device-123', jobId);
+    expect(applyBackupCommandResultToJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId,
+        resultStatus: 'completed',
+        result: expect.objectContaining({ snapshotId: 'snap-1' }),
+      })
+    );
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"ack"'));
+  });
+});
+
+// Finding #4 — one authorized socket per agent. A second socket must close the
+// first, and disconnectAgent/revocation must always act on the authoritative
+// (newest) socket so no orphan survives.
+describe('Finding #4 — one-socket-per-agent invariant', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('closes the previous socket when a second socket opens for the same agent', async () => {
+    const preValidatedAgent = { deviceId: 'device-dup', orgId: 'org-dup' };
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    // Empty device select: onOpen registers the socket without reaching the
+    // (unmocked) command-claim path.
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any);
+
+    const handlers = createAgentWsHandlers('agent-dup', preValidatedAgent);
+    const ws1 = wsMock();
+    const ws2 = wsMock();
+
+    await handlers.onOpen({}, ws1 as any);
+    await handlers.onOpen({}, ws2 as any);
+
+    expect(ws1.close).toHaveBeenCalledWith(4002, 'Superseded by newer connection');
+    expect(ws2.close).not.toHaveBeenCalled();
+    expect(isAgentConnected('agent-dup')).toBe(true);
+  });
+
+  it('disconnectAgent closes the current authoritative socket', async () => {
+    const preValidatedAgent = { deviceId: 'device-auth', orgId: 'org-auth' };
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any);
+
+    const handlers = createAgentWsHandlers('agent-auth', preValidatedAgent);
+    const ws = wsMock();
+    await handlers.onOpen({}, ws as any);
+
+    const outcome = disconnectAgent('agent-auth', 4041, 'Device decommissioned');
+
+    expect(outcome).toBe('closed');
+    expect(ws.close).toHaveBeenCalledWith(4041, 'Device decommissioned');
+  });
+
+  it('an orphaned socket cannot outlive its replacement — onClose of the orphan never evicts the live socket', async () => {
+    const preValidatedAgent = { deviceId: 'device-orphan', orgId: 'org-orphan' };
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any);
+
+    const handlers = createAgentWsHandlers('agent-orphan', preValidatedAgent);
+    const ws1 = wsMock();
+    const ws2 = wsMock();
+
+    await handlers.onOpen({}, ws1 as any); // ws1 authoritative
+    await handlers.onOpen({}, ws2 as any); // ws2 supersedes; ws1 closed as orphan
+
+    // The orphan's late onClose must NOT evict ws2 from the connection map or
+    // clobber its ping state (both guarded by connection identity).
+    await handlers.onClose({}, ws1 as any);
+
+    expect(isAgentConnected('agent-orphan')).toBe(true);
+    disconnectAgent('agent-orphan');
+    expect(ws2.close).toHaveBeenCalled();
+  });
+});
+
+// Finding #3 — established sockets must stop acting once containment changes.
+describe('Finding #3 — lifecycle recheck on sensitive operations', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('severs the socket on a command result when the device was quarantined after connect', async () => {
+    const preValidatedAgent = { deviceId: 'device-q', orgId: 'org-q' };
+    vi.mocked(db.update).mockReturnValue(updateResult([{ id: 'cmd-1' }]) as any);
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any); // onOpen: register only
+
+    const handlers = createAgentWsHandlers('agent-q', preValidatedAgent);
+    const ws = wsMock();
+    await handlers.onOpen({}, ws as any);
+    vi.mocked(ws.close).mockClear();
+    vi.mocked(db.update).mockClear();
+
+    // command lookup returns a live row, then the lifecycle recheck sees the
+    // device is now quarantined.
+    vi.mocked(db.select)
+      .mockReturnValueOnce(selectOwnedCommandResult([
+        { id: 'cmd-1', type: 'run_script', payload: {}, deviceId: 'device-q' },
+      ]) as any)
+      .mockReturnValueOnce(selectAgentDevice([{ status: 'quarantined', agentTokenSuspendedAt: null }]) as any);
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '77777777-7777-4777-8777-777777777777',
+        status: 'completed',
+        stdout: 'ok',
+      }),
+    } as any, ws as any);
+
+    expect(ws.close).toHaveBeenCalledWith(4001, 'Device no longer authorized');
+    // Aborted before persisting: the command row is never terminally updated.
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('severs the socket on a heartbeat when the token was suspended after connect', async () => {
+    const preValidatedAgent = { deviceId: 'device-s', orgId: 'org-s' };
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any); // onOpen: register only
+
+    const handlers = createAgentWsHandlers('agent-s', preValidatedAgent);
+    const ws = wsMock();
+    await handlers.onOpen({}, ws as any);
+    vi.mocked(ws.close).mockClear();
+
+    // The heartbeat handler re-checks the device lifecycle row: a suspended
+    // token (org/partner tenant suspension denormalizes here) severs the socket.
+    vi.mocked(db.select).mockReturnValue(
+      selectAgentDevice([{ id: 'device-s', status: 'online', agentTokenSuspendedAt: new Date() }]) as any
+    );
+
+    await handlers.onMessage({
+      data: JSON.stringify({ type: 'heartbeat', timestamp: 123 }),
+    } as any, ws as any);
+
+    expect(ws.close).toHaveBeenCalledWith(4001, 'Device no longer authorized');
+  });
+
+  it('severs the socket on a heartbeat when the device was decommissioned after connect', async () => {
+    const preValidatedAgent = { deviceId: 'device-d', orgId: 'org-d' };
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any); // onOpen: register only
+
+    const handlers = createAgentWsHandlers('agent-d', preValidatedAgent);
+    const ws = wsMock();
+    await handlers.onOpen({}, ws as any);
+    vi.mocked(ws.close).mockClear();
+    vi.mocked(db.update).mockClear();
+
+    vi.mocked(db.select).mockReturnValue(
+      selectAgentDevice([{ id: 'device-d', status: 'decommissioned', agentTokenSuspendedAt: null }]) as any
+    );
+
+    await handlers.onMessage({
+      data: JSON.stringify({ type: 'heartbeat', timestamp: 123 }),
+    } as any, ws as any);
+
+    expect(ws.close).toHaveBeenCalledWith(4001, 'Device no longer authorized');
+    // Severed BEFORE the status write — a contained device must not be
+    // flipped back online by its own heartbeat.
+    expect(db.update).not.toHaveBeenCalled();
+  });
+});
+
+// Finding #8 — WS command results emit the same append-only audit as REST.
+// Finding #5 — WS result stdout/stderr are redacted before persistence.
+describe('Findings #8 / #5 — WS command-result audit + secret redaction', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('emits agent.command.result.submit exactly once after a real terminal transition', async () => {
+    const preValidatedAgent = { deviceId: 'device-a', orgId: 'org-a' };
+    vi.mocked(db.select).mockReturnValueOnce(selectOwnedCommandResult([
+      { id: 'cmd-1', type: 'run_script', payload: {}, deviceId: 'device-a' },
+    ]) as any);
+    vi.mocked(db.update).mockReturnValue(updateResult([{ id: 'cmd-1' }]) as any);
+
+    const handlers = createAgentWsHandlers('agent-a', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '88888888-8888-4888-8888-888888888888',
+        status: 'completed',
+        exitCode: 0,
+        stdout: 'done',
+      }),
+    } as any, ws as any);
+
+    expect(writeAuditEvent).toHaveBeenCalledTimes(1);
+    const auditEvent = vi.mocked(writeAuditEvent).mock.calls[0]![1];
+    expect(auditEvent).toMatchObject({
+      action: 'agent.command.result.submit',
+      actorType: 'agent',
+      actorId: 'agent-a',
+      orgId: 'org-a',
+      resourceType: 'device_command',
+      resourceId: '88888888-8888-4888-8888-888888888888',
+      result: 'success',
+      details: { commandType: 'run_script', status: 'completed', exitCode: 0 },
+    });
+  });
+
+  it('does NOT audit when the compare-and-set no-ops (duplicate/late result)', async () => {
+    const preValidatedAgent = { deviceId: 'device-a', orgId: 'org-a' };
+    vi.mocked(db.select).mockReturnValueOnce(selectOwnedCommandResult([
+      { id: 'cmd-1', type: 'run_script', payload: {}, deviceId: 'device-a' },
+    ]) as any);
+    // returning [] — the row was already terminal, so no transition occurred.
+    vi.mocked(db.update).mockReturnValue(updateResult([]) as any);
+
+    const handlers = createAgentWsHandlers('agent-a', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '88888888-8888-4888-8888-888888888888',
+        status: 'completed',
+        exitCode: 0,
+        stdout: 'done',
+      }),
+    } as any, ws as any);
+
+    expect(writeAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('redacts a PEM private key from stdout, stderr, AND error before persistence (#2419)', async () => {
+    const preValidatedAgent = { deviceId: 'device-r', orgId: 'org-r' };
+    vi.mocked(db.select).mockReturnValueOnce(selectOwnedCommandResult([
+      { id: 'cmd-1', type: 'run_script', payload: {}, deviceId: 'device-r' },
+    ]) as any);
+
+    // Capture the persisted result payload from the terminal UPDATE .set(...).
+    const setSpy = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 'cmd-1' }]) }),
+    });
+    vi.mocked(db.update).mockReturnValue({ set: setSpy } as any);
+
+    const pem =
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKe0m0h\n-----END RSA PRIVATE KEY-----';
+
+    const handlers = createAgentWsHandlers('agent-r', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '99999999-9999-4999-8999-999999999999',
+        status: 'failed',
+        exitCode: 1,
+        stdout: `key follows:\n${pem}\nend`,
+        stderr: `warning, leaked key:\n${pem}`,
+        error: `command failed while handling key:\n${pem}`,
+      }),
+    } as any, ws as any);
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    const stored = setSpy.mock.calls[0]![0] as {
+      result: { stdout: string; stderr: string; error: string };
+    };
+    for (const field of ['stdout', 'stderr', 'error'] as const) {
+      expect(stored.result[field]).toContain('[PRIVATE_KEY_REDACTED]');
+      expect(stored.result[field]).not.toContain('BEGIN RSA PRIVATE KEY');
+    }
+  });
+});
+
+// Regression for #2407: pending commands must never be claimed into agent WS
+// frames. No agent version has ever parsed `pendingCommands` out of the
+// `connected` welcome frame or `commands` out of `heartbeat_ack` (the agent's
+// readPump skips ID-less frames), so a WS-side claim marked rows 'sent' that
+// were never delivered or executed — they sat falsely 'sent' until the stale
+// command reaper flipped them to 'failed' with a misleading agent-timeout
+// error. Commands must stay 'pending' for the HTTP heartbeat claim and
+// executeCommand's direct per-command push.
+describe('WS frames never claim pending commands (#2407)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('onOpen sends the welcome frame without pendingCommands and claims nothing', async () => {
+    const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
+
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any);
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onOpen({}, ws as any);
+
+    expect(claimPendingCommandsForDevice).not.toHaveBeenCalled();
+    const payload = JSON.parse(vi.mocked(ws.send).mock.calls[0]![0] as string);
+    expect(payload.type).toBe('connected');
+    expect(payload).not.toHaveProperty('pendingCommands');
+  });
+
+  it('heartbeat_ack always carries an empty commands array and claims nothing', async () => {
+    const preValidatedAgent = { deviceId: 'device-123', orgId: 'org-123' };
+
+    vi.mocked(db.update).mockReturnValue(updateResult() as any);
+    vi.mocked(db.select).mockReturnValue(selectAgentDevice([]) as any);
+
+    const handlers = createAgentWsHandlers('agent-123', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({ type: 'heartbeat', timestamp: 1234567890 }),
+    } as any, ws as any);
+
+    expect(claimPendingCommandsForDevice).not.toHaveBeenCalled();
+    const ack = vi.mocked(ws.send).mock.calls
+      .map(call => JSON.parse(call[0] as string))
+      .find(frame => frame.type === 'heartbeat_ack');
+    expect(ack).toBeDefined();
+    expect(ack!.commands).toEqual([]);
+  });
+});
+
+// #2434 — agent-supplied error/output strings persisted OUTSIDE device_commands
+// must be redacted too (script_executions, tunnel_sessions, remote_sessions).
+describe('#2434 — secret redaction on non-device_commands persistence surfaces', () => {
+  const pem2434 =
+    '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKe0m0h\n-----END RSA PRIVATE KEY-----';
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('redacts stdout/stderr/errorMessage persisted to script_executions', async () => {
+    const preValidatedAgent = { deviceId: 'device-se', orgId: 'org-se' };
+    vi.mocked(db.select).mockReturnValueOnce(selectOwnedCommandResult([
+      { id: 'cmd-se', type: 'script', payload: { executionId: 'exec-1' }, deviceId: 'device-se' },
+    ]) as any);
+
+    // 1st update: device_commands terminal transition. 2nd: script_executions.
+    const scriptSetSpy = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([{ id: 'exec-1', scriptId: 'script-1' }]),
+      }),
+    });
+    vi.mocked(db.update)
+      .mockReturnValueOnce(updateResult([{ id: 'cmd-se' }]) as any)
+      .mockReturnValueOnce({ set: scriptSetSpy } as any);
+
+    const handlers = createAgentWsHandlers('agent-se', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '99999999-9999-4999-8999-999999999999',
+        status: 'failed',
+        exitCode: 1,
+        stdout: `out with key:\n${pem2434}`,
+        stderr: `err with key:\n${pem2434}`,
+        error: `boom with key:\n${pem2434}`,
+      }),
+    } as any, ws as any);
+
+    expect(scriptSetSpy).toHaveBeenCalledTimes(1);
+    const stored = scriptSetSpy.mock.calls[0]![0] as {
+      stdout: string; stderr: string; errorMessage: string;
+    };
+    for (const field of ['stdout', 'stderr', 'errorMessage'] as const) {
+      expect(stored[field]).toContain('[PRIVATE_KEY_REDACTED]');
+      expect(stored[field]).not.toContain('BEGIN RSA PRIVATE KEY');
+    }
+  });
+
+  it('redacts tunnel_sessions.errorMessage on a failed tun-open result (orphaned-path chokepoint)', async () => {
+    const preValidatedAgent = { deviceId: 'device-tn', orgId: 'org-tn' };
+    const tunnelSetSpy = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([{ id: 'tunnel1', deviceId: 'device-tn' }]),
+      }),
+    });
+    vi.mocked(db.update).mockReturnValue({ set: tunnelSetSpy } as any);
+
+    const handlers = createAgentWsHandlers('agent-tn', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: 'tun-open-tunnel1',
+        status: 'failed',
+        error: `tunnel bind failed, key follows:\n${pem2434}`,
+      }),
+    } as any, ws as any);
+
+    expect(tunnelSetSpy).toHaveBeenCalledTimes(1);
+    const stored = tunnelSetSpy.mock.calls[0]![0] as { errorMessage: string };
+    expect(stored.errorMessage).toContain('[PRIVATE_KEY_REDACTED]');
+    expect(stored.errorMessage).not.toContain('BEGIN RSA PRIVATE KEY');
+  });
+
+  it('hands per-type handlers a redacted result — pins the processCommandResult chokepoint', async () => {
+    // Regression guard for the chokepoint itself. Several downstream handlers
+    // (CIS failure branch, software-remediation audit) persist agent error text
+    // that ONLY this call redacts on the WS leg. Without this test, deleting the
+    // chokepoint leaves every other suite green while raw key material lands in
+    // cis_baseline_results. `backup_verify` is the probe: its handler is mocked,
+    // so we can assert exactly what the dispatch handed it.
+    const preValidatedAgent = { deviceId: 'device-ck', orgId: 'org-ck' };
+    vi.mocked(db.select).mockReturnValueOnce(selectOwnedCommandResult([
+      { id: 'cmd-ck', type: 'backup_verify', payload: {}, deviceId: 'device-ck' },
+    ]) as any);
+    vi.mocked(db.update).mockReturnValue(updateResult([{ id: 'cmd-ck' }]) as any);
+
+    const handlers = createAgentWsHandlers('agent-ck', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '99999999-9999-4999-8999-999999999999',
+        status: 'failed',
+        exitCode: 1,
+        error: `verify failed, key follows:\n${pem2434}`,
+        stderr: `stderr, key follows:\n${pem2434}`,
+      }),
+    } as any, ws as any);
+
+    expect(processBackupVerificationResult).toHaveBeenCalledTimes(1);
+    const handed = vi.mocked(processBackupVerificationResult).mock.calls[0]![1] as {
+      error?: string;
+    };
+    expect(handed.error).toContain('[PRIVATE_KEY_REDACTED]');
+    expect(JSON.stringify(handed)).not.toContain('BEGIN RSA PRIVATE KEY');
+  });
+
+  it('redacts remote_sessions.errorMessage on a failed desk-start result (fast path)', async () => {
+    const preValidatedAgent = { deviceId: 'device-rs', orgId: 'org-rs' };
+    const sessionSetSpy = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([{ id: 'sess1' }]),
+      }),
+    });
+    vi.mocked(db.update).mockReturnValue({ set: sessionSetSpy } as any);
+
+    const handlers = createAgentWsHandlers('agent-rs', preValidatedAgent);
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: 'desk-start-sess1',
+        status: 'failed',
+        error: `capture init failed, key follows: ${pem2434}`,
+      }),
+    } as any, ws as any);
+
+    expect(sessionSetSpy).toHaveBeenCalledTimes(1);
+    const stored = sessionSetSpy.mock.calls[0]![0] as { errorMessage: string };
+    expect(stored.errorMessage).toContain('[PRIVATE_KEY_REDACTED]');
+    expect(stored.errorMessage).not.toContain('BEGIN RSA PRIVATE KEY');
+  });
+});
+
+// #1375 / BREEZE-7: the device_commands lookup + terminal compare-and-set on the
+// WS result path deliberately run OUTSIDE the held org-scoped transaction (fresh
+// snapshot visibility), but for a long time they ran with NO DB access context at
+// all — tripping the contextless-write guard in db/index.ts on every fresh
+// process and flooding Sentry. device_commands has no RLS so the write always
+// landed; the bug was the false invariant + the noise. The fix nests
+// withSystemDbAccessContext INSIDE runOutsideDbContext (same shape as
+// isAgentDeviceStillAuthorized here and the insert in services/commandQueue.ts).
+//
+// The READ is intentionally NOT wrapped in a system context: only
+// insert/update/delete are instrumented by the guard, and device_commands has
+// no RLS, so wrapping the read would add a BEGIN + set_config×6 + COMMIT per
+// command result on the hottest agent path for zero #1375 coverage (#1105).
+//
+// NOTE ON WHAT THIS SUITE CAN AND CANNOT PROVE: `../db` is mocked wholesale
+// here, so these assertions cover the WRAPPER COMPOSITION only — they cannot
+// prove the real guard goes quiet, because the real proxy, the real
+// AsyncLocalStorage, and withDbAccessContext's already-in-a-context early
+// return never execute. The real-guard assertions live in
+// db/contextlessWriteGuard.test.ts ('wrapper composition around a
+// device_commands-style write'), which drives the actual proxy. Keep both:
+// this one pins the call site, that one pins the mechanism.
+describe('device_commands access context on the WS result path (#1375)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('runs the device_commands write inside a system context nested in runOutsideDbContext, and the read outside any context', async () => {
+    // Track the ACTIVE WRAPPER STACK, not just depth counters. Depth counters
+    // are order-blind: `system(outside(write))` — the inverted nesting, which
+    // is the #1375 bug re-introduced, since runOutsideDbContext exits the
+    // context that was just established — produces the same non-zero counts as
+    // the correct `outside(system(write))`. Snapshotting the stack at the
+    // moment of each DB call is what makes that mutant detectable.
+    const stack: string[] = [];
+    const observed: Array<{ op: 'select' | 'update'; table: unknown; stack: string[] }> = [];
+
+    vi.mocked(runOutsideDbContext).mockImplementation((async (fn: any) => {
+      stack.push('outside');
+      try {
+        return await fn();
+      } finally {
+        stack.pop();
+      }
+    }) as any);
+    vi.mocked(withSystemDbAccessContext).mockImplementation((async (fn: any) => {
+      stack.push('system');
+      try {
+        return await fn();
+      } finally {
+        stack.pop();
+      }
+    }) as any);
+
+    const record = (op: 'select' | 'update', table: unknown) => {
+      observed.push({ op, table, stack: [...stack] });
+    };
+
+    // device_commands lookup returns the owned command; every other select
+    // (the devices lifecycle recheck) returns no rows and fails open.
+    const commandRow = { id: 'cmd-1375', type: 'run_script', payload: {}, deviceId: 'device-123' };
+    vi.mocked(db.select).mockImplementation((() => ({
+      from: vi.fn((table: unknown) => {
+        record('select', table);
+        const rows = table === deviceCommands ? [commandRow] : [];
+        return {
+          where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue(rows) }),
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([]) }),
+          }),
+        };
+      }),
+    })) as any);
+
+    vi.mocked(db.update).mockImplementation(((table: unknown) => {
+      record('update', table);
+      const returning = vi.fn().mockResolvedValue([{ id: 'cmd-1375' }]);
+      return {
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({ returning }),
+          returning,
+        }),
+      };
+    }) as any);
+
+    const handlers = createAgentWsHandlers('agent-123', { deviceId: 'device-123', orgId: 'org-123' });
+    const ws = wsMock();
+
+    await handlers.onMessage({
+      data: JSON.stringify({
+        type: 'command_result',
+        commandId: '33333333-3333-4333-8333-333333333333',
+        status: 'completed',
+        exitCode: 0,
+        stdout: 'ok',
+      }),
+    } as any, ws as any);
+
+    const commandOps = observed.filter((o) => o.table === deviceCommands);
+    expect(commandOps.map((o) => o.op)).toEqual(['select', 'update']);
+
+    const read = commandOps.find((o) => o.op === 'select')!;
+    const write = commandOps.find((o) => o.op === 'update')!;
+
+    // Read: outside the held tenant transaction for fresh-snapshot visibility,
+    // and deliberately NOT in a system context (see the note above).
+    expect(read.stack).toEqual(['outside']);
+
+    // Write: outside the held tenant transaction AND inside an explicit system
+    // context — in that exact order. Asserting the full stack (rather than
+    // "both are non-zero") is what fails if the two wrappers are ever swapped.
+    expect(write.stack).toEqual(['outside', 'system']);
   });
 });

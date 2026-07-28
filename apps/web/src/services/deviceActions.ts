@@ -394,6 +394,54 @@ export async function decommissionDevice(deviceId: string): Promise<{ success: b
   return data.data ?? data;
 }
 
+/**
+ * Link 2+ devices as boot profiles of one physical machine (#2138). All must
+ * belong to the same organization and be currently unlinked; the API enforces
+ * both.
+ */
+export async function linkDevicesMultiboot(
+  deviceIds: string[],
+  name?: string,
+): Promise<{ id: string }> {
+  const response = await fetchWithAuth('/devices/link-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(name ? { deviceIds, name } : { deviceIds }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response, 'Failed to link devices'));
+  }
+
+  const data = await response.json();
+  return data.data ?? data;
+}
+
+/**
+ * Create a vm_host link group (#2308): `hostDeviceId` becomes the host server,
+ * every other member of `deviceIds` becomes a guest VM nested under it in the
+ * device list. `hostDeviceId` must be included in `deviceIds`; same-org and
+ * not-already-linked rules match the multiboot path (the API enforces all).
+ */
+export async function linkDevicesVmHost(
+  hostDeviceId: string,
+  deviceIds: string[],
+  name?: string,
+): Promise<{ id: string }> {
+  const response = await fetchWithAuth('/devices/link-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'vm_host', hostDeviceId, deviceIds, ...(name ? { name } : {}) }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response, 'Failed to link devices'));
+  }
+
+  const data = await response.json();
+  return data.data ?? data;
+}
+
 export async function restoreDevice(deviceId: string): Promise<{ success: boolean }> {
   const response = await fetchWithAuth(`/devices/${deviceId}/restore`, {
     method: 'POST'

@@ -1,8 +1,13 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import type { AuthContext } from '../../middleware/auth';
 import { hasSatisfiedMfa, requirePermission, requireScope } from '../../middleware/auth';
-import { backupInlineSettingsSchema, patchInlineSettingsSchema } from '@breeze/shared/validators';
+import {
+  backupInlineSettingsSchema,
+  backupProfileLinkedInlineSettingsSchema,
+  onedriveHelperInlineSettingsSchema,
+  patchInlineSettingsSchema,
+} from '@breeze/shared/validators';
 import { ORG_SCOPED_ONLY_FEATURE_TYPES } from '@breeze/shared/constants';
 import { writeRouteAudit } from '../../services/auditEvents';
 import { PERMISSIONS } from '../../services/permissions';
@@ -19,6 +24,7 @@ import {
   canManagePartnerWidePolicies,
   PARTNER_WIDE_WRITE_DENIED_MESSAGE,
   PARTNER_LINKABLE_FEATURE_TYPES,
+  isBackupProfileReference,
 } from '../../services/configurationPolicy';
 import {
   addFeatureLinkSchema,
@@ -130,7 +136,11 @@ featureLinkRoutes.post(
     }
 
     if (data.featureType === 'backup' && data.inlineSettings) {
-      const parsed = backupInlineSettingsSchema.safeParse(data.inlineSettings);
+      const profileLinked = await isBackupProfileReference(data.featurePolicyId);
+      const schema = profileLinked
+        ? backupProfileLinkedInlineSettingsSchema
+        : backupInlineSettingsSchema;
+      const parsed = schema.safeParse(data.inlineSettings);
       if (!parsed.success) {
         return c.json(
           { error: 'Invalid backup settings', details: parsed.error.flatten(), issues: parsed.error.issues },
@@ -156,6 +166,17 @@ featureLinkRoutes.post(
       if (!parsed.success) {
         return c.json(
           { error: 'Invalid remote access settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+          400
+        );
+      }
+      data.inlineSettings = parsed.data;
+    }
+
+    if (data.featureType === 'onedrive_helper' && data.inlineSettings) {
+      const parsed = onedriveHelperInlineSettingsSchema.safeParse(data.inlineSettings);
+      if (!parsed.success) {
+        return c.json(
+          { error: 'Invalid onedrive_helper settings', details: parsed.error.flatten(), issues: parsed.error.issues },
           400
         );
       }
@@ -254,7 +275,17 @@ featureLinkRoutes.patch(
         data.inlineSettings = parsed.data;
       }
       if (existingLink.featureType === 'backup') {
-        const parsed = backupInlineSettingsSchema.safeParse(data.inlineSettings);
+        // PATCH may keep the existing profile reference (featurePolicyId
+        // omitted) or change/clear it — resolve against the effective value.
+        const effectiveFeaturePolicyId =
+          data.featurePolicyId !== undefined
+            ? data.featurePolicyId
+            : existingLink.featurePolicyId;
+        const profileLinked = await isBackupProfileReference(effectiveFeaturePolicyId);
+        const schema = profileLinked
+          ? backupProfileLinkedInlineSettingsSchema
+          : backupInlineSettingsSchema;
+        const parsed = schema.safeParse(data.inlineSettings);
         if (!parsed.success) {
           return c.json(
             { error: 'Invalid backup settings', details: parsed.error.flatten(), issues: parsed.error.issues },
@@ -278,6 +309,16 @@ featureLinkRoutes.patch(
         if (!parsed.success) {
           return c.json(
             { error: 'Invalid remote access settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+            400
+          );
+        }
+        data.inlineSettings = parsed.data;
+      }
+      if (existingLink.featureType === 'onedrive_helper') {
+        const parsed = onedriveHelperInlineSettingsSchema.safeParse(data.inlineSettings);
+        if (!parsed.success) {
+          return c.json(
+            { error: 'Invalid onedrive_helper settings', details: parsed.error.flatten(), issues: parsed.error.issues },
             400
           );
         }

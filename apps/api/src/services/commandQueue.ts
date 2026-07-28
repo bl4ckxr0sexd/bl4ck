@@ -124,6 +124,11 @@ export const CommandTypes = {
   // Log shipping
   SET_LOG_LEVEL: 'set_log_level',
 
+  // Runtime diagnostics — on-demand pprof capture from the agent (#2389).
+  // Profiles are captured in-process and returned base64 in the command
+  // result; the agent never opens a listening socket for this.
+  CAPTURE_PPROF: 'capture_pprof',
+
   // Screenshot (AI Vision)
   TAKE_SCREENSHOT: 'take_screenshot',
 
@@ -199,6 +204,14 @@ export interface CommandResult {
   error?: string;
   durationMs?: number;
   data?: unknown;
+  /**
+   * The device_commands row id, attached by executeCommand once a command row
+   * exists (success or failure). Lets callers point at the persisted result
+   * (e.g. the AI pprof tool references GET /devices/:id/commands/:commandId
+   * instead of inlining the artifact). Absent only on failures that occur
+   * before the row is created (device missing/offline, insert failure).
+   */
+  commandId?: string;
 }
 
 export interface QueuedCommand {
@@ -273,6 +286,9 @@ const AUDITED_COMMANDS: Set<string> = new Set([
   CommandTypes.QUARANTINE_FILE,
   CommandTypes.TAKE_SCREENSHOT,
   CommandTypes.COMPUTER_ACTION,
+  // Runtime diagnostics — profiling the agent process is a privileged
+  // diagnostic action; keep a durable audit trail of who triggered it (#2401).
+  CommandTypes.CAPTURE_PPROF,
   CommandTypes.MANAGE_STARTUP_ITEM,
   CommandTypes.APPLY_AUDIT_POLICY_BASELINE,
   // Peripheral control — pushes full active policy set to agent
@@ -838,7 +854,9 @@ export async function executeCommand(
           // may still pick the command up via the heartbeat path before the
           // timeout fires, in which case the user gets a real result.
           if (INTERACTIVE_COMMAND_TYPES.has(type)) {
-            return { status: 'failed' as const, error: DEVICE_UNREACHABLE_ERROR };
+            // Row already exists at this point — attach its id so the
+            // "commandId present ⇔ row exists" contract holds on this path too.
+            return { status: 'failed' as const, error: DEVICE_UNREACHABLE_ERROR, commandId: command.id };
           }
         }
       }
@@ -847,10 +865,11 @@ export async function executeCommand(
     // Poll for result
     const result = await waitForCommandResult(command.id, timeoutMs);
 
-    return result.result ?? {
+    const finalResult = result.result ?? {
       status: 'failed' as const,
       error: 'Command did not complete',
     };
+    return { ...finalResult, commandId: command.id };
   });
 }
 

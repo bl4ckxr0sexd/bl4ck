@@ -1,3 +1,4 @@
+import type { ResolvedEnrollmentDefaults } from '@breeze/shared';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { fetchWithAuth, registerOrgIdProvider } from './auth';
@@ -31,7 +32,6 @@ export interface Site {
 interface OrgState {
   currentPartnerId: string | null;
   currentOrgId: string | null;
-  currentSiteId: string | null;
   /**
    * True when the user has *explicitly* chosen the All-orgs scope via the
    * scope pill (currentOrgId is null on purpose), as opposed to the transient
@@ -50,15 +50,45 @@ interface OrgState {
   partners: Partner[];
   organizations: Organization[];
   sites: Site[];
+  /**
+   * The current org's resolved enrollment defaults (TTL, device count, partner
+   * TTL cap), delivered on the GET /orgs/sites response rather than by a
+   * dedicated fetch — the Add Device modal is on the device-add hot path and
+   * already waits on that request (#2776). Null until the first sites fetch for
+   * the selected org resolves, or when the API soft-failed the settings read;
+   * consumers must fall back to the shared product defaults.
+   */
+  enrollmentDefaults: ResolvedEnrollmentDefaults | null;
   isLoading: boolean;
   error: string | null;
+  /**
+   * Flips true the first time `fetchOrganizations` completes successfully this
+   * session (never persisted — resets each load). Lets consumers tell "the org
+   * list hasn't loaded yet" apart from "it loaded and this partner has zero
+   * orgs": both leave currentOrgId null with allOrgs false, but the first is a
+   * transient skeleton state and the second is terminal. See `useOrgScope`.
+   */
+  organizationsLoaded: boolean;
 
   // Actions
   setPartner: (partnerId: string) => void;
-  /** Pass a non-empty orgId to select that org; pass '' or null to clear the
-   * selection (currentOrgId → null, currentSiteId → null, allOrgs → true). */
+  /** Seed currentPartnerId WITHOUT resetting the org context. For "we just
+   * learned which partner this session belongs to" (JWT claims, first partner
+   * fetch) — as opposed to setPartner's real partner switch, whose reset +
+   * auto-select silently snaps the user to the first org. */
+  adoptPartnerId: (partnerId: string) => void;
+  /** Select a concrete organization (fetches its sites). */
+  selectOrganization: (orgId: string) => void;
+  /** Enter the explicit All-organizations (fleet) scope. */
+  selectAllOrgs: () => void;
+  /** Clear the selection WITHOUT asserting fleet intent — currentOrgId → null,
+   * allOrgs → false (the transient/unresolved shape). For the vanished-org
+   * path, not user-initiated. */
+  resetSelection: () => void;
+  /** Thin delegator kept for existing call sites: a non-empty orgId selects
+   * that org, '' or null enters fleet view. Prefer the explicit
+   * `selectOrganization` / `selectAllOrgs` in new code. */
   setOrganization: (orgId: string | null) => void;
-  setSite: (siteId: string | null) => void;
   fetchPartners: () => Promise<void>;
   fetchOrganizations: () => Promise<void>;
   fetchSites: () => Promise<void>;
@@ -70,47 +100,67 @@ export const useOrgStore = create<OrgState>()(
     (set, get) => ({
       currentPartnerId: null,
       currentOrgId: null,
-      currentSiteId: null,
       allOrgs: false,
       lastOrgId: null,
       partners: [],
       organizations: [],
       sites: [],
+      enrollmentDefaults: null,
       isLoading: false,
       error: null,
+      organizationsLoaded: false,
 
       setPartner: (partnerId) => {
         set({
           currentPartnerId: partnerId,
           currentOrgId: null,
-          currentSiteId: null,
           // Switching partner resets to the default scope so the new partner's
           // first org gets auto-selected rather than landing in All-orgs.
           allOrgs: false,
           organizations: [],
-          sites: []
+          // The new partner's org list hasn't loaded yet — back to the
+          // "loading" shape until the refetch below resolves.
+          organizationsLoaded: false,
+          sites: [],
+          enrollmentDefaults: null
         });
         // Fetch organizations for the new partner
         get().fetchOrganizations();
       },
 
-      setOrganization: (orgId) => {
-        // Falsy ('' or null) clears the selection entirely → explicit All-orgs.
-        const resolved = orgId || null;
-        set({
-          currentOrgId: resolved,
-          currentSiteId: null,
-          sites: [],
-          allOrgs: !resolved,
-          // Remember the concrete org so the "Current" pill can return to it.
-          ...(resolved ? { lastOrgId: resolved } : {})
-        });
-        // Fetch sites only when an org is actually selected.
-        if (resolved) get().fetchSites();
+      adoptPartnerId: (partnerId) => {
+        set({ currentPartnerId: partnerId });
       },
 
-      setSite: (siteId) => {
-        set({ currentSiteId: siteId });
+      selectOrganization: (orgId) => {
+        set({
+          currentOrgId: orgId,
+          sites: [],
+          // Belongs to the org we just left — never show one org's cap while
+          // minting a link for another.
+          enrollmentDefaults: null,
+          allOrgs: false,
+          // Remember the concrete org so the "Current" pill can return to it.
+          lastOrgId: orgId
+        });
+        get().fetchSites();
+      },
+
+      selectAllOrgs: () => {
+        set({ currentOrgId: null, sites: [], enrollmentDefaults: null, allOrgs: true });
+      },
+
+      resetSelection: () => {
+        // Clear WITHOUT asserting fleet intent: currentOrgId null + allOrgs
+        // false is the transient/unresolved shape, distinct from an explicit
+        // All-orgs choice.
+        set({ currentOrgId: null, sites: [], enrollmentDefaults: null, allOrgs: false });
+      },
+
+      setOrganization: (orgId) => {
+        // Falsy ('' or null) clears the selection entirely → explicit All-orgs.
+        if (orgId) get().selectOrganization(orgId);
+        else get().selectAllOrgs();
       },
 
       fetchPartners: async () => {
@@ -136,10 +186,23 @@ export const useOrgStore = create<OrgState>()(
           // Auto-select first partner if none selected or cached partner no longer exists
           const { currentPartnerId } = get();
           const cachedPartnerExists = currentPartnerId && partners.some((p: Partner) => p.id === currentPartnerId);
-          if ((!currentPartnerId || !cachedPartnerExists) && partners.length > 0) {
-            get().setPartner(partners[0].id);
+          if (!currentPartnerId && partners.length > 0) {
+            // First resolution of the partner id (typical single-partner login):
+            // adopt it WITHOUT the setPartner reset. setPartner clears the org
+            // selection and the allOrgs intent, and the subsequent auto-select
+            // then snaps the user to the first org — so any page that fetched
+            // partners (e.g. /settings/partner) silently hijacked whatever
+            // context the user had chosen.
+            get().adoptPartnerId(partners[0].id);
+            get().fetchOrganizations();
           } else if (currentPartnerId && !cachedPartnerExists) {
-            get().clearOrgContext();
+            // The cached partner genuinely vanished — a real context change, so
+            // the full reset (or clear when nothing to select) is correct.
+            if (partners.length > 0) {
+              get().setPartner(partners[0].id);
+            } else {
+              get().clearOrgContext();
+            }
           }
         } catch (error) {
           set({
@@ -169,7 +232,10 @@ export const useOrgStore = create<OrgState>()(
                 : [];
           set({
             organizations,
-            isLoading: false
+            isLoading: false,
+            // The list has now resolved for this session; a still-null org from
+            // here on means "zero orgs", not "not loaded yet".
+            organizationsLoaded: true
           });
 
           // Auto-select first organization if none selected or cached org no
@@ -179,12 +245,12 @@ export const useOrgStore = create<OrgState>()(
           const { currentOrgId, allOrgs } = get();
           const cachedOrgExists = currentOrgId && organizations.some((o: Organization) => o.id === currentOrgId);
           if (!allOrgs && (!currentOrgId || !cachedOrgExists) && organizations.length > 0) {
-            get().setOrganization(organizations[0].id);
+            get().selectOrganization(organizations[0].id);
           } else if (currentOrgId && !cachedOrgExists) {
-            // Cached org vanished with nothing to auto-select. Clear allOrgs too
-            // so we don't persist a contradictory null (currentOrgId null while
-            // allOrgs false would read as an explicit All-orgs choice elsewhere).
-            set({ currentOrgId: null, currentSiteId: null, sites: [], allOrgs: false });
+            // Cached org vanished with nothing to auto-select. Reset to the
+            // unresolved shape (allOrgs stays false) so we don't persist a
+            // contradictory null that reads as an explicit All-orgs choice.
+            get().resetSelection();
           }
         } catch (error) {
           set({
@@ -197,13 +263,21 @@ export const useOrgStore = create<OrgState>()(
       fetchSites: async () => {
         const { currentOrgId } = get();
         if (!currentOrgId) {
-          set({ sites: [] });
+          set({ sites: [], enrollmentDefaults: null });
           return;
         }
 
         set({ isLoading: true, error: null });
         try {
-          const response = await fetchWithAuth(`/orgs/sites?organizationId=${currentOrgId}`);
+          // `includeEnrollmentDefaults=1` opts this ONE caller into the extra
+          // org⋈partner settings read (#2776). It is opt-in because that read
+          // takes a second pooled connection while this request holds the
+          // first, and GET /orgs/sites is called from several places — see the
+          // pool-exhaustion note at the route. This store is the only consumer
+          // of `enrollmentDefaults`, so it is the only caller that asks.
+          const response = await fetchWithAuth(
+            `/orgs/sites?organizationId=${currentOrgId}&includeEnrollmentDefaults=1`,
+          );
           if (!response.ok) {
             throw new Error('Failed to fetch sites');
           }
@@ -215,8 +289,14 @@ export const useOrgStore = create<OrgState>()(
               : Array.isArray(data)
                 ? data
                 : [];
+          // #2776: the API rides the org's resolved enrollment defaults along
+          // on this response. Absent when the settings read soft-failed server
+          // side — keep the previous value rather than blanking a good one.
+          const enrollmentDefaults = (data?.enrollmentDefaults ??
+            get().enrollmentDefaults) as ResolvedEnrollmentDefaults | null;
           set({
             sites,
+            enrollmentDefaults,
             isLoading: false
           });
         } catch (error) {
@@ -231,7 +311,6 @@ export const useOrgStore = create<OrgState>()(
         set({
           currentPartnerId: null,
           currentOrgId: null,
-          currentSiteId: null,
           // Reset the persisted scope fields too, or a logout→login as a
           // different user inherits the prior user's All-orgs choice / stale
           // lastOrgId (both are persisted).
@@ -239,20 +318,36 @@ export const useOrgStore = create<OrgState>()(
           lastOrgId: null,
           partners: [],
           organizations: [],
+          organizationsLoaded: false,
           sites: [],
+          enrollmentDefaults: null,
           error: null
         });
       }
     }),
     {
       name: 'breeze-org',
+      // currentSiteId is intentionally no longer part of this state: the global
+      // site selection only ever filtered data on Discovery; two enrollment
+      // forms (AddDeviceModal, EnrollmentKeyManager) merely read it as a default
+      // site. So site handling moved into the pages that support it, and
+      // dropping it from partialize discards any stale persisted value.
       partialize: (state) => ({
         currentPartnerId: state.currentPartnerId,
         currentOrgId: state.currentOrgId,
-        currentSiteId: state.currentSiteId,
         allOrgs: state.allOrgs,
         lastOrgId: state.lastOrgId
-      })
+      }),
+      // Normalize a contradictory persisted pair on rehydrate. A concrete org
+      // selection wins over a stale allOrgs flag (an older schema or tampered
+      // localStorage could persist both). useOrgScope's precedence rule papers
+      // over this too, but only for hook consumers — fix it at the source so
+      // raw `allOrgs` readers can't observe the contradiction either.
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<OrgState> | undefined) };
+        if (merged.currentOrgId && merged.allOrgs) merged.allOrgs = false;
+        return merged;
+      }
     }
   )
 );
@@ -272,13 +367,6 @@ export function getCurrentOrganization(): Organization | null {
   const { currentOrgId, organizations } = useOrgStore.getState();
   if (!currentOrgId) return null;
   return organizations.find((org) => org.id === currentOrgId) || null;
-}
-
-// Helper to get current site details
-export function getCurrentSite(): Site | null {
-  const { currentSiteId, sites } = useOrgStore.getState();
-  if (!currentSiteId) return null;
-  return sites.find((site) => site.id === currentSiteId) || null;
 }
 
 // Helper to get current partner details

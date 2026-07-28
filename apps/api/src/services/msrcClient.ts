@@ -1,3 +1,5 @@
+import { assertSomeValidCveIds, isValidCveId, warnMalformedCveIds } from './cveId';
+
 const BASE_URL = 'https://api.msrc.microsoft.com/cvrf/v3.0';
 
 export interface MsrcRecord {
@@ -80,7 +82,23 @@ export async function fetchCvrf(month: string): Promise<unknown> {
   return res.json();
 }
 
-export function parseCvrf(doc: unknown): MsrcRecord[] {
+export interface MsrcParseResult {
+  records: MsrcRecord[];
+  /** Distinct malformed CVE ids dropped at the parse boundary — for log samples (#2427). */
+  skippedCveIds: ReadonlySet<string>;
+  /**
+   * Number of upstream CVE ENTRIES dropped, counting occurrences (#2427).
+   * Microsoft's CBL-Mariner feed ships the SAME bogus literal id on every
+   * affected entry, so a distinct-id count would report a mass drop as 1 and
+   * hide the exact regression this instrumentation exists to catch. Includes
+   * entries dropped for a missing id.
+   */
+  skippedCount: number;
+  /** Total upstream CVE entries considered (kept + skipped) — the ratio denominator. */
+  entryCount: number;
+}
+
+export function parseCvrf(doc: unknown): MsrcParseResult {
   const cvrf = doc as CvrfDocument;
   const productNames = new Map<string, string>();
   const productCpes = new Map<string, string>();
@@ -101,9 +119,26 @@ export function parseCvrf(doc: unknown): MsrcRecord[] {
   }
 
   const records: MsrcRecord[] = [];
-  for (const vulnerability of asArray<CvrfVulnerability>(cvrf.Vulnerability)) {
+  const malformedCveIds = new Set<string>();
+  const vulnerabilityEntries = asArray<CvrfVulnerability>(cvrf.Vulnerability);
+  let validCveIdCount = 0;
+  let skippedCount = 0;
+  for (const vulnerability of vulnerabilityEntries) {
     const cveId = stringValue(vulnerability.CVE);
-    if (!cveId) continue;
+    if (!cveId) {
+      // A missing id is still a silently dropped CVE — count it (#2427).
+      skippedCount += 1;
+      continue;
+    }
+    // Upstream garbage guard (#2261): Microsoft has shipped CVRF records whose
+    // CVE id is free text longer than varchar(32). Drop them here so one bad
+    // record can't abort the whole sync transaction.
+    if (!isValidCveId(cveId)) {
+      malformedCveIds.add(cveId);
+      skippedCount += 1;
+      continue;
+    }
+    validCveIdCount += 1;
 
     const scoreSet = asArray<CvrfScoreSet>(vulnerability.CVSSScoreSets)[0];
     const cvssScore = numericValue(scoreSet?.BaseScore);
@@ -135,7 +170,19 @@ export function parseCvrf(doc: unknown): MsrcRecord[] {
     }
   }
 
-  return records;
+  assertSomeValidCveIds({
+    tag: 'MsrcClient',
+    entryCount: vulnerabilityEntries.length,
+    validCount: validCveIdCount,
+    malformedIds: malformedCveIds,
+  });
+  warnMalformedCveIds('MsrcClient', malformedCveIds);
+  return {
+    records,
+    skippedCveIds: malformedCveIds,
+    skippedCount,
+    entryCount: vulnerabilityEntries.length,
+  };
 }
 
 function asArray<T>(value: unknown): T[] {

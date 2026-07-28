@@ -39,7 +39,9 @@ export const scriptSchema = z.object({
     .number({ error: 'Enter a timeout value' })
     .int('Timeout must be a whole number')
     .min(1, 'Timeout must be at least 1 second')
-    .max(86400, 'Timeout cannot exceed 24 hours'),
+    // 3600 = agent-side executor hard cap; larger values would be silently
+    // clamped to 1 hour on the device (#2398).
+    .max(3600, 'Timeout cannot exceed 1 hour (3600 seconds)'),
   runAs: z.enum(['system', 'user', 'elevated']),
   // Auto-run this script the first time each in-org device connects.
   runOnConnect: z.boolean().optional().default(false),

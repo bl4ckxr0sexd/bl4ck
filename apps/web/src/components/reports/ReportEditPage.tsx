@@ -5,15 +5,23 @@ import type { Report, ReportType } from './ReportsList';
 import { fetchWithAuth } from '../../stores/auth';
 import { navigateTo } from '@/lib/navigation';
 import Breadcrumbs from '../layout/Breadcrumbs';
+import { PostureBackupRequiredField } from './PostureReportOptionsForm';
+import { useTranslation } from 'react-i18next';
+// Initializes the shared i18next singleton. Islands hydrate independently, so
+// an island that hydrates before whichever other island happens to pull i18n in
+// would otherwise render raw keys (and mismatch the SSR markup).
+import '../../lib/i18n';
 
 type ReportEditPageProps = {
   reportId: string;
 };
 
 export default function ReportEditPage({ reportId }: ReportEditPageProps) {
+  const { t } = useTranslation('reports');
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const [backupRequired, setBackupRequired] = useState(true);
 
   const fetchReport = useCallback(async () => {
     try {
@@ -21,16 +29,18 @@ export default function ReportEditPage({ reportId }: ReportEditPageProps) {
       setError(undefined);
       const response = await fetchWithAuth(`/reports/${reportId}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch report');
+        throw new Error(t('reports.reportEditPage.errors.fetchReport'));
       }
-      const data = await response.json();
+      const data = await response.json() as Report;
       setReport(data);
+      const config = data.config as Record<string, unknown>;
+      setBackupRequired(config.backupRequired !== false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : t('reports.reportEditPage.errors.generic'));
     } finally {
       setLoading(false);
     }
-  }, [reportId]);
+  }, [reportId, t]);
 
   useEffect(() => {
     fetchReport();
@@ -50,7 +60,7 @@ export default function ReportEditPage({ reportId }: ReportEditPageProps) {
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading report...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('reports.reportEditPage.loading')}</p>
         </div>
       </div>
     );
@@ -66,16 +76,16 @@ export default function ReportEditPage({ reportId }: ReportEditPageProps) {
           >
             <ArrowLeft className="h-4 w-4" />
           </a>
-          <h1 className="text-xl font-semibold tracking-tight">Edit Report</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{t('reports.reportEditPage.title')}</h1>
         </div>
 
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
-          <p className="text-sm text-destructive">{error || 'Report not found'}</p>
+          <p className="text-sm text-destructive">{error || t('reports.reportEditPage.notFound')}</p>
           <a
             href="/reports"
             className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
-            Back to Reports
+            {t('reports.reportEditPage.backToReports')}
           </a>
         </div>
       </div>
@@ -84,6 +94,7 @@ export default function ReportEditPage({ reportId }: ReportEditPageProps) {
 
   // Convert report config to form values
   const config = report.config as Record<string, unknown>;
+  const isPosture = report.type === 'security_compliance_posture';
   const defaultValues: Partial<ReportBuilderFormValues> = {
     name: report.name,
     type: report.type as ReportType,
@@ -98,8 +109,8 @@ export default function ReportEditPage({ reportId }: ReportEditPageProps) {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <Breadcrumbs items={[
-        { label: 'Reports', href: '/reports' },
-        { label: report.name || 'Edit Report' }
+        { label: t('reports.reportEditPage.reportsBreadcrumb'), href: '/reports' },
+        { label: report.name || t('reports.reportEditPage.title') }
       ]} />
       <div className="flex items-center gap-4">
         <a
@@ -109,17 +120,27 @@ export default function ReportEditPage({ reportId }: ReportEditPageProps) {
           <ArrowLeft className="h-4 w-4" />
         </a>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Edit Report</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{t('reports.reportEditPage.title')}</h1>
           <p className="text-muted-foreground">
-            Update the configuration for "{report.name}".
+            {t('reports.reportEditPage.description', { name: report.name })}
           </p>
         </div>
       </div>
+
+      {isPosture && (
+        <div className="rounded-lg border bg-card p-6 shadow-xs">
+          <PostureBackupRequiredField
+            backupRequired={backupRequired}
+            onBackupRequiredChange={setBackupRequired}
+          />
+        </div>
+      )}
 
       <ReportBuilder
         mode="edit"
         reportId={reportId}
         defaultValues={defaultValues}
+        baseConfig={isPosture ? { ...config, backupRequired } : config}
         onSubmit={handleSubmit}
         onCancel={handleCancel}
       />

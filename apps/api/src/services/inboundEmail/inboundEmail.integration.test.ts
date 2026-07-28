@@ -2,7 +2,7 @@
  * Cross-partner isolation integration test for the inbound email pipeline
  * (real postgres.js driver).
  *
- * Task 12 of docs/superpowers/plans/2026-06-13-ticketing-phase4-email-ingest-backend.md.
+ * Task 12 of docs/superpowers/plans/ticketing/2026-06-13-ticketing-phase4-email-ingest-backend.md.
  *
  * The unit tests in inboundEmailService.test.ts mock the DB; this suite proves
  * the app-level isolation guards in `processInboundEmail` hold against a REAL
@@ -186,11 +186,13 @@ afterAll(async () => {
   await db.delete(portalUsers).where(sql`${portalUsers.orgId} IN (${orgList})`);
   await db.delete(partnerInboundDomains).where(sql`${partnerInboundDomains.partnerId} IN (${partnerList})`);
   await db.execute(sql`DELETE FROM partner_ticket_sequences WHERE partner_id IN (${partnerList})`);
-  // audit_logs is append-only (BEFORE DELETE / BEFORE TRUNCATE triggers raise),
-  // so setup.ts's TRUNCATE-CASCADE silently no-ops on it and createTicket's
-  // ticket.create rows survive, FK-blocking the org delete. Drop the triggers for
-  // this one DELETE via session_replication_role=replica (same approach as the
-  // audit-logs-rls flakiness fix), scoped to the seeded orgs. Run inside a single
+  // audit_logs is only reset by setup.ts's global beforeEach (which since
+  // #2205 genuinely truncates it) — but beforeEach never runs after this
+  // file's LAST test, so createTicket's ticket.create rows are still present
+  // at afterAll time, FK-blocking the org delete. audit_logs is append-only
+  // (BEFORE DELETE trigger raises), so drop the triggers for this one DELETE
+  // via session_replication_role=replica (same approach as the audit-logs-rls
+  // flakiness fix), scoped to the seeded orgs. Run inside a single
   // transaction so the SET and the DELETE land on the SAME pooled connection.
   await db.transaction(async (tx: any) => {
     await tx.execute(sql`SET LOCAL session_replication_role = replica`);

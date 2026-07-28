@@ -22,8 +22,10 @@ export * from './invoices';
 export * from './contracts';
 export * from './mlFeedback';
 export * from './quotes';
+export * from './contractTemplates';
 export * from './maintenanceWindow';
 export * from './agentVersionPins';
+export * from './enrollmentDefaults';
 export * from './softwareDetection';
 
 // ============================================
@@ -514,10 +516,56 @@ export const updateConfigPolicySchema = z.object({
   status: z.enum(['active', 'inactive', 'archived']).optional(),
 });
 
+/**
+ * Private database-to-export material used to reconstruct patch settings.
+ * It is never valid in caller-controlled feature settings, regardless of the
+ * feature type or nesting depth.
+ */
+export const CONFIG_POLICY_PATCH_INLINE_MIRROR_KEY = '__breezePatchInlineMirror';
+
+export function containsConfigPolicyReservedKey(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false;
+
+  const pending: object[] = [value];
+  const visited = new WeakSet<object>();
+  let inspectedObjects = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    // JSON request bodies cannot contain cycles or shared object references.
+    // Service callers can, so reject those structures instead of risking an
+    // incomplete reservation scan. Bound work for the same fail-closed reason.
+    if (visited.has(current) || inspectedObjects >= 10_000) return true;
+    visited.add(current);
+    inspectedObjects += 1;
+
+    try {
+      for (const key of Object.keys(current)) {
+        if (key === CONFIG_POLICY_PATCH_INLINE_MIRROR_KEY) return true;
+        const nested = (current as Record<string, unknown>)[key];
+        if (nested !== null && typeof nested === 'object') pending.push(nested);
+      }
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
+export const configFeatureInlineSettingsSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((settings, ctx) => {
+    if (containsConfigPolicyReservedKey(settings)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Reserved configuration feature material is not allowed',
+      });
+    }
+  });
+
 export const addFeatureLinkSchema = z.object({
-  featureType: z.enum(['patch', 'alert_rule', 'backup', 'security', 'monitoring', 'maintenance', 'compliance', 'automation', 'event_log', 'software_policy', 'sensitive_data', 'peripheral_control', 'warranty', 'helper', 'remote_access', 'pam', 'vulnerability']),
+  featureType: z.enum(['patch', 'alert_rule', 'backup', 'security', 'monitoring', 'maintenance', 'compliance', 'automation', 'event_log', 'software_policy', 'sensitive_data', 'peripheral_control', 'warranty', 'helper', 'remote_access', 'pam', 'onedrive_helper', 'vulnerability']),
   featurePolicyId: z.string().guid().optional(),
-  inlineSettings: z.record(z.string(), z.unknown()).optional(),
+  inlineSettings: configFeatureInlineSettingsSchema.optional(),
 }).refine(
   (data) => data.featurePolicyId || data.inlineSettings,
   { message: 'At least one of featurePolicyId or inlineSettings is required' }
@@ -649,7 +697,10 @@ export const eventLogInlineSettingsSchema = z.object({
   maxEventsPerCycle: z.number().int().min(10).max(500).default(100),
   collectCategories: z.array(z.enum(['security', 'hardware', 'application', 'system'])).min(1).default(['security', 'hardware', 'application', 'system']),
   minimumLevel: z.enum(['info', 'warning', 'error', 'critical']).default('info'),
-  collectionIntervalMinutes: z.number().int().min(1).max(60).default(5),
+  // 15m default (was 5m) — each collection pass fans out subprocess work on
+  // the agent; on macOS a `log show` pass costs seconds of CPU even when it
+  // returns nothing (issue #2390). Still configurable 1-60.
+  collectionIntervalMinutes: z.number().int().min(1).max(60).default(15),
   rateLimitPerHour: z.number().int().min(100).max(100000).default(12000),
 });
 
@@ -666,6 +717,38 @@ export const sensitiveDataInlineSettingsSchema = z.object({
   intervalMinutes: z.number().int().min(5).max(10080).optional(),
   cron: z.string().max(120).optional(),
   timezone: z.string().max(64).default('UTC'),
+});
+
+export const onedriveLibraryMappingSchema = z.object({
+  libraryId: z.string().min(1).max(1024),
+  displayName: z.string().min(1).max(255),
+  siteUrl: z.string().max(1024).nullable().optional(),
+  siteId: z.string().max(512).nullable().optional(),
+  webId: z.string().max(128).nullable().optional(),
+  listId: z.string().max(128).nullable().optional(),
+  targetingMode: z.enum(['everyone', 'graph_group', 'local_ad_group']).default('everyone'),
+  groupId: z.string().max(128).nullable().optional(),
+  groupName: z.string().max(255).nullable().optional(),
+  hiveScope: z.enum(['hkcu', 'hklm']).default('hkcu'),
+  enabled: z.boolean().default(true),
+}).superRefine((lib, ctx) => {
+  if (lib.targetingMode === 'graph_group' && !lib.groupId && !lib.groupName) {
+    ctx.addIssue({ code: 'custom', message: 'graph_group targeting requires groupId or groupName', path: ['groupId'] });
+  }
+  if (lib.targetingMode === 'local_ad_group' && !lib.groupName) {
+    ctx.addIssue({ code: 'custom', message: 'local_ad_group targeting requires groupName (agent resolves by name)', path: ['groupName'] });
+  }
+});
+
+export const onedriveHelperInlineSettingsSchema = z.object({
+  silentAccountConfig: z.boolean().default(true),
+  filesOnDemand: z.boolean().default(true),
+  kfmSilentOptIn: z.boolean().default(false),
+  kfmFolders: z.array(z.enum(['Desktop', 'Documents', 'Pictures'])).default(['Desktop', 'Documents', 'Pictures']),
+  kfmBlockOptOut: z.boolean().default(false),
+  tenantAssociationId: z.string().max(64).nullable().optional(),
+  restartOnChange: z.boolean().default(true),
+  libraries: z.array(onedriveLibraryMappingSchema).max(100).default([]),
 });
 
 export const monitoringInlineSettingsSchema = z.object({
@@ -715,7 +798,7 @@ export const monitoringInlineSettingsSchema = z.object({
 
 export const updateFeatureLinkSchema = z.object({
   featurePolicyId: z.string().guid().nullable().optional(),
-  inlineSettings: z.record(z.string(), z.unknown()).nullable().optional(),
+  inlineSettings: configFeatureInlineSettingsSchema.nullable().optional(),
 });
 
 export const assignPolicySchema = z.object({
@@ -768,6 +851,7 @@ export * from './ai';
 // ============================================
 
 export * from './tickets';
+export * from './ticketForms';
 export * from './timeEntries';
 export * from './portal';
 export * from './ticketConfig';
@@ -778,6 +862,7 @@ export * from './clientAiDlp';
 // ============================================
 
 export {
+  backupExcludePatternsSchema,
   fileTargetsSchema,
   hypervTargetsSchema,
   mssqlTargetsSchema,
@@ -787,8 +872,16 @@ export {
   backupRetentionSchema,
   backupRetentionUpdateSchema,
   backupInlineSettingsSchema,
+  backupProfileLinkedInlineSettingsSchema,
+  backupProfileSelectionsSchema,
+  enabledBackupSelections,
+  createBackupProfileSchema,
+  updateBackupProfileSchema,
   type BackupMode,
   type BackupSchedule,
   type BackupRetention,
   type BackupInlineSettings,
+  type BackupProfileSelections,
+  type CreateBackupProfileInput,
+  type UpdateBackupProfileInput,
 } from './backupTargets';

@@ -7,7 +7,7 @@ import { navigateTo } from './navigation';
 // Invoice-domain enum SSOT lives in @breeze/shared (billing-enums.ts). Imported
 // into local scope for the InvoiceSummary/InvoiceDetail types below and re-exported
 // (type-only, erased at build) so '@/lib/api' consumers are unaffected.
-import type { InvoiceStatus } from '@breeze/shared';
+import type { InvoiceStatus, TicketFormField } from '@breeze/shared';
 
 // Client API base. Empty (the default) → same-origin **relative** requests
 // (`/api/v1/...`), which the reverse proxy routes to the API under `/api/*`. This
@@ -138,6 +138,8 @@ export interface ApiRequestConfig {
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
+  /** Machine-readable error code from the API body (e.g. PORTAL_TICKETS_DISABLED). */
+  code?: string;
   statusCode?: number;
   headers?: Headers;
 }
@@ -192,6 +194,7 @@ export async function apiRequest<T>(
     if (!response.ok) {
       return {
         error: body?.error || 'Request failed',
+        code: typeof body?.code === 'string' ? body.code : undefined,
         statusCode: response.status,
         headers: response.headers
       };
@@ -292,6 +295,30 @@ export interface TicketDetails extends TicketSummary {
   comments: TicketComment[];
 }
 
+// Slim portal-visible intake form (Phase 2). Mirrors the `GET /portal/tickets/forms`
+// payload — no titleTemplate (the server composes the subject) and no showInPortal
+// (the route already filtered to portal-visible forms).
+export interface PortalTicketForm {
+  id: string;
+  name: string;
+  description: string | null;
+  categoryId: string | null;
+  fields: TicketFormField[];
+  defaultPriority: TicketPriority | null;
+}
+
+// createTicket accepts EITHER the legacy free-text payload OR an intake-form
+// payload. On the form path the subject/description are composed server-side, so
+// no `subject` key is sent (an optional free-text `description` may still ride along).
+export type CreateTicketInput =
+  | { subject: string; description: string; priority: TicketPriority }
+  | {
+      formId: string;
+      formResponses: Record<string, unknown>;
+      description?: string;
+      priority: TicketPriority;
+    };
+
 export interface Asset {
   id: string;
   hostname: string;
@@ -339,7 +366,6 @@ export interface SellerSnapshot {
 }
 
 export interface InvoiceLine {
-  id: string;
   description: string;
   quantity: string;
   unitPrice: string;
@@ -379,6 +405,27 @@ export interface QuoteSummary {
   total: string;
 }
 
+/** Server-serialized shape of a `contract` quote block's `content`, once the
+ *  API has resolved the pinned template version and substituted its variables
+ *  (apps/api's contractTemplateRender.ts — renderContractBlocksForClient /
+ *  ContractClientBlockContent). Every portal/public quote route builds `content`
+ *  from that exact function; only the authenticated admin quote editor (a
+ *  different app, apps/web) additionally attaches the raw `authoring` fields
+ *  (templateId/templateVersionId/variableValues) via a SEPARATE admin-only
+ *  code path (attachContractAuthoring) that the portal never calls. `authoring`
+ *  is typed `never` here so a portal component that tried to read it would be
+ *  a compile error, not just something the runtime field-by-field narrowing
+ *  below happens to skip. */
+export interface QuoteContractBlockContent {
+  label?: string;
+  templateName: string;
+  versionNumber: number;
+  sourceType: 'authored' | 'uploaded';
+  renderedHtml: string | null;
+  fileUrl: string | null;
+  authoring?: never;
+}
+
 export interface QuoteBlock {
   id: string;
   blockType: string;
@@ -389,6 +436,9 @@ export interface QuoteBlock {
 export interface QuoteLine {
   id: string;
   blockId?: string | null;
+  /** Product/display title; falls back to `description` for legacy lines with no
+   *  distinct name (mirrors the web renderer's lineTitle/lineBlurb split). */
+  name?: string | null;
   description: string;
   quantity: string;
   unitPrice: string;
@@ -397,6 +447,10 @@ export interface QuoteLine {
   recurrence: string;
   customerVisible: boolean;
   sortOrder: number;
+  /** Server-built relative path to this line's product thumbnail (uploaded image
+   *  or its catalog item's), or null when the line has no image. Resolve via
+   *  buildPortalApiUrl before use. */
+  imageUrl?: string | null;
 }
 
 export interface QuoteHeader extends QuoteSummary {
@@ -422,16 +476,18 @@ export interface QuoteHeader extends QuoteSummary {
   termsAndConditions?: string | null;
 }
 
-export interface QuoteDetail {
-  quote: QuoteHeader;
-  blocks: QuoteBlock[];
-  lines: QuoteLine[];
-}
-
 export interface QuoteBranding {
   partnerName: string;
   logoUrl: string | null;
   primaryColor: string | null;
+}
+
+export interface QuoteDetail {
+  quote: QuoteHeader;
+  blocks: QuoteBlock[];
+  lines: QuoteLine[];
+  /** Optional for API responses that predate the branding field. */
+  branding?: QuoteBranding;
 }
 
 export interface PublicQuoteDetail {
@@ -485,6 +541,7 @@ function mapPaginatedData<T>(
   if (!response.data) {
     return {
       error: response.error,
+      code: response.code,
       statusCode: response.statusCode,
       headers: response.headers
     };
@@ -531,6 +588,7 @@ export const portalApi = {
     if (!response.data) {
       return {
         error: response.error,
+        code: response.code,
         statusCode: response.statusCode,
         headers: response.headers
       };
@@ -543,8 +601,31 @@ export const portalApi = {
     };
   },
 
+  // Portal-visible intake forms for the session org (allowlist + showInPortal
+  // resolved server-side). Returns [] on any failure so callers can silently
+  // degrade to the legacy free-text form.
+  getTicketForms: async (
+    config: ApiRequestConfig = {}
+  ): Promise<ApiResponse<PortalTicketForm[]>> => {
+    const response = await apiGet<{ data: PortalTicketForm[] }>('/portal/tickets/forms', config);
+    if (!response.data) {
+      return {
+        error: response.error,
+        code: response.code,
+        statusCode: response.statusCode,
+        headers: response.headers
+      };
+    }
+
+    return {
+      data: response.data.data,
+      statusCode: response.statusCode,
+      headers: response.headers
+    };
+  },
+
   createTicket: async (
-    data: { subject: string; description: string; priority: TicketPriority },
+    data: CreateTicketInput,
     config: ApiRequestConfig = {}
   ): Promise<ApiResponse<TicketSummary & { description: string }>> => {
     const response = await apiPost<{ ticket: TicketSummary & { description: string } }>(

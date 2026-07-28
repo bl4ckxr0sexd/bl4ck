@@ -2,6 +2,7 @@ package userhelper
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +26,7 @@ import (
 	"github.com/breeze-rmm/agent/internal/helper"
 	"github.com/breeze-rmm/agent/internal/ipc"
 	"github.com/breeze-rmm/agent/internal/logging"
+	"github.com/breeze-rmm/agent/internal/pamactuator"
 	"github.com/breeze-rmm/agent/internal/procoutput"
 	"github.com/breeze-rmm/agent/internal/remote/clipboard"
 	"github.com/breeze-rmm/agent/internal/remote/desktop"
@@ -32,6 +34,8 @@ import (
 )
 
 var log = logging.L("userhelper")
+
+var newPamActuator = pamactuator.New
 
 const (
 	maxLaunchBinaryPathBytes = 4096
@@ -42,7 +46,7 @@ const (
 // Client is the user-helper side of the IPC connection to the root daemon.
 type Client struct {
 	socketPath string
-	role       string // "system" or "user"
+	role       ipc.HelperRole // "system" or "user"
 	binaryKind string
 	context    string
 	conn       *ipc.Conn
@@ -80,11 +84,11 @@ func (c *Client) setAuthenticatedAt(t time.Time) {
 
 // New creates a new user helper client with the given role.
 // Role should be ipc.HelperRoleSystem or ipc.HelperRoleUser.
-func New(socketPath, role string) *Client {
+func New(socketPath string, role ipc.HelperRole) *Client {
 	return NewWithOptions(socketPath, role, "", "")
 }
 
-func NewWithOptions(socketPath, role, binaryKind, context string) *Client {
+func NewWithOptions(socketPath string, role ipc.HelperRole, binaryKind, context string) *Client {
 	if role == "" {
 		role = ipc.HelperRoleSystem
 	}
@@ -378,6 +382,9 @@ func (c *Client) commandLoop() error {
 
 		case ipc.TypePamRequestDialog:
 			safeGo("pam_dialog", func() { c.handlePamDialog(env) })
+
+		case ipc.TypePamDismissConsent:
+			safeGo("pam_dismiss_consent", func() { c.handlePamDismissConsent(env) })
 
 		case ipc.TypeConsentRequest:
 			safeGo("consent_request", func() { c.handleConsentRequest(env) })
@@ -928,6 +935,56 @@ func (c *Client) handlePamDialog(env *ipc.Envelope) {
 	result := showPamDialog(req)
 	if err := c.conn.SendTyped(env.ID, ipc.TypePamDialogResult, result); err != nil {
 		log.Warn("failed to send PAM dialog result", "id", env.ID, "error", err)
+	}
+}
+
+func (c *Client) handlePamDismissConsent(env *ipc.Envelope) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("PAM dismiss handler panicked", "id", env.ID, "panic", fmt.Sprintf("%v", r))
+			if err := c.conn.SendError(env.ID, ipc.TypePamDismissConsentResult, "PAM dismiss handler panicked"); err != nil {
+				log.Warn("failed to send PAM dismiss panic response", "id", env.ID, "error", err)
+			}
+		}
+	}()
+
+	if c.role != ipc.HelperRoleSystem || !c.hasScope(ipc.ScopePam) {
+		if err := c.conn.SendError(env.ID, ipc.TypePamDismissConsentResult, "pam_dismiss_consent requires SYSTEM helper with pam scope"); err != nil {
+			log.Warn("failed to send unauthorized PAM dismiss response", "id", env.ID, "error", err)
+		}
+		return
+	}
+
+	var req ipc.PamDismissConsentRequest
+	if err := json.Unmarshal(env.Payload, &req); err != nil {
+		if sendErr := c.conn.SendError(env.ID, ipc.TypePamDismissConsentResult, fmt.Sprintf("invalid payload: %v", err)); sendErr != nil {
+			log.Warn("failed to send PAM dismiss payload error", "id", env.ID, "error", sendErr)
+		}
+		return
+	}
+	if req.DeadlineUnixMs <= 0 {
+		if err := c.conn.SendError(env.ID, ipc.TypePamDismissConsentResult, "invalid PAM dismiss deadline"); err != nil {
+			log.Warn("failed to send PAM dismiss deadline error", "id", env.ID, "error", err)
+		}
+		return
+	}
+	deadline := time.UnixMilli(req.DeadlineUnixMs)
+	if !deadline.After(time.Now()) {
+		if err := c.conn.SendError(env.ID, ipc.TypePamDismissConsentResult, "PAM dismiss deadline expired"); err != nil {
+			log.Warn("failed to send expired PAM dismiss response", "id", env.ID, "error", err)
+		}
+		return
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	result := newPamActuator().Dismiss(ctx)
+	if err := c.conn.SendTyped(env.ID, ipc.TypePamDismissConsentResult, ipc.PamDismissConsentResult{
+		Success:       result.Success,
+		Reason:        result.Reason,
+		DetailMessage: result.DetailMessage,
+	}); err != nil {
+		log.Warn("failed to send PAM dismiss result", "id", env.ID, "error", err)
 	}
 }
 

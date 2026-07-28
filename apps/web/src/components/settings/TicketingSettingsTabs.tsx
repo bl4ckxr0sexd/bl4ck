@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import TicketCategoriesPage from './TicketCategoriesPage';
@@ -7,21 +8,21 @@ import TicketPrioritiesTab from './TicketPrioritiesTab';
 import InboundEmailCard from './InboundEmailCard';
 import M365MailboxCard from './M365MailboxCard';
 import CannedResponsesCard from './CannedResponsesCard';
+import TicketFormsCard from './TicketFormsCard';
 import { getJwtClaims } from '../../lib/authScope';
+import { usePermissions } from '../../lib/permissions';
 
-const VALID_TABS = ['statuses', 'priorities', 'categories', 'export', 'inbound', 'canned'] as const;
+const VALID_TABS = ['statuses', 'priorities', 'categories', 'forms', 'export', 'inbound', 'canned'] as const;
 type Tab = (typeof VALID_TABS)[number];
 
 // Inbound email settings + queue are a partner-scoped surface (the queue routes
-// are additionally admin-gated server-side). We have no synchronous fine-grained
-// capability on the client, so gate the tab on partner scope — any partner user
-// can use the settings; the card's own 403 handler is the defense-in-depth
-// backstop that hides the queue for non-admins reached directly via hash.
-const BASE_TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'statuses', label: 'Statuses' },
-  { id: 'priorities', label: 'Priorities & SLAs' },
-  { id: 'categories', label: 'Categories' },
-  { id: 'export', label: 'Export' }
+// are additionally admin-gated server-side). The mailbox card has a separate
+// ticket_mailbox:read UX gate; every API route remains authoritative.
+const BASE_TABS: Array<{ id: Tab; labelKey: string }> = [
+  { id: 'statuses', labelKey: 'ticketingSettingsTabs.statuses' },
+  { id: 'priorities', labelKey: 'ticketingSettingsTabs.prioritiesSLAs' },
+  { id: 'categories', labelKey: 'ticketingSettingsTabs.categories' },
+  { id: 'export', labelKey: 'ticketingSettingsTabs.export' }
 ];
 
 function parseHash(): Tab {
@@ -62,6 +63,7 @@ export default function TicketingSettingsTabs({
   syncHash?: boolean;
   initialTab?: Tab;
 }) {
+  const { t } = useTranslation('settings');
   // `initialTab` seeds the sub-tab deterministically for the embedded (syncHash=false)
   // case — used by the M365 consent deep-link (`?ticketMailbox=…`) so this group opens
   // on Inbound regardless of when it mounts. The parent captures that signal once (it
@@ -69,23 +71,30 @@ export default function TicketingSettingsTabs({
   // card strips it on mount, and this group can remount when the parent's loading state
   // toggles — re-reading would lose the signal (the tab would snap back to Statuses).
   const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? 'statuses');
+  const { can } = usePermissions();
+  const canReadMailbox = can('ticket_mailbox', 'read');
 
   // Render the Inbound Email tab only for partner-scoped users (matches how the
   // Sidebar gates other partner-only settings surfaces). Decoded client-side as
   // a UX hint only — the server re-checks every request.
   const canManageInbound = useMemo(() => getJwtClaims().scope === 'partner', []);
-  // Canned responses (like inbound) are a partner-scoped surface — the CRUD routes
-  // require partner scope server-side — so they share the same client gate.
+  // Canned responses + intake forms (like inbound) are partner-scoped surfaces —
+  // the CRUD routes require partner scope server-side, and intake forms can be
+  // authored partner-wide ("All orgs"). The standalone TicketingSettingsTabs
+  // renders BASE_TABS for any scope, so gate these on partner scope rather than
+  // leaving them in BASE_TABS. Org-owned forms are still creatable here via the
+  // form editor's org selector.
   const TABS = useMemo(
     () =>
       canManageInbound
         ? [
-            ...BASE_TABS,
-            { id: 'inbound' as Tab, label: 'Inbound Email' },
-            { id: 'canned' as Tab, label: 'Canned responses' }
+            ...BASE_TABS.map((tab) => ({ ...tab, label: t(/* i18n-dynamic */ tab.labelKey) })),
+            { id: 'forms' as Tab, labelKey: 'ticketingSettingsTabs.intakeForms', label: t('ticketingSettingsTabs.intakeForms') },
+            { id: 'inbound' as Tab, labelKey: 'ticketingSettingsTabs.inboundEmail', label: t('ticketingSettingsTabs.inboundEmail') },
+            { id: 'canned' as Tab, labelKey: 'ticketingSettingsTabs.cannedResponses', label: t('ticketingSettingsTabs.cannedResponses') }
           ]
-        : BASE_TABS,
-    [canManageInbound]
+        : BASE_TABS.map((tab) => ({ ...tab, label: t(/* i18n-dynamic */ tab.labelKey) })),
+    [canManageInbound, t]
   );
 
   const switchTab = (tab: Tab) => {
@@ -104,22 +113,22 @@ export default function TicketingSettingsTabs({
   return (
     <div className="space-y-6">
       <div role="tablist" className="flex gap-1 border-b" data-testid="ticketing-settings-tabs">
-        {TABS.map((t) => (
+        {TABS.map((tab) => (
           <button
-            key={t.id}
+            key={tab.id}
             type="button"
             role="tab"
-            aria-selected={activeTab === t.id}
-            onClick={() => switchTab(t.id)}
-            data-testid={`ticketing-tab-${t.id}`}
+            aria-selected={activeTab === tab.id}
+            onClick={() => switchTab(tab.id)}
+            data-testid={`ticketing-tab-${tab.id}`}
             className={cn(
               'border-b-2 px-4 py-2 text-sm font-medium transition-colors -mb-px',
-              activeTab === t.id
+              activeTab === tab.id
                 ? 'border-primary text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            {t.label}
+            {tab.label}
           </button>
         ))}
       </div>
@@ -138,12 +147,18 @@ export default function TicketingSettingsTabs({
 
       {activeTab === 'categories' && <TicketCategoriesPage />}
 
+      {activeTab === 'forms' && canManageInbound && (
+        <div data-testid="ticketing-tab-panel-forms">
+          <TicketFormsCard />
+        </div>
+      )}
+
       {activeTab === 'export' && <BillablesExportCard />}
 
       {activeTab === 'inbound' && canManageInbound && (
         <div data-testid="ticketing-tab-panel-inbound" className="space-y-6">
           <InboundEmailCard />
-          <M365MailboxCard />
+          {canReadMailbox ? <M365MailboxCard /> : null}
         </div>
       )}
 

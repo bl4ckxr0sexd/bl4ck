@@ -472,16 +472,33 @@ func TestWatchdogDefaults(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIndexDefaults(t *testing.T) {
+	cfg := Default()
+	if cfg.WorkspaceIndex.Enabled != nil {
+		t.Errorf("Enabled default: want nil (server-driven enabled), got %v", *cfg.WorkspaceIndex.Enabled)
+	}
+	if cfg.WorkspaceIndex.EndpointBase != "" {
+		t.Errorf("EndpointBase default: want empty (client default), got %q", cfg.WorkspaceIndex.EndpointBase)
+	}
+}
+
+func TestDefaultConfigPAMActuatorStrategy(t *testing.T) {
+	cfg := Default()
+	if cfg.PAMActuatorStrategy != "sendinput" {
+		t.Fatalf("PAMActuatorStrategy default = %q, want \"sendinput\"", cfg.PAMActuatorStrategy)
+	}
+}
+
 // TestIsSecretYAMLKey verifies the drift-proof predicate that decides which
 // config keys belong in secrets.yaml vs agent.yaml. Finding #6.
 func TestIsSecretYAMLKey(t *testing.T) {
 	cases := map[string]bool{
 		// Explicit secret keys (named in the switch).
-		"auth_token":         true,
+		"auth_token":          true,
 		"watchdog_auth_token": true,
-		"mtls_cert_pem":      true,
-		"mtls_key_pem":       true,
-		"mtls_cert_expires":  true,
+		"mtls_cert_pem":       true,
+		"mtls_key_pem":        true,
+		"mtls_cert_expires":   true,
 		// Caught by suffix rules (_access_key, _secret_key).
 		"backup_s3_access_key": true,
 		"backup_s3_secret_key": true,
@@ -492,10 +509,10 @@ func TestIsSecretYAMLKey(t *testing.T) {
 		"helper_auth_token": false,
 		// Non-secret keys that happen to contain "key" or "token" substrings
 		// but don't match any suffix rule.
-		"server_url":        false,
-		"agent_id":          false,
-		"backup_s3_bucket":  false,
-		"backup_s3_region":  false,
+		"server_url":       false,
+		"agent_id":         false,
+		"backup_s3_bucket": false,
+		"backup_s3_region": false,
 	}
 	for key, want := range cases {
 		if got := isSecretYAMLKey(key); got != want {
@@ -724,4 +741,3 @@ func TestSaveToAbortsWhenStripFails(t *testing.T) {
 		t.Fatalf("agent.yaml leaked the auth token after a failed strip: %q", data)
 	}
 }
-

@@ -46,7 +46,7 @@ API connects to Postgres as unprivileged `breeze_app`. Every tenant-scoped table
 4. Run the contract test locally (needs real DB).
 5. Verify as `breeze_app`: `docker exec -it breeze-postgres psql -U breeze_app -d breeze` and forge a cross-tenant insert — must fail with `new row violates row-level security policy`.
 
-For production backfills of `org_id` on hot tables (>1M rows), batch via `UPDATE ... WHERE ctid IN (... LIMIT N)` loops before `SET NOT NULL`. Full narrative and rationale: `docs/superpowers/plans/2026-04-11-rls-coverage-gaps.md`.
+For production backfills of `org_id` on hot tables (>1M rows), batch via `UPDATE ... WHERE ctid IN (... LIMIT N)` loops before `SET NOT NULL`. Full narrative and rationale: `docs/superpowers/plans/tenancy-rls/2026-04-11-rls-coverage-gaps.md`.
 
 ### Database Schema Location
 - `apps/api/src/db/schema/` - All Drizzle schema definitions
@@ -93,7 +93,7 @@ if (err instanceof ActionError && err.status === 401) return; // let auth redire
 if (!(err instanceof ActionError)) showToast({ type: 'error', ... }); // non-401 ActionError already toasted by runAction
 ```
 
-The `no-silent-mutations` test (`apps/web/src/lib/__tests__/no-silent-mutations.test.ts`) guards the adopted set. Legitimate exceptions (typed service layers, aggregate/partial-success handlers with inline error UI) are recorded in `apps/web/src/lib/runActionAllowlist.ts`. Spec: `docs/superpowers/specs/2026-05-15-ws-a-action-feedback-design.md`.
+The `no-silent-mutations` test (`apps/web/src/lib/__tests__/no-silent-mutations.test.ts`) guards the adopted set. Legitimate exceptions (typed service layers, aggregate/partial-success handlers with inline error UI) are recorded in `apps/web/src/lib/runActionAllowlist.ts`. Spec: `docs/superpowers/specs/web-ui/2026-05-15-ws-a-action-feedback-design.md`.
 
 ---
 
@@ -320,11 +320,23 @@ Production hosts pull from `/opt/breeze` and use mutable image tags driven by `B
 ssh root@<host> "cd /opt/breeze && \
   cp .env .env.bak-pre-<new-version> && \
   sed -i 's/^BREEZE_VERSION=.*/BREEZE_VERSION=<new-version>/' .env && \
-  docker compose pull api web && \
-  docker compose up -d binaries-init api web"
+  docker compose pull api web portal && \
+  docker compose up -d binaries-init api web portal"
 ```
 
 Then verify health with `curl -sf https://<host-or-domain>/health` (200 = healthy).
+
+**The service list is hand-maintained and WILL go stale — always assert version parity after deploying.** Services are named explicitly (not a bare `docker compose pull && up -d`) because the billing service builds from a local image with no registry to pull from, and a bare `up -d` would needlessly bounce the reverse proxy, redis and the tunnel. The cost is that a newly added first-party service is silently never rolled — the customer portal (a separate container serving `/portal/*`, which customers reach from quote and invite emails) stayed several versions behind for weeks while `/health` reported the new version. Watchtower is not a backstop: it is label-gated and no service carries the label.
+
+`/health` is served by the API and cannot detect this, so enumerate what is actually running:
+
+```bash
+ssh root@<host> "cd /opt/breeze && set -a && . ./.env && set +a && \
+  docker ps -a --format '{{.Names}}\t{{.Image}}' | grep 'ghcr.io/lanternops/breeze/' | \
+  while IFS=\$'\t' read -r n i; do t=\${i##*:}; \
+    [ \"\$t\" = \"\$BREEZE_VERSION\" ] && echo \"OK    \$n \$t\" || echo \"SKEW  \$n \$t (expected \$BREEZE_VERSION)\"; done"
+# every line must be OK; any SKEW means that service was never rolled.
+```
 
 **Required env vars added by v0.65+ — production hosts without these refuse to start:**
 

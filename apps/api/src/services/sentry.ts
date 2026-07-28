@@ -79,12 +79,19 @@ export function isSentryEnabled(): boolean {
   return initialized;
 }
 
-export function captureException(err: unknown, c?: Context): void {
+export function captureException(
+  err: unknown,
+  c?: Context,
+  tags?: Record<string, string>,
+): void {
   if (!initialized) {
     return;
   }
 
   Sentry.withScope((scope) => {
+    if (tags) {
+      for (const [key, value] of Object.entries(tags)) scope.setTag(key, value);
+    }
     if (c) {
       scope.setTag('method', c.req.method);
       scope.setTag('path', c.req.path);
@@ -115,10 +122,22 @@ export function captureException(err: unknown, c?: Context): void {
   });
 }
 
+/**
+ * `tags` mirrors captureException's third parameter. Prefer it over `extra` for
+ * any low-cardinality discriminator you will want to GROUP BY in Sentry: extras
+ * are only visible once you open an individual event, while tags are
+ * searchable and drive the "break down by" UI. Attributing a recurring warning
+ * to its source is exactly that job — an unfilterable 7k-event bucket
+ * (BREEZE-A) is what happens without it.
+ *
+ * Keep tag values low-cardinality (a handler name, not an id) — high-cardinality
+ * tags inflate Sentry's index without making anything more triageable.
+ */
 export function captureMessage(
   message: string,
   level: 'info' | 'warning' | 'error' = 'warning',
-  extra?: Record<string, unknown>
+  extra?: Record<string, unknown>,
+  tags?: Record<string, string>
 ): void {
   if (!initialized) {
     return;
@@ -127,6 +146,9 @@ export function captureMessage(
   Sentry.withScope((scope) => {
     scope.setLevel(level);
     scope.setExtras(extra ?? {});
+    if (tags) {
+      for (const [key, value] of Object.entries(tags)) scope.setTag(key, value);
+    }
     Sentry.captureMessage(message);
   });
 }

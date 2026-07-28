@@ -1,16 +1,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useEventStream } from '../../hooks/useEventStream';
 import { useAdvancedFilterIds } from '../../hooks/useAdvancedFilterIds';
 import { List, Grid, Plus, AlertCircle } from 'lucide-react';
 import { showToast } from '../shared/Toast';
-import type { FilterConditionGroup } from '@breeze/shared';
+import type { FilterCondition, FilterConditionGroup } from '@breeze/shared';
 import DeviceList, { type Device, type DeviceClass, type DeviceStatus, type OSType } from './DeviceList';
 import type { DeviceRole } from '@/lib/deviceRoles';
 import DeviceCard from './DeviceCard';
+import DecommissionedHiddenHint from './DecommissionedHiddenHint';
 import ScriptPickerModal, { type Script, type ScriptRunAsSelection } from './ScriptPickerModal';
 import DeviceSettingsModal from './DeviceSettingsModal';
 import AddDeviceModal from './AddDeviceModal';
 import CreateGroupModal from './CreateGroupModal';
+import LinkVmHostModal from './LinkVmHostModal';
 import { DeviceFilterBar } from '../filters/DeviceFilterBar';
 import { DeviceFilterToolbar } from './DeviceFilterToolbar';
 import { type ListFilters, DEFAULT_LIST_FILTERS } from './deviceListFilters';
@@ -26,8 +29,9 @@ import {
 import { fetchWithAuth } from '../../stores/auth';
 import { fetchAllDevices, fetchAllNetworkDevices } from '../../lib/devicesFetch';
 import { useOrgStore } from '../../stores/orgStore';
-import { sendDeviceCommand, sendBulkCommand, executeScript, toggleMaintenanceMode, decommissionDevice, bulkDecommissionDevices, restoreDevice, permanentDeleteDevice, sendWakeCommand, sendBulkWakeCommand, summarizeBulkWakeFailures, summarizeBulkCommandFailures, watchWakeOutcome, WakeCommandError, wakeFriendlyErrorMessage } from '../../services/deviceActions';
+import { sendDeviceCommand, sendBulkCommand, executeScript, toggleMaintenanceMode, decommissionDevice, bulkDecommissionDevices, restoreDevice, permanentDeleteDevice, sendWakeCommand, sendBulkWakeCommand, summarizeBulkWakeFailures, summarizeBulkCommandFailures, watchWakeOutcome, WakeCommandError, wakeFriendlyErrorMessage, linkDevicesMultiboot, linkDevicesVmHost } from '../../services/deviceActions';
 import { navigateTo } from '@/lib/navigation';
+import { useHashState } from '@/lib/useHashState';
 import { getErrorMessage, getErrorTitle, isAccessDenied } from '@/lib/errorMessages';
 import AccessDenied from '../shared/AccessDenied';
 import { asRecord, toPercent } from '@/lib/deviceUtils';
@@ -35,6 +39,26 @@ import { ENABLE_NETWORK_DEVICES_IN_LIST } from '@/lib/featureFlags';
 import ProgressBar from '../shared/ProgressBar';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { scopeConfirmMessage } from '@/lib/scopeConfirmMessage';
+import { DECOMMISSION_BLOCKED_BULK_ACTIONS, isCommandQueueable } from './bulkActionGating';
+// Initializes the shared i18next singleton. Islands hydrate independently, so
+// an island that hydrates before whichever other island happens to pull i18n in
+// would otherwise render raw keys (and mismatch the SSR markup).
+import '../../lib/i18n';
+
+// vm_host member role (#2308): unknown values degrade to "ungrouped" (null) by
+// design — a wrong nesting would be worse than none — but the degradation must
+// be observable, or a future third role silently flattens every affected fleet
+// until someone files "VM nesting stopped working". Warn once per value, not
+// per row/refetch.
+const warnedUnknownLinkGroupRoles = new Set<string>();
+function normalizeLinkGroupRole(value: unknown): 'host' | 'guest' | null {
+  if (value === 'host' || value === 'guest') return value;
+  if (value != null && !warnedUnknownLinkGroupRoles.has(String(value))) {
+    warnedUnknownLinkGroupRoles.add(String(value));
+    console.warn(`[devices] unknown linkGroupRole ${JSON.stringify(value)} — treating the device as ungrouped`);
+  }
+  return null;
+}
 
 type ViewMode = 'list' | 'grid';
 
@@ -66,6 +90,7 @@ function summarizeFailedDevices(names: string[]): string {
 }
 
 export default function DevicesPage() {
+  const { t } = useTranslation('devices');
   // Org scope is shown by the always-visible top-bar switcher (scope pill +
   // org picker); the page header no longer repeats it. orgStoreOrgs is still
   // used to name orgs in the run-script confirm dialog.
@@ -81,29 +106,33 @@ export default function DevicesPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [actionInProgress, setActionInProgress] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number; label: string } | null>(null);
-  const [showAddDevice, setShowAddDevice] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.location.hash === '#add-device';
-  });
+  // The three hash-seeded states below adopt the hash post-mount via
+  // useHashState so the first client render matches the SSR markup (#2421).
+  const [showAddDevice, setShowAddDevice] = useHashState<boolean>(false, (h) => (h === 'add-device' ? true : undefined));
   const [scriptPickerOpen, setScriptPickerOpen] = useState(false);
+  // vm_host link creation (#2308): the bulk action opens a host-picker modal
+  // over the selected devices; null = closed.
+  const [vmHostPickerDevices, setVmHostPickerDevices] = useState<Device[] | null>(null);
   const [scriptTargetDevices, setScriptTargetDevices] = useState<Device[]>([]);
   type PendingScriptRun = { script: Script; runAs: ScriptRunAsSelection; parameters?: Record<string, unknown>; devices: Device[] };
   const [pendingScriptRun, setPendingScriptRun] = useState<PendingScriptRun | null>(null);
+  // #2465: a bulk agent command whose selection included decommissioned devices
+  // (the one status the API refuses). `devices` is the eligible subset the action
+  // will actually run on — offline devices stay IN, since their command queues
+  // and runs on reconnect. The dialog reports what is being dropped so the user
+  // confirms the reduced target set rather than having part of their selection
+  // silently discarded.
+  type PendingDecommissionedSkip = { action: string; devices: Device[]; skippedCount: number; totalCount: number };
+  const [pendingDecommissionedSkip, setPendingDecommissionedSkip] = useState<PendingDecommissionedSkip | null>(null);
   const [settingsDevice, setSettingsDevice] = useState<Device | null>(null);
   // v2 chip bar seeds its filter from the URL hash so a filtered view is
   // shareable; the legacy DeviceFilterBar owns its own state and ignores it.
-  const [advancedFilter, setAdvancedFilter] = useState<FilterConditionGroup | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return decodeFilterFromHash(window.location.hash);
-  });
+  const [advancedFilter, setAdvancedFilter] = useHashState<FilterConditionGroup | null>(null, (h) => decodeFilterFromHash(h) ?? undefined);
   // [ All | Agent | Network ] class segment (#1424). Seeded from the hash so a
   // chosen class is shareable; a pure client-side narrowing of the merged list.
   // Only meaningful when the network arm is enabled (otherwise the list is
   // agent-only and the segment is hidden).
-  const [deviceClassFilter, setDeviceClassFilter] = useState<DeviceClassFilter>(() => {
-    if (typeof window === 'undefined') return 'all';
-    return readDeviceClassFromHash(window.location.hash);
-  });
+  const [deviceClassFilter, setDeviceClassFilter] = useHashState<DeviceClassFilter>('all', (h) => readDeviceClassFromHash(h));
   const handleDeviceClassChange = useCallback((next: DeviceClassFilter) => {
     setDeviceClassFilter(next);
     writeDeviceClassToHash(next);
@@ -202,6 +231,31 @@ export default function DevicesPage() {
         : c.value === 'decommissioned';
     });
   }, [advancedFilter]);
+
+  // "Show" action for the hidden-decommissioned hint (#2251): applies the
+  // Decommissioned status filter — the same unhide mechanism the toolbar's
+  // status picker uses — replacing any other status equals/in value. Same
+  // single-select-per-field semantics as DeviceFilterToolbar's addCondition
+  // (independent implementation; chip order may differ — the replacement is
+  // appended rather than placed in the replaced condition's slot). Other
+  // filter conditions are preserved. If the current group is an OR sentence
+  // built in the Advanced drawer, nest it instead of rewriting it so its
+  // meaning is kept and the status condition stays top-level (where the
+  // includeDecommissioned memo looks); the AND intersection can be empty if
+  // the OR sentence itself constrains status — the rows still unhide, but
+  // zero of them may match.
+  const handleShowDecommissioned = useCallback(() => {
+    setAdvancedFilter(prev => {
+      const statusCond: FilterCondition = { field: 'status', operator: 'equals', value: 'decommissioned' };
+      if (!prev) return { operator: 'AND', conditions: [statusCond] };
+      if (prev.operator === 'OR') return { operator: 'AND', conditions: [prev, statusCond] };
+      const rest = prev.conditions.filter(
+        c => 'conditions' in c || c.field !== 'status' || (c.operator !== 'equals' && c.operator !== 'in')
+      );
+      return { operator: 'AND', conditions: [...rest, statusCond] };
+    });
+  }, []);
+
   // Per-segment counts come from the full merged fleet so each segment shows its
   // true total regardless of which one is active. Gated to the network arm; with
   // the flag off the segment isn't rendered and these go unused.
@@ -220,6 +274,17 @@ export default function DevicesPage() {
       return advancedFilterIds === null ? base : base.filter(d => advancedFilterIds.has(d.id));
     },
     [classFilteredDevices, advancedFilterIds, includeDecommissioned]
+  );
+  // How many decommissioned devices the default view is hiding (#2251) — drives
+  // the grid view's hint line (the list view computes its own from the same
+  // classFilteredDevices set, so the two stay in lockstep). The page fetches
+  // with includeDecommissioned: true, so this is a cheap client-side count.
+  const hiddenDecommissionedCount = useMemo(
+    () =>
+      includeDecommissioned
+        ? 0
+        : classFilteredDevices.filter(d => d.status === 'decommissioned').length,
+    [classFilteredDevices, includeDecommissioned]
   );
 
   const fetchDevices = useCallback(async (signal?: AbortSignal) => {
@@ -248,9 +313,7 @@ export default function DevicesPage() {
           onTruncated: ({ actualCount }) => {
             showToast({
               type: 'error',
-              message:
-                `Devices list truncated at ${actualCount} rows ` +
-                `(safety cap hit). Some devices may not be shown — refresh or contact support.`,
+              message: t('devicesPage.toasts.listTruncated', { count: actualCount }),
               duration: 8000
             });
           }
@@ -294,7 +357,7 @@ export default function DevicesPage() {
 
         return {
           id: d.id as string,
-          hostname: (d.hostname ?? 'Unknown') as string,
+          hostname: (d.hostname ?? t('devicesPage.unknownDevice')) as string,
           displayName: typeof d.displayName === 'string' ? d.displayName : undefined,
           os: (d.osType ?? d.os ?? 'windows') as OSType,
           osVersion: (d.osVersion ?? '') as string,
@@ -308,6 +371,7 @@ export default function DevicesPage() {
           siteName: '', // Will be resolved from sites
           agentVersion: (d.agentVersion ?? '') as string,
           watchdogVersion: (d.watchdogVersion ?? null) as string | null,
+          agentServerUrl: (d.agentServerUrl ?? null) as string | null,
           tags: (d.tags ?? []) as string[],
           deviceRole: d.deviceRole as DeviceRole | undefined,
           deviceRoleSource: d.deviceRoleSource as string | undefined,
@@ -321,6 +385,13 @@ export default function DevicesPage() {
           pendingReboot: d.pendingReboot === true,
           batteryStatus: (d.batteryStatus as Device['batteryStatus']) ?? null,
           activeVpns: (d.activeVpns as Device['activeVpns']) ?? null,
+          // Linked multi-boot profiles (#2138): grouping is computed
+          // client-side per page in DeviceList from this id alone.
+          linkGroupId: typeof d.linkGroupId === 'string' ? d.linkGroupId : null,
+          // vm_host member role (#2308): validated against the known values so
+          // an unexpected API value degrades to "ungrouped" instead of leaking
+          // (warned once per value — see normalizeLinkGroupRole).
+          linkGroupRole: normalizeLinkGroupRole(d.linkGroupRole),
           enrolledAt: d.enrolledAt as string | undefined,
           desktopAccess: (d.desktopAccess as Device['desktopAccess']) ?? null,
           hardware: hardware ? {
@@ -350,7 +421,7 @@ export default function DevicesPage() {
         id: d.id as string,
         deviceClass: (d.deviceClass as DeviceClass) ?? 'network',
         assetType: (d.assetType as DeviceRole | undefined) ?? 'unknown',
-        hostname: (d.hostname ?? 'Unknown') as string,
+        hostname: (d.hostname ?? t('devicesPage.unknownDevice')) as string,
         displayName: typeof d.displayName === 'string' ? d.displayName : undefined,
         // No OS for a network device; the OS column renders "—" for network rows.
         os: '' as OSType,
@@ -400,8 +471,8 @@ export default function DevicesPage() {
       // Assign org and site names to devices (agent + network arms).
       const devicesWithNames = allTransformed.map(device => ({
         ...device,
-        orgName: orgMap.get(device.orgId) ?? 'Unknown Org',
-        siteName: siteMap.get(device.siteId) ?? 'Unknown Site'
+        orgName: orgMap.get(device.orgId) ?? t('devicesPage.unknownOrg'),
+        siteName: siteMap.get(device.siteId) ?? t('devicesPage.unknownSite')
       }));
 
       // Fetch groups for group filter
@@ -438,7 +509,7 @@ export default function DevicesPage() {
       // brief flicker if the component remounts on the same key.
       if (!signal?.aborted) setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -512,7 +583,7 @@ export default function DevicesPage() {
 
   const openScriptPicker = (targetDevices: Device[]) => {
     if (targetDevices.length === 0) {
-      showToast({ type: 'error', message: 'Select at least one device to run a script' });
+      showToast({ type: 'error', message: t('devicesPage.toasts.selectDeviceForScript') });
       return;
     }
     setScriptTargetDevices(targetDevices);
@@ -542,14 +613,14 @@ export default function DevicesPage() {
       const result = await executeScript(script.id, deviceIds, parameters, runAs);
 
       if (devices.length === 1) {
-        showToast({ type: 'success', message: `Script "${script.name}" queued for ${devices[0].hostname}` });
+        showToast({ type: 'success', message: t('devicesPage.toasts.scriptQueuedOne', { script: script.name, hostname: devices[0].hostname }) });
       } else {
-        showToast({ type: 'success', message: `Script "${script.name}" queued for ${result.devicesTargeted} devices` });
+        showToast({ type: 'success', message: t('devicesPage.toasts.scriptQueuedMany', { script: script.name, count: result.devicesTargeted }) });
       }
 
       closeScriptPicker();
     } catch (err) {
-      showToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to queue script' });
+      showToast({ type: 'error', message: err instanceof Error ? err.message : t('devicesPage.toasts.scriptQueueFailed') });
     } finally {
       setActionInProgress(false);
     }
@@ -567,8 +638,21 @@ export default function DevicesPage() {
         case 'shutdown':
         case 'lock': {
           await sendDeviceCommand(device.id, action);
-          const label = action === 'reboot_safe_mode' ? 'Reboot to Safe Mode' : action.charAt(0).toUpperCase() + action.slice(1);
-          showToast({ type: 'success', message: `${label} command sent to ${device.hostname}` });
+          const label = action === 'reboot_safe_mode'
+            ? t('devicesPage.actions.rebootSafeMode')
+            : t(/* i18n-dynamic */ `devicesPage.actions.${action}`, { defaultValue: action.charAt(0).toUpperCase() + action.slice(1) });
+          // These commands are QUEUED, and #2630 opened them to non-online
+          // devices. A 201 means "a row was inserted", not "the machine acted":
+          // there is no dispatch step, and for a disconnected device the agent
+          // claims it on its next poll (or staleCommandReaper fails it later).
+          // Saying "sent" for that is a false success — the user walks away
+          // believing it happened. Name the queue explicitly instead.
+          showToast({
+            type: 'success',
+            message: device.status === 'online'
+              ? t('devicesPage.toasts.commandSent', { action: label, hostname: device.hostname })
+              : t('devicesPage.toasts.commandQueued', { action: label, hostname: device.hostname }),
+          });
           break;
         }
 
@@ -578,19 +662,23 @@ export default function DevicesPage() {
             const hostname = device.hostname;
             showToast({
               type: 'success',
-              message: `Wake packet sent to ${hostname} via ${wake.relay.hostname} (${wake.broadcast}). Watching for it to come online…`,
+              message: t('devicesPage.toasts.wakeSentWatching', {
+                hostname,
+                relay: wake.relay.hostname,
+                broadcast: wake.broadcast,
+              }),
             });
             const wakeController = new AbortController();
             wakeWatchersRef.current.add(wakeController);
             void watchWakeOutcome(device.id, { signal: wakeController.signal })
               .then(async (outcome) => {
                 if (outcome === 'online') {
-                  showToast({ type: 'success', message: `${hostname} is now online.` });
+                  showToast({ type: 'success', message: t('devicesPage.toasts.deviceOnline', { hostname }) });
                   await fetchDevices();
                 } else if (outcome === 'timeout') {
                   showToast({
                     type: 'error',
-                    message: `${hostname} did not come online within 4 minutes. Check ethernet + BIOS WoL.`,
+                    message: t('devicesPage.toasts.wakeTimeout', { hostname }),
                   });
                 }
                 // 'aborted' is silent — user navigated away or page reloaded.
@@ -601,7 +689,7 @@ export default function DevicesPage() {
           } catch (err) {
             if (err instanceof WakeCommandError) {
               const friendly = wakeFriendlyErrorMessage(err.code) ?? err.message;
-              showToast({ type: 'error', message: `${device.hostname}: ${friendly}` });
+              showToast({ type: 'error', message: t('devicesPage.toasts.deviceError', { hostname: device.hostname, error: friendly }) });
             } else {
               throw err;
             }
@@ -613,7 +701,7 @@ export default function DevicesPage() {
           await sendDeviceCommand(device.id, 'refresh_inventory');
           showToast({
             type: 'success',
-            message: `Inventory refresh requested for ${device.hostname}. Fresh data in 1–2 minutes.`,
+            message: t('devicesPage.toasts.inventoryRefreshRequested', { hostname: device.hostname }),
           });
           break;
         }
@@ -621,7 +709,12 @@ export default function DevicesPage() {
         case 'maintenance':
           const isCurrentlyMaintenance = device.status === 'maintenance';
           await toggleMaintenanceMode(device.id, !isCurrentlyMaintenance);
-          showToast({ type: 'success', message: `${device.hostname} ${isCurrentlyMaintenance ? 'taken out of' : 'put into'} maintenance mode` });
+          showToast({
+            type: 'success',
+            message: isCurrentlyMaintenance
+              ? t('devicesPage.toasts.maintenanceOff', { hostname: device.hostname })
+              : t('devicesPage.toasts.maintenanceOn', { hostname: device.hostname }),
+          });
           await fetchDevices();
           break;
 
@@ -650,21 +743,21 @@ export default function DevicesPage() {
           let cancelled = false;
           showToast({
             type: 'undo',
-            message: `Decommissioning "${device.hostname}"...`,
+            message: t('devicesPage.toasts.decommissioning', { hostname: device.hostname }),
             duration: 5000,
             onUndo: () => {
               cancelled = true;
-              showToast({ type: 'success', message: 'Decommission cancelled', duration: 2000 });
+              showToast({ type: 'success', message: t('devicesPage.toasts.decommissionCancelled'), duration: 2000 });
             }
           });
           setTimeout(async () => {
             if (cancelled) return;
             try {
               await decommissionDevice(device.id);
-              showToast({ type: 'success', message: `${device.hostname} has been decommissioned` });
+              showToast({ type: 'success', message: t('devicesPage.toasts.decommissioned', { hostname: device.hostname }) });
               await fetchDevices();
             } catch (err) {
-              showToast({ type: 'error', message: err instanceof Error ? err.message : `Failed to decommission ${device.hostname}` });
+              showToast({ type: 'error', message: err instanceof Error ? err.message : t('devicesPage.toasts.decommissionFailed', { hostname: device.hostname }) });
             }
           }, 5000);
           break;
@@ -672,7 +765,7 @@ export default function DevicesPage() {
 
         case 'restore':
           await restoreDevice(device.id);
-          showToast({ type: 'success', message: `${device.hostname} has been restored` });
+          showToast({ type: 'success', message: t('devicesPage.toasts.restored', { hostname: device.hostname }) });
           await fetchDevices();
           break;
 
@@ -681,31 +774,53 @@ export default function DevicesPage() {
           let pdCancelled = false;
           showToast({
             type: 'undo',
-            message: `Permanently deleting "${device.hostname}"...`,
+            message: t('devicesPage.toasts.permanentDeleting', { hostname: device.hostname }),
             duration: 5000,
             onUndo: () => {
               pdCancelled = true;
-              showToast({ type: 'success', message: 'Permanent delete cancelled', duration: 2000 });
+              showToast({ type: 'success', message: t('devicesPage.toasts.permanentDeleteCancelled'), duration: 2000 });
             }
           });
           setTimeout(async () => {
             if (pdCancelled) return;
             try {
               await permanentDeleteDevice(device.id);
-              showToast({ type: 'success', message: `${device.hostname} has been permanently deleted` });
+              showToast({ type: 'success', message: t('devicesPage.toasts.permanentlyDeleted', { hostname: device.hostname }) });
               await fetchDevices();
             } catch (err) {
-              showToast({ type: 'error', message: err instanceof Error ? err.message : `Failed to delete ${device.hostname}` });
+              showToast({ type: 'error', message: err instanceof Error ? err.message : t('devicesPage.toasts.deleteFailed', { hostname: device.hostname }) });
             }
           }, 5000);
           break;
         }
 
         default:
-          showToast({ type: 'error', message: `Unknown action: ${action}` });
+          showToast({ type: 'error', message: t('devicesPage.toasts.unknownAction', { action }) });
       }
     } catch (err) {
-      showToast({ type: 'error', message: err instanceof Error ? err.message : `Failed to ${action} ${device.hostname}` });
+      showToast({ type: 'error', message: err instanceof Error ? err.message : t('devicesPage.toasts.actionFailed', { action, hostname: device.hostname }) });
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
+  // vm_host (#2308): the picker chose a host — create the group. Mirrors the
+  // multiboot bulk path's toast/refetch handling.
+  const handleVmHostConfirm = async (hostDeviceId: string) => {
+    const targets = vmHostPickerDevices;
+    if (!targets || actionInProgress) return;
+    try {
+      setActionInProgress(true);
+      await linkDevicesVmHost(hostDeviceId, targets.map(d => d.id));
+      const host = targets.find(d => d.id === hostDeviceId);
+      showToast({
+        type: 'success',
+        message: `Linked ${targets.length - 1} guest VM${targets.length - 1 === 1 ? '' : 's'} under ${host?.displayName || host?.hostname || 'the host server'}.`,
+      });
+      setVmHostPickerDevices(null);
+      await fetchDevices();
+    } catch (err) {
+      showToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to link devices' });
     } finally {
       setActionInProgress(false);
     }
@@ -726,16 +841,60 @@ export default function DevicesPage() {
     if (selectedDevices.length === 0) {
       showToast({
         type: 'error',
-        message: 'This action applies to agent devices only. Network devices have no agent and were skipped.',
+        message: t('devicesPage.toasts.agentOnlyAction'),
       });
       return;
     }
     if (skippedNetworkCount > 0) {
       showToast({
         type: 'warning',
-        message: `${skippedNetworkCount} network device${skippedNetworkCount === 1 ? '' : 's'} skipped — this action applies to agent devices only.`,
+        message: t('devicesPage.toasts.networkSkipped', { count: skippedNetworkCount }),
       });
     }
+
+    // Decommissioned gate (#2465). Agent commands are QUEUED, not delivered
+    // live: the API refuses exactly one status — `decommissioned` — and any
+    // other device (offline included) has its command stored `pending` and run
+    // on its next check-in. So gate on `decommissioned` ONLY. Filtering to
+    // `status === 'online'` here would look like the obvious fix and would in
+    // fact discard commands the backend would have honoured — see the verified
+    // API contract in bulkActionGating.ts before "tightening" this.
+    //
+    // Decommissioned rows are hidden by default, but a status filter that
+    // includes them (or the #2251 "show" hint) puts them back in reach of a
+    // select-all, which is how they land in a mixed batch.
+    if (DECOMMISSION_BLOCKED_BULK_ACTIONS.has(action)) {
+      const eligibleDevices = selectedDevices.filter(d => isCommandQueueable(d.status));
+      const skippedDecommissionedCount = selectedDevices.length - eligibleDevices.length;
+
+      if (eligibleDevices.length === 0) {
+        showToast({
+          type: 'error',
+          message: t('devicesPage.toasts.bulkAllDecommissioned', { total: selectedDevices.length }),
+        });
+        return;
+      }
+      if (skippedDecommissionedCount > 0) {
+        setPendingDecommissionedSkip({
+          action,
+          devices: eligibleDevices,
+          skippedCount: skippedDecommissionedCount,
+          totalCount: selectedDevices.length,
+        });
+        return;
+      }
+    }
+
+    await runBulkAction(action, selectedDevices);
+  };
+
+  // Executes a bulk action against an already-vetted device set (network rows
+  // dropped, decommissioned targets filtered + confirmed). Offline devices are
+  // deliberately still IN this set — their command queues and runs on reconnect.
+  // Entered either directly from handleBulkAction (nothing to skip) or from the
+  // decommissioned-skip confirm.
+  const runBulkAction = async (action: string, selectedDevices: Device[]) => {
+    if (actionInProgress || selectedDevices.length === 0) return;
 
     const deviceIds = selectedDevices.map(d => d.id);
     const deviceCount = selectedDevices.length;
@@ -750,10 +909,35 @@ export default function DevicesPage() {
       return;
     }
 
+    // vm_host (#2308): needs a host decision first — open the picker modal;
+    // the POST happens in handleVmHostConfirm once a host is chosen.
+    if (action === 'link-vm-host') {
+      if (deviceIds.length < 2) {
+        showToast({ type: 'error', message: 'Select at least two devices — one host server and its guest VMs.' });
+        return;
+      }
+      setVmHostPickerDevices(selectedDevices);
+      return;
+    }
+
     try {
       setActionInProgress(true);
 
       switch (action) {
+        case 'link-multiboot': {
+          if (deviceIds.length < 2) {
+            showToast({ type: 'error', message: t('devicesPage.toasts.selectTwoForMultiboot') });
+            break;
+          }
+          await linkDevicesMultiboot(deviceIds);
+          showToast({
+            type: 'success',
+            message: t('devicesPage.toasts.multibootLinked', { count: deviceCount }),
+          });
+          await fetchDevices();
+          break;
+        }
+
         case 'reboot':
         case 'reboot_safe_mode':
         case 'shutdown':
@@ -762,19 +946,27 @@ export default function DevicesPage() {
           const successCount = result.commands?.length ?? 0;
           const failedCount = result.failed?.length ?? 0;
           const skippedCount = result.skipped?.length ?? 0;
-          const bulkLabel = action === 'reboot_safe_mode' ? 'Reboot to Safe Mode' : action.charAt(0).toUpperCase() + action.slice(1);
-          const skippedTail = skippedCount > 0 ? `, ${skippedCount} already pending` : '';
+          const bulkLabel = action === 'reboot_safe_mode'
+            ? t('devicesPage.actions.rebootSafeMode')
+            : t(/* i18n-dynamic */ `devicesPage.actions.${action}`, { defaultValue: action.charAt(0).toUpperCase() + action.slice(1) });
+          const skippedTail = skippedCount > 0 ? t('devicesPage.toasts.alreadyPendingTail', { count: skippedCount }) : '';
 
           if (failedCount === 0) {
             showToast({
               type: 'success',
-              message: `${bulkLabel} command sent to ${successCount} device${successCount === 1 ? '' : 's'}${skippedTail}`,
+              message: t('devicesPage.toasts.bulkCommandSent', { action: bulkLabel, count: successCount, skippedTail }),
             });
           } else {
             const failureSummary = summarizeBulkCommandFailures(result.failed ?? []);
             showToast({
               type: 'error',
-              message: `${bulkLabel} sent to ${successCount} device${successCount === 1 ? '' : 's'}${skippedTail}; ${failedCount} failed: ${failureSummary}.`,
+              message: t('devicesPage.toasts.bulkCommandPartialFailed', {
+                action: bulkLabel,
+                count: successCount,
+                skippedTail,
+                failed: failedCount,
+                failureSummary,
+              }),
             });
           }
           break;
@@ -783,7 +975,9 @@ export default function DevicesPage() {
         case 'maintenance-on':
         case 'maintenance-off': {
           const enabling = action === 'maintenance-on';
-          const mLabel = enabling ? 'Enabling maintenance mode' : 'Disabling maintenance mode';
+          const mLabel = enabling
+            ? t('devicesPage.progress.enablingMaintenance')
+            : t('devicesPage.progress.disablingMaintenance');
           setBulkProgress({ current: 0, total: deviceCount, label: mLabel });
           let mDone = 0;
           const mFailed: string[] = [];
@@ -801,13 +995,13 @@ export default function DevicesPage() {
           }
           setBulkProgress(null);
           const mSucceeded = deviceCount - mFailed.length;
-          const mVerb = enabling ? 'put into' : 'taken out of';
+          const mVerb = enabling ? t('devicesPage.maintenanceVerb.on') : t('devicesPage.maintenanceVerb.off');
           if (mFailed.length === 0) {
-            showToast({ type: 'success', message: `${mSucceeded} device${mSucceeded === 1 ? '' : 's'} ${mVerb} maintenance mode` });
+            showToast({ type: 'success', message: t('devicesPage.toasts.bulkMaintenanceSuccess', { count: mSucceeded, verb: mVerb }) });
           } else if (mSucceeded === 0) {
-            showToast({ type: 'error', message: `Failed to update maintenance mode for all ${mFailed.length} device${mFailed.length === 1 ? '' : 's'}: ${summarizeFailedDevices(mFailed)}` });
+            showToast({ type: 'error', message: t('devicesPage.toasts.bulkMaintenanceAllFailed', { count: mFailed.length, devices: summarizeFailedDevices(mFailed) }) });
           } else {
-            showToast({ type: 'error', message: `${mSucceeded} device${mSucceeded === 1 ? '' : 's'} ${mVerb} maintenance mode; ${mFailed.length} failed: ${summarizeFailedDevices(mFailed)}` });
+            showToast({ type: 'error', message: t('devicesPage.toasts.bulkMaintenanceSomeFailed', { succeeded: mSucceeded, verb: mVerb, failed: mFailed.length, devices: summarizeFailedDevices(mFailed) }) });
           }
           await fetchDevices();
           break;
@@ -816,9 +1010,9 @@ export default function DevicesPage() {
         case 'decommission': {
           const result = await bulkDecommissionDevices(deviceIds);
           if (result.failed === 0) {
-            showToast({ type: 'success', message: `${result.succeeded} devices decommissioned` });
+            showToast({ type: 'success', message: t('devicesPage.toasts.bulkDecommissioned', { count: result.succeeded }) });
           } else {
-            showToast({ type: 'error', message: `${result.succeeded} decommissioned, ${result.failed} failed` });
+            showToast({ type: 'error', message: t('devicesPage.toasts.bulkDecommissionFailed', { succeeded: result.succeeded, failed: result.failed }) });
           }
           await fetchDevices();
           break;
@@ -834,27 +1028,32 @@ export default function DevicesPage() {
           if (summary.failed.length === 0) {
             showToast({
               type: 'success',
-              message: `Wake packets sent to ${summary.succeeded.length} device${summary.succeeded.length === 1 ? '' : 's'}. Allow up to 5 minutes to come online.`,
+              message: t('devicesPage.toasts.bulkWakeSent', { count: summary.succeeded.length }),
             });
           } else if (summary.succeeded.length === 0) {
             showToast({
               type: 'error',
-              message: `Could not wake any of ${summary.failed.length} device${summary.failed.length === 1 ? '' : 's'}: ${failureSummary}.`,
+              message: t('devicesPage.toasts.bulkWakeAllFailed', { count: summary.failed.length, failureSummary }),
             });
           } else {
             showToast({
               type: 'error',
-              message: `Wake sent to ${summary.succeeded.length} of ${summary.succeeded.length + summary.failed.length} devices. ${summary.failed.length} could not be woken: ${failureSummary}.`,
+              message: t('devicesPage.toasts.bulkWakeSomeFailed', {
+                succeeded: summary.succeeded.length,
+                total: summary.succeeded.length + summary.failed.length,
+                failed: summary.failed.length,
+                failureSummary,
+              }),
             });
           }
           break;
         }
 
         default:
-          showToast({ type: 'error', message: `Unknown bulk action: ${action}` });
+          showToast({ type: 'error', message: t('devicesPage.toasts.unknownBulkAction', { action }) });
       }
     } catch (err) {
-      showToast({ type: 'error', message: err instanceof Error ? err.message : `Failed bulk ${action}` });
+      showToast({ type: 'error', message: err instanceof Error ? err.message : t('devicesPage.toasts.bulkActionFailed', { action }) });
     } finally {
       setActionInProgress(false);
     }
@@ -899,7 +1098,7 @@ export default function DevicesPage() {
   // A 403 is a permission denial, not a transient load failure — render the
   // access-denied state (no misleading "session expired / try again" UI).
   if (error && isAccessDenied(error)) {
-    return <AccessDenied message="You don't have permission to view devices." />;
+    return <AccessDenied message={t('devicesPage.accessDenied')} />;
   }
 
   if (error) {
@@ -916,7 +1115,7 @@ export default function DevicesPage() {
             onClick={() => void fetchDevices()}
             className="text-xs font-medium text-primary hover:underline"
           >
-            Try again
+            {t('devicesPage.tryAgain')}
           </button>
         </div>
       </div>
@@ -927,9 +1126,9 @@ export default function DevicesPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Devices</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{t('devicesPage.title')}</h1>
           <p className="text-muted-foreground">
-            Manage and monitor your fleet.
+            {t('devicesPage.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -940,8 +1139,8 @@ export default function DevicesPage() {
               className={`flex h-10 w-10 items-center justify-center rounded-l-md transition ${
                 viewMode === 'list' ? 'bg-muted' : 'hover:bg-muted/50'
               }`}
-              title="List view"
-              aria-label="List view"
+              title={t('devicesPage.listView')}
+              aria-label={t('devicesPage.listView')}
             >
               <List className="h-4 w-4" />
             </button>
@@ -951,8 +1150,8 @@ export default function DevicesPage() {
               className={`flex h-10 w-10 items-center justify-center rounded-r-md transition ${
                 viewMode === 'grid' ? 'bg-muted' : 'hover:bg-muted/50'
               }`}
-              title="Grid view"
-              aria-label="Grid view"
+              title={t('devicesPage.gridView')}
+              aria-label={t('devicesPage.gridView')}
             >
               <Grid className="h-4 w-4" />
             </button>
@@ -963,7 +1162,7 @@ export default function DevicesPage() {
             className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
           >
             <Plus className="h-4 w-4" />
-            Add Device
+            {t('devicesPage.addDevice')}
           </button>
         </div>
       </div>
@@ -1014,9 +1213,9 @@ export default function DevicesPage() {
       {devices.length === 0 ? (
         <div className="rounded-lg border bg-card p-8">
           <div className="max-w-lg">
-            <h2 className="text-lg font-semibold text-foreground mb-2">Your fleet is empty</h2>
+            <h2 className="text-lg font-semibold text-foreground mb-2">{t('devicesPage.emptyTitle')}</h2>
             <p className="text-sm text-muted-foreground mb-6">
-              Get started by adding your first device. The installer and enrollment key are generated automatically.
+              {t('devicesPage.emptyDescription')}
             </p>
             <div className="flex gap-3">
               <button
@@ -1025,10 +1224,10 @@ export default function DevicesPage() {
                 className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
               >
                 <Plus className="h-4 w-4" />
-                Add Device
+                {t('devicesPage.addDevice')}
               </button>
               <a href="https://docs.breezermm.com/agents/installation/" target="_blank" rel="noopener" className="inline-flex items-center gap-1.5 rounded-md border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors">
-                View installation guide
+                {t('devicesPage.viewInstallationGuide')}
               </a>
             </div>
           </div>
@@ -1046,6 +1245,7 @@ export default function DevicesPage() {
           serverFilterIds={advancedFilterIds}
           serverFilterLoading={advancedFilterLoading}
           includeDecommissioned={includeDecommissioned}
+          onShowDecommissioned={handleShowDecommissioned}
           listFilters={listFilters}
           onListFiltersChange={setListFilters}
           onCreateGroup={() => setShowCreateGroup(true)}
@@ -1054,15 +1254,25 @@ export default function DevicesPage() {
           networkDevicesEnabled={ENABLE_NETWORK_DEVICES_IN_LIST}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {gridDevices.map(device => (
-            <DeviceCard
-              key={device.id}
-              device={device}
-              onClick={handleSelectDevice}
-              onAction={handleDeviceAction}
-            />
-          ))}
+        <div className="space-y-3">
+          {hiddenDecommissionedCount > 0 && (
+            <p>
+              <DecommissionedHiddenHint
+                count={hiddenDecommissionedCount}
+                onShow={handleShowDecommissioned}
+              />
+            </p>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {gridDevices.map(device => (
+              <DeviceCard
+                key={device.id}
+                device={device}
+                onClick={handleSelectDevice}
+                onAction={handleDeviceAction}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -1073,6 +1283,16 @@ export default function DevicesPage() {
         onClose={() => setShowCreateGroup(false)}
         onCreated={handleGroupCreated}
       />
+
+      {vmHostPickerDevices && (
+        <LinkVmHostModal
+          isOpen={true}
+          devices={vmHostPickerDevices}
+          busy={actionInProgress}
+          onConfirm={hostId => void handleVmHostConfirm(hostId)}
+          onClose={() => setVmHostPickerDevices(null)}
+        />
+      )}
 
       <ScriptPickerModal
         isOpen={scriptPickerOpen}
@@ -1086,7 +1306,7 @@ export default function DevicesPage() {
         const distinctOrgIds = [...new Set(pendingScriptRun.devices.map(d => d.orgId).filter(Boolean))];
         const scriptOrgNames = distinctOrgIds.length > 0
           ? distinctOrgIds.map(id => orgStoreOrgs.find(o => o.id === id)?.name ?? id)
-          : ['the selected organization'];
+          : [t('devicesPage.selectedOrganization')];
         return (
           <ConfirmDialog
             open={true}
@@ -1096,12 +1316,12 @@ export default function DevicesPage() {
               setPendingScriptRun(null);
               void doExecuteScript(p);
             }}
-            title="Confirm script run"
+            title={t('devicesPage.confirmScriptRun')}
             variant="warning"
-            confirmLabel="Run"
+            confirmLabel={t('common:actions.run')}
             confirmTestId="confirm-fleet-action"
             message={scopeConfirmMessage({
-              action: `Run ${pendingScriptRun.script.name}`,
+              action: t('devicesPage.confirmRunAction', { script: pendingScriptRun.script.name }),
               deviceCount: pendingScriptRun.devices.length,
               orgNames: scriptOrgNames,
             })}
@@ -1109,6 +1329,39 @@ export default function DevicesPage() {
           />
         );
       })()}
+
+      {/* Decommissioned-skip confirm (#2465): the selection contained retired,
+          agent-less devices, which the API refuses. Name the count being dropped
+          and make the user own the reduced batch. Offline devices are NOT
+          dropped — their command queues and runs when they reconnect. */}
+      {pendingDecommissionedSkip && (
+        <ConfirmDialog
+          open={true}
+          onClose={() => setPendingDecommissionedSkip(null)}
+          // Confirming UNMOUNTS this dialog, which is what makes a double-click
+          // safe — a second click has no button to hit. No isLoading/spinner
+          // here on purpose: that would mean keeping the dialog mounted, and
+          // then neither guard holds — ConfirmDialog's `disabled` and
+          // runBulkAction's `actionInProgress` both read a closure captured at
+          // render, still `false` on the second click, so the fleet reboots
+          // twice. (The set-state/dispatch ORDER below is not what saves us:
+          // React batches both. The unmount is.) DevicesPage.test.tsx pins it.
+          onConfirm={() => {
+            const p = pendingDecommissionedSkip;
+            setPendingDecommissionedSkip(null);
+            void runBulkAction(p.action, p.devices);
+          }}
+          title={t('devicesPage.confirmDecommissionedSkip.title')}
+          variant="warning"
+          confirmLabel={t('common:actions.confirm')}
+          confirmTestId="confirm-decommissioned-skip"
+          message={t('devicesPage.confirmDecommissionedSkip.message', {
+            skipped: pendingDecommissionedSkip.skippedCount,
+            total: pendingDecommissionedSkip.totalCount,
+            eligible: pendingDecommissionedSkip.devices.length,
+          })}
+        />
+      )}
 
       {settingsDevice && (
         <DeviceSettingsModal

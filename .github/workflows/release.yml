@@ -13,7 +13,7 @@ on:
 
 env:
   NODE_VERSION: '22'
-  PNPM_VERSION: '10.33.4'
+  PNPM_VERSION: '10.34.5'
   GO_VERSION: '1.25.12'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -31,7 +31,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -39,7 +41,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -51,7 +53,7 @@ jobs:
         run: pnpm build --filter=@breeze/api
 
       - name: Upload API artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: api-dist
           path: apps/api/dist
@@ -62,7 +64,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -70,7 +74,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -88,7 +92,7 @@ jobs:
         run: pnpm build --filter=@breeze/web
 
       - name: Upload Web artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: web-dist
           path: apps/web/dist
@@ -109,10 +113,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
@@ -140,7 +146,7 @@ jobs:
             ./cmd/bl4ck-agent
 
       - name: Upload Agent artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           path: agent/bl4ck-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
@@ -159,7 +165,7 @@ jobs:
             ./cmd/bl4ck-backup
 
       - name: Upload bl4ck-backup artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-backup-${{ matrix.goos }}-${{ matrix.goarch }}
           path: agent/bl4ck-backup-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
@@ -178,7 +184,7 @@ jobs:
             ./cmd/bl4ck-watchdog
 
       - name: Upload bl4ck-watchdog artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-watchdog-${{ matrix.goos }}-${{ matrix.goarch }}
           path: agent/bl4ck-watchdog-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
@@ -186,7 +192,10 @@ jobs:
 
   build-windows-msi:
     name: Build + Sign Windows Artifacts
-    if: vars.ENABLE_WINDOWS_SIGNING == 'true'
+    if: >-
+      vars.ENABLE_WINDOWS_SIGNING == 'true'
+      && github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     needs: [build-agent]
     permissions:
@@ -196,10 +205,12 @@ jobs:
       name: ${{ contains(github.ref_name, '-') && 'signing-prerelease' || 'signing-production' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
@@ -210,7 +221,7 @@ jobs:
         run: go mod download
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '8.0.x'
 
@@ -593,7 +604,7 @@ jobs:
           }
 
       - name: Upload signed Windows EXE artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-agent-windows-amd64
           path: dist/bl4ck-agent-windows-amd64.exe
@@ -607,7 +618,7 @@ jobs:
       # and the HelperLifecycleManager fell through to a
       # `bl4ck-agent.exe user-helper` fallback every ~30s.
       - name: Upload signed Windows user-helper EXE artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-user-helper-windows-amd64
           path: dist/bl4ck-user-helper-windows-amd64.exe
@@ -615,7 +626,7 @@ jobs:
           retention-days: 30
 
       - name: Upload Windows MSI artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-agent-windows-msi
           path: dist/bl4ck-agent.msi
@@ -630,7 +641,7 @@ jobs:
           retention-days: 30
 
       - name: Upload signed backup EXE artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-backup-windows-amd64
           path: dist/bl4ck-backup-windows-amd64.exe
@@ -638,7 +649,7 @@ jobs:
           retention-days: 30
 
       - name: Upload signed watchdog EXE artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-watchdog-windows-amd64
           path: dist/bl4ck-watchdog-windows-amd64.exe
@@ -647,6 +658,9 @@ jobs:
 
   build-viewer:
     name: Build Viewer
+    if: >-
+      github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -658,7 +672,9 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -666,7 +682,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -738,7 +754,7 @@ jobs:
           echo "path=${{ matrix.asset_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Viewer artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset_name }}
           path: apps/viewer/${{ matrix.asset_name }}
@@ -757,7 +773,9 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -765,7 +783,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -826,7 +844,7 @@ jobs:
           echo "path=${{ matrix.asset_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Helper artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset_name }}
           path: apps/helper/${{ matrix.asset_name }}
@@ -834,7 +852,10 @@ jobs:
 
   sign-windows-tauri:
     name: Sign Windows Tauri Artifacts
-    if: vars.ENABLE_WINDOWS_SIGNING == 'true'
+    if: >-
+      vars.ENABLE_WINDOWS_SIGNING == 'true'
+      && github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     needs: [build-viewer, build-helper]
     permissions:
@@ -844,13 +865,13 @@ jobs:
       name: ${{ contains(github.ref_name, '-') && 'signing-prerelease' || 'signing-production' }}
     steps:
       - name: Download viewer Windows MSI
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: breeze-viewer-windows.msi
           path: staging/
 
       - name: Download helper Windows MSI
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: bl4ck-helper-windows.msi
           path: staging/
@@ -944,7 +965,7 @@ jobs:
           }
 
       - name: Upload signed viewer MSI
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: breeze-viewer-windows.msi
           path: staging/breeze-viewer-windows.msi
@@ -952,7 +973,7 @@ jobs:
           retention-days: 30
 
       - name: Upload signed helper MSI
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bl4ck-helper-windows.msi
           path: staging/bl4ck-helper-windows.msi
@@ -961,12 +982,17 @@ jobs:
 
   package-windows-updater:
     name: Package Windows Updater Bundle
-    if: vars.ENABLE_WINDOWS_SIGNING == 'true'
+    if: >-
+      vars.ENABLE_WINDOWS_SIGNING == 'true'
+      && github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs: [sign-windows-tauri]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -974,7 +1000,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -983,7 +1009,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download signed viewer MSI
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: breeze-viewer-windows.msi
           path: staging/
@@ -1016,7 +1042,7 @@ jobs:
           fi
 
       - name: Upload Windows updater bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: breeze-viewer-windows-updater
           path: |
@@ -1034,7 +1060,7 @@ jobs:
       && (needs.package-windows-updater.result == 'success' || needs.package-windows-updater.result == 'skipped')
     steps:
       - name: Download viewer updater bundles
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: updater-bundles
           pattern: 'breeze-viewer-*-updater'
@@ -1093,7 +1119,7 @@ jobs:
           cat latest.json
 
       - name: Upload generated manifest
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: viewer-latest-json
           path: latest.json
@@ -1146,7 +1172,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-api, build-web, build-agent, build-windows-msi, sign-windows-tauri, build-viewer, build-helper, merge-viewer-update-manifest, package-windows-updater, release-integrity-gate]
     if: >-
-      !cancelled()
+      github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
       && needs.build-api.result == 'success'
       && needs.build-web.result == 'success'
       && needs.build-agent.result == 'success'
@@ -1162,10 +1190,12 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           pattern: '{api-dist,web-dist,bl4ck-agent-*,bl4ck-backup-*,bl4ck-user-helper-*,bl4ck-watchdog-*,bl4ck-setup-*,breeze-viewer-*,bl4ck-helper-*,viewer-latest-json}'
@@ -1438,7 +1468,7 @@ jobs:
           echo "Verified $asset_count release assets against checksums.txt"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: release-assets/*
           generate_release_notes: true
@@ -1463,39 +1493,43 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-agent, build-windows-msi, sign-windows-tauri, build-viewer, build-helper, create-release]
     if: >-
-      !cancelled()
+      github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
       && needs.build-agent.result == 'success'
       && (needs.build-windows-msi.result == 'success' || needs.build-windows-msi.result == 'skipped')
       && (needs.sign-windows-tauri.result == 'success' || needs.sign-windows-tauri.result == 'skipped')
       && needs.build-viewer.result == 'success'
       && needs.build-helper.result == 'success'
-      && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+      && needs.create-release.result == 'success'
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Create staging directory
         run: mkdir -p staging/agent staging/viewer staging/helper
 
       - name: Download agent artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: staging/agent
           pattern: 'bl4ck-agent-*'
           merge-multiple: true
 
       - name: Download viewer artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: staging/viewer
           pattern: 'breeze-viewer-*'
           merge-multiple: true
 
       - name: Download helper artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: staging/helper
           pattern: 'bl4ck-helper-*'
@@ -1547,18 +1581,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-api, create-release]
     if: >-
-      !cancelled()
+      github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
       && needs.build-api.result == 'success'
-      && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+      && needs.create-release.result == 'success'
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Download API artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: api-dist
           path: apps/api/dist
@@ -1602,23 +1640,123 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  build-docker-m365-graph-read-executor:
+    name: Build & Push M365 Graph Read Executor Image
+    runs-on: ubuntu-latest
+    needs: [create-release]
+    if: >-
+      github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
+      && needs.create-release.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      executor-image-digest: ${{ steps.push-executor-digest.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # IMAGE_NAME is ${{ github.repository }} (e.g. LanternOps/breeze), but a
+      # container reference must be lowercase. The api/web jobs launder this
+      # through docker/metadata-action (which lowercases); this job builds the
+      # ref by hand, so lowercase it explicitly.
+      - name: Compute lowercase image base
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          BASE="${REGISTRY}/${IMAGE_NAME}"
+          echo "IMAGE_BASE=${BASE,,}" >> "$GITHUB_ENV"
+
+      # Push by digest only: no release-facing tag exists until this exact
+      # manifest passes the blocking vulnerability scan below.
+      - name: Build and push unadvertised executor digest
+        id: push-executor-digest
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: apps/m365-graph-read-executor/Dockerfile
+          outputs: type=image,name=${{ env.IMAGE_BASE }}/m365-graph-read-executor,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan exact executor digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_BASE }}/m365-graph-read-executor@${{ steps.push-executor-digest.outputs.digest }}
+          severity: 'HIGH,CRITICAL'
+          format: 'table'
+          exit-code: '1'
+
+      # Promote the already-scanned manifest. imagetools only creates tag
+      # references; it never rebuilds or mutates the image layers.
+      - name: Promote scanned executor digest
+        env:
+          EXECUTOR_REPOSITORY: ${{ env.IMAGE_BASE }}/m365-graph-read-executor
+          EXECUTOR_IMAGE_DIGEST: ${{ steps.push-executor-digest.outputs.digest }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          VERSION="${RELEASE_REF_NAME#v}"
+          SHORT_SHA="${RELEASE_SHA::7}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Executor image promotion requires an exact semver release tag" >&2
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "${EXECUTOR_REPOSITORY}:${VERSION}" \
+            --tag "${EXECUTOR_REPOSITORY}:sha-${SHORT_SHA}" \
+            "${EXECUTOR_REPOSITORY}@${EXECUTOR_IMAGE_DIGEST}"
+
+      - name: Record executor digest
+        env:
+          EXECUTOR_IMAGE_DIGEST: ${{ steps.push-executor-digest.outputs.digest }}
+        run: |
+          test -n "$EXECUTOR_IMAGE_DIGEST"
+          printf '%s\n' "$EXECUTOR_IMAGE_DIGEST" > m365-graph-read-executor-image-digest.txt
+
+      - name: Upload executor digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: m365-graph-read-executor-image-digest
+          path: m365-graph-read-executor-image-digest.txt
+          retention-days: 90
+
   build-docker-web:
     name: Build & Push Web Docker Image
     runs-on: ubuntu-latest
     needs: [build-web, create-release]
     if: >-
-      !cancelled()
+      github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
       && needs.build-web.result == 'success'
-      && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+      && needs.create-release.result == 'success'
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Download Web artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: web-dist
           path: apps/web/dist
@@ -1667,14 +1805,18 @@ jobs:
     runs-on: ubuntu-latest
     needs: [create-release]
     if: >-
-      !cancelled()
-      && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+      github.ref_type == 'tag'
+      && startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
+      && needs.create-release.result == 'success'
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4

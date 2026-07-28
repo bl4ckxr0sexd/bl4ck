@@ -1,7 +1,7 @@
 /**
  * Internal-note leak regression for the outbound composer (spec §6/§9).
  *
- * Task 8 of docs/superpowers/plans/2026-06-13-ticketing-phase4-outbound-backend.md
+ * Task 8 of docs/superpowers/plans/ticketing/2026-06-13-ticketing-phase4-outbound-backend.md
  *
  * Guarantee: a private ticket_comment (is_public=false) MUST NEVER:
  *   (a) directly trigger an outbound email (even if the worker somehow sees isPublic:false
@@ -44,6 +44,14 @@ vi.mock('bullmq', () => ({ Queue: vi.fn(() => ({ add: vi.fn() })), Worker: vi.fn
 vi.mock('../services/redis', () => ({ getBullMQConnection: vi.fn(() => ({})) }));
 vi.mock('../services/email', () => ({ getEmailService: getEmailServiceMock }));
 vi.mock('../services/sentry', () => ({ captureException: vi.fn() }));
+// collectRequesterEmail resolves the partner's connected M365 mailbox before
+// composing. The real resolver issues a db.select().from().innerJoin() chain the
+// simplified db mock below doesn't implement — and it only touches mailbox
+// connection/ownership tables (never ticket_comments), so mocking it keeps the
+// leak invariant meaningful. Same pattern as ticketNotifyWorker.test.ts.
+vi.mock('../services/ticketMailbox/resolveOutboundMailbox', () => ({
+  resolveOutboundMailbox: vi.fn(async () => null)
+}));
 // outboundThreading.ts reads TICKETS_INBOUND_DOMAIN via getConfig(). Specifier
 // from jobs/ is '../config/validate' — the same as ticketNotifyWorker.test.ts.
 vi.mock('../config/validate', () => ({ getConfig: () => ({ TICKETS_INBOUND_DOMAIN: 'tickets.example.com' }) }));

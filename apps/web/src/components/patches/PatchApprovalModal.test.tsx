@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import '@/lib/i18n';
 
 import PatchApprovalModal from './PatchApprovalModal';
 import { fetchWithAuth } from '../../stores/auth';
@@ -84,7 +85,6 @@ describe('PatchApprovalModal', () => {
         open
         patch={PATCH}
         ringId={null}
-        currentOrgId="org-1"
         onClose={() => {}}
       />
     );
@@ -109,7 +109,6 @@ describe('PatchApprovalModal', () => {
         open
         patch={PATCH}
         ringId={null}
-        currentOrgId={null}
         onClose={() => {}}
       />
     );
@@ -140,7 +139,6 @@ describe('PatchApprovalModal', () => {
         open
         patch={PATCH}
         ringId="ring-1"
-        currentOrgId={null}
         onClose={() => {}}
       />
     );

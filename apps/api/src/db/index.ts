@@ -9,15 +9,13 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 import { captureMessage } from '../services/sentry';
+import {
+  logRequestDatabaseConfigSource,
+  resolveRequestDatabaseConfig,
+} from './requestDatabaseConfig';
 
-// Prefer DATABASE_URL_APP (the unprivileged breeze_app role) so RLS policies
-// are actually enforced. Fall back to DATABASE_URL for backward compatibility
-// with existing deployments; autoMigrate will warn loudly if that connection
-// has BYPASSRLS/SUPERUSER.
-const connectionString =
-  process.env.DATABASE_URL_APP
-  || process.env.DATABASE_URL
-  || 'postgresql://breeze:breeze@localhost:5432/breeze';
+const requestDatabaseConfig = resolveRequestDatabaseConfig();
+logRequestDatabaseConfigSource(requestDatabaseConfig);
 
 // Pool sizing: postgres-js defaults to max=10, which causes cascading 504s
 // under heartbeat storms (e.g. a 1000-agent fleet reconnecting at once).
@@ -30,12 +28,73 @@ function getDbPoolMax(): number {
   return raw;
 }
 
-const client = postgres(connectionString, {
+const client = postgres(requestDatabaseConfig.url, {
   max: getDbPoolMax(),
   idle_timeout: 20,
   max_lifetime: 60 * 30,
   connect_timeout: 10,
 });
+
+export interface RequestDatabaseRole {
+  currentUser: string;
+  isSuperuser: boolean;
+  bypassesRls: boolean;
+}
+
+const REQUEST_DATABASE_ROLE_REMEDIATION =
+  'Set DATABASE_URL_APP to a NOSUPERUSER NOBYPASSRLS role, or configure ' +
+  'BREEZE_APP_DB_PASSWORD/POSTGRES_PASSWORD so Breeze can derive the breeze_app URL.';
+
+/**
+ * Reads the effective role from the exact module-scope postgres.js client that
+ * backs `db`. This must not use a separate probe connection: startup is proving
+ * the identity and RLS capabilities of the pool that will serve requests.
+ */
+export async function getRequestDatabaseRole(): Promise<RequestDatabaseRole> {
+  let rows: readonly unknown[];
+  try {
+    rows = await client`
+      SELECT current_user AS "currentUser",
+             rolsuper AS "isSuperuser",
+             rolbypassrls AS "bypassesRls"
+      FROM pg_roles
+      WHERE rolname = current_user
+    `;
+  } catch {
+    throw new Error(
+      '[database] Could not query the effective request database role. ' +
+        REQUEST_DATABASE_ROLE_REMEDIATION,
+    );
+  }
+  const role = rows[0] as RequestDatabaseRole | undefined;
+
+  if (!role) {
+    throw new Error(
+      '[database] Could not verify the effective request database role: ' +
+        `pg_roles returned no row for current_user. ${REQUEST_DATABASE_ROLE_REMEDIATION}`,
+    );
+  }
+
+  return role;
+}
+
+export async function assertRequestDatabaseRoleSafe(): Promise<RequestDatabaseRole> {
+  const role = await getRequestDatabaseRole();
+  const unsafeCapabilities: string[] = [];
+  if (role.isSuperuser) unsafeCapabilities.push('SUPERUSER');
+  if (role.bypassesRls) unsafeCapabilities.push('BYPASSRLS');
+
+  if (unsafeCapabilities.length > 0) {
+    throw new Error(
+      `[database] Unsafe effective request database role "${role.currentUser}": ` +
+        `${unsafeCapabilities.join(' and ')}. Request handlers require a ` +
+        `NOSUPERUSER NOBYPASSRLS role. ${REQUEST_DATABASE_ROLE_REMEDIATION}`,
+    );
+  }
+
+  return role;
+}
+
 const baseDb = drizzle(client, { schema });
 const dbContextStorage = new AsyncLocalStorage<typeof baseDb>();
 // Parallel store holding the DbAccessContext METADATA (scope + allowlists) for
@@ -84,6 +143,21 @@ export interface DbAccessContext {
    * apply.
    */
   currentPartnerId?: string | null;
+  /**
+   * Short, low-cardinality name for the code path that opened this context,
+   * e.g. `agentWs.heartbeat`. Purely diagnostic — it grants nothing and is
+   * never sent to Postgres. Emitted as the `dbContextLabel` Sentry tag on the
+   * #1105 held-connection warning so a recurring hold can be broken down by
+   * source instead of arriving as one opaque bucket.
+   *
+   * Why this exists: BREEZE-A accumulated ~7k held-context warnings from the
+   * agent WebSocket that were impossible to act on, because all 12 contexts
+   * there funnel through ONE helper closure and every production frame minifies
+   * to an anonymous arrow inside `onMessage`. The stack alone cannot tell
+   * `heartbeat` from `command_result`. Set this wherever several distinct paths
+   * share a context helper.
+   */
+  label?: string;
 }
 
 export const SYSTEM_DB_ACCESS_CONTEXT: DbAccessContext = {
@@ -201,6 +275,22 @@ export async function withDbAccessContext<T>(
 
     const warnMs = getHeldContextWarnMs();
     const startedAt = warnMs > 0 ? Date.now() : 0;
+    // Capture the OPENER's stack here, synchronously, while the call chain that
+    // opened this context is still on the stack.
+    //
+    // The warning below used to build its stack inside the `finally`, which runs
+    // after `await` — by then the synchronous frames are gone and all that
+    // remains is the microtask trampoline plus whatever host loop is at the
+    // bottom (`processTicksAndRejections` / `sql.begin` / bullmq's worker.js).
+    // That is why BREEZE-9 accumulated ~12k events that name nothing
+    // actionable: every one pointed at this emitter instead of at the code
+    // holding the connection. Allocating the Error here records the real opener.
+    //
+    // Cost: `new Error()` captures the structured trace but V8 only formats it
+    // on first `.stack` access, which we do ONLY when a hold actually breaches
+    // the threshold. So the hot path pays one small allocation, not stack
+    // serialization, and only when the tripwire is armed at all.
+    const opener = warnMs > 0 ? new Error('withDbAccessContext opened here') : undefined;
     try {
       return await dbContextStorage.run(tx as unknown as typeof baseDb, () =>
         dbContextMetaStorage.run(context, fn),
@@ -214,8 +304,14 @@ export async function withDbAccessContext<T>(
         if (warnMs > 0) {
           const heldMs = Date.now() - startedAt;
           if (heldMs >= warnMs) {
+            // The label goes in the MESSAGE, not just the tag: Sentry groups by
+            // message, so including it splits one bucket into per-source issues
+            // that can be resolved independently. Unlabelled callers keep the
+            // exact previous message text, so their existing grouping is not
+            // disturbed by this change.
+            const labelPart = context.label ? ` [${context.label}]` : '';
             const message =
-              `withDbAccessContext (scope=${context.scope}) held a pooled connection in an open `
+              `withDbAccessContext (scope=${context.scope})${labelPart} held a pooled connection in an open `
               + `transaction for ${heldMs}ms (>= ${warnMs}ms) — long enough that it likely did slow `
               + `non-DB work (Redis/HTTP/loops) or a slow query inside the context. If the former, `
               + `move it after the context closes or wrap it in runOutsideDbContext (#1105).`;
@@ -223,7 +319,16 @@ export async function withDbAccessContext<T>(
             // Throttle the Sentry capture per scope (see getHeldContextCaptureThrottleMs)
             // so a recurring conn-hold can't flood the org's event quota.
             if (shouldCaptureHeldContext(context.scope, Date.now(), getHeldContextCaptureThrottleMs())) {
-              captureMessage(message, 'warning', { heldMs, scope: context.scope, stack: new Error().stack });
+              captureMessage(message, 'warning', {
+                heldMs,
+                scope: context.scope,
+                // `openedAt` is the actionable one — it names the caller that
+                // opened the context. `stack` is kept (emitter-side, i.e. the
+                // await trampoline) only because the previous shape had it and
+                // dropping a field silently is worse than an extra one.
+                openedAt: opener?.stack,
+                stack: new Error().stack,
+              }, context.label ? { dbContextLabel: context.label } : undefined);
             }
           }
         }
@@ -236,6 +341,39 @@ export async function withDbAccessContext<T>(
 
 export async function withSystemDbAccessContext<T>(fn: () => Promise<T>): Promise<T> {
   return withDbAccessContext(SYSTEM_DB_ACCESS_CONTEXT, fn);
+}
+
+/**
+ * Resolve a tenant context and run work in the same transaction that performed
+ * that resolution. The transaction begins in system scope so the resolver can
+ * discover an allowlist, then its SET LOCAL RLS context is narrowed before
+ * `fn` runs. This is intentionally different from nesting withDbAccessContext:
+ * nested calls retain the existing context and therefore cannot safely bridge
+ * a lock-protected allowlist discovery into tenant-scoped request work.
+ */
+export async function withResolvedDbAccessContext<T, R>(
+  resolve: () => Promise<{ context: DbAccessContext; value: R }>,
+  fn: (value: R) => Promise<T>,
+): Promise<T> {
+  return withSystemDbAccessContext(async () => {
+    const resolved = await resolve();
+    const activeDb = getCurrentDb();
+    const serializedOrgIds = serializeAccessibleIds(
+      resolved.context.scope,
+      resolved.context.accessibleOrgIds,
+    );
+    const serializedPartnerIds = serializeAccessibleIds(
+      resolved.context.scope,
+      resolved.context.accessiblePartnerIds,
+    );
+    await activeDb.execute(sql`select set_config('breeze.scope', ${resolved.context.scope}, true)`);
+    await activeDb.execute(sql`select set_config('breeze.org_id', ${resolved.context.orgId ?? ''}, true)`);
+    await activeDb.execute(sql`select set_config('breeze.accessible_org_ids', ${serializedOrgIds}, true)`);
+    await activeDb.execute(sql`select set_config('breeze.accessible_partner_ids', ${serializedPartnerIds}, true)`);
+    await activeDb.execute(sql`select set_config('breeze.user_id', ${resolved.context.userId ?? ''}, true)`);
+    await activeDb.execute(sql`select set_config('breeze.current_partner_id', ${resolved.context.currentPartnerId ?? ''}, true)`);
+    return dbContextMetaStorage.run(resolved.context, () => fn(resolved.value));
+  });
 }
 
 /**
@@ -278,6 +416,18 @@ export type RunOutsideDbContextFn = <T>(fn: () => T) => T;
 export const runOutsideDbContext: RunOutsideDbContextFn = <T>(fn: () => T): T => {
   return dbContextStorage.exit(() => dbContextMetaStorage.exit(fn));
 };
+
+/**
+ * TEST ONLY. Enters the tx-routing store without opening a real transaction,
+ * so the contextless-write guard can be exercised against the REAL `db` proxy
+ * with no database. Production code must use withDbAccessContext /
+ * withSystemDbAccessContext — this sets no GUCs and grants no RLS visibility;
+ * it only makes `hasDbAccessContext()` true, which is precisely the condition
+ * the guard keys on.
+ */
+export function __runInDbContextForTests<T>(fn: () => T): T {
+  return dbContextStorage.run(baseDb, fn);
+}
 
 // Query-builder write methods that, when invoked on the bare pool (no active
 // RLS access context), silently match 0 rows under the forced-RLS `breeze_app`
@@ -332,10 +482,26 @@ function reportContextlessWrite(label: string): void {
   // negative-control integration tests deliberately issue contextless writes
   // through this proxy to prove DB-layer rejection, and must be migrated off
   // the proxy (or opt out) before the gate can be flipped on suite-wide
-  // (tracked as a #1379 follow-up). The genuinely-intentional production paths
-  // never reach here anyway: auditAdminPool bypasses this proxy, and
-  // device_commands writes under an explicit system context. Mirrors
-  // assertOutsideHeldDbContext's strict gate.
+  // (tracked as a #1379 follow-up). Mirrors assertOutsideHeldDbContext's
+  // strict gate.
+  //
+  // This comment used to assert, flatly, that "device_commands writes run
+  // under an explicit system context" and therefore nothing intentional ever
+  // reaches here. That was FALSE for ~2 months and produced BREEZE-7: the
+  // agent WS result path, its REST twin, and the restore-cancel path all wrote
+  // device_commands contextless. All three are fixed (agentWs.ts,
+  // routes/agents/commands.ts, routes/backup/restore.ts) — but the claim is
+  // stated narrowly now, because the broad version is what stopped anyone
+  // checking:
+  //   - auditAdminPool bypasses this proxy entirely (verified: separate pool).
+  //   - The three device_commands paths above nest withSystemDbAccessContext
+  //     inside runOutsideDbContext.
+  // It is NOT a verified claim about every device_commands write in the repo
+  // (there are ~30), nor about writes issued through db.transaction(...) —
+  // `transaction` is not in CONTEXTLESS_WRITE_GUARD_METHODS and the `tx` handed
+  // to the callback is a raw Drizzle transaction, not this Proxy, so those
+  // writes are invisible to the guard entirely. Before flipping the strict gate
+  // on suite-wide, re-verify rather than trusting this paragraph.
   if (STRICT_TRIPWIRE_VALUES.has((process.env.DB_CONTEXTLESS_WRITE_STRICT ?? '').trim().toLowerCase())) {
     throw new Error(message);
   }
@@ -413,6 +579,28 @@ export function classifyContextlessExecuteVerb(arg: unknown): string | null {
  */
 const STRICT_TRIPWIRE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
+// Dedup the Sentry capture per call site, mirroring the contextless-write
+// guard above: the tripwire marks a wrong CALL SITE, not N distinct errors, so
+// one report per site per process is the whole signal. Unthrottled, a single
+// hot path burned ~2.2k events/day (BREEZE-H) against the org quota — the same
+// flood-then-blackout failure mode #1894 fixed for the held-duration warning.
+// `console.warn` still fires every time so logs stay complete.
+const reportedHeldContextSites = new Set<string>();
+export function __resetHeldContextAssertDedupeForTests(): void {
+  reportedHeldContextSites.clear();
+}
+
+/**
+ * Returns true at most once per key (originating call site) for the lifetime of
+ * the process; subsequent calls with the same key return false. Pure apart from
+ * the module-level seen-set — exported for unit testing.
+ */
+export function shouldReportHeldContextSite(key: string): boolean {
+  if (reportedHeldContextSites.has(key)) return false;
+  reportedHeldContextSites.add(key);
+  return true;
+}
+
 export function assertOutsideHeldDbContext(operation: string): void {
   if (!hasDbAccessContext()) {
     return;
@@ -425,7 +613,9 @@ export function assertOutsideHeldDbContext(operation: string): void {
     throw new Error(message);
   }
   console.warn(message);
-  captureMessage(message, 'warning', { operation, stack: new Error().stack });
+  const stack = new Error().stack;
+  if (!shouldReportHeldContextSite(stack ?? operation)) return;
+  captureMessage(message, 'warning', { operation, stack });
 }
 
 const proxiedDb = new Proxy(baseDb, {

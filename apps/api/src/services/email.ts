@@ -15,6 +15,7 @@ export interface EmailAttachment {
 
 export interface SendEmailParams {
   to: string | string[];
+  cc?: string | string[];
   subject: string;
   html: string;
   text?: string;
@@ -92,6 +93,17 @@ export interface EmailChangedEmailParams {
   to: string | string[];
   name?: string | null;
   newEmail: string;
+  supportEmail?: string;
+  // SR2-17: true when a change was REQUESTED (a verification link was sent to
+  // newEmail and the address has NOT moved yet); false/undefined keeps today's
+  // "your email WAS changed" completed-change copy. Sent to the OLD address in
+  // both cases so the abandoned mailbox's owner is always notified.
+  pending?: boolean;
+}
+
+export interface SignupAttemptOnExistingAccountEmailParams {
+  to: string | string[];
+  name?: string | null;
   supportEmail?: string;
 }
 
@@ -178,8 +190,23 @@ export class EmailService {
     });
   }
 
+  /**
+   * The default sender with a custom display name — keeps the envelope address
+   * (so SPF/DKIM alignment is untouched) while showing e.g.
+   * `"Acme MSP via Breeze" <no-reply@2breeze.app>` in the customer's inbox.
+   * The display name is stripped of header-breaking characters; falls back to
+   * the plain default sender when nothing usable survives.
+   */
+  fromWithDisplayName(displayName: string): string {
+    const match = this.defaultFrom.match(/<([^<>\s]+@[^<>\s]+)>/);
+    const address = (match?.[1] ?? this.defaultFrom).trim();
+    const safe = displayName.replace(/[\r\n"<>\\]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!safe || !address.includes('@')) return this.defaultFrom;
+    return `"${safe}" <${address}>`;
+  }
+
   async sendEmail(params: SendEmailParams): Promise<void> {
-    const { to, subject, html, text, from, replyTo, headers, attachments } = params;
+    const { to, cc, subject, html, text, from, replyTo, headers, attachments } = params;
     const sender = from ?? this.defaultFrom;
 
     if (this.provider === 'resend') {
@@ -190,6 +217,7 @@ export class EmailService {
       const { error } = await this.resend.emails.send({
         from: sender,
         to,
+        cc,
         subject,
         html,
         text,
@@ -240,6 +268,7 @@ export class EmailService {
     await this.smtpTransport.sendMail({
       from: sender,
       to,
+      cc,
       subject,
       html,
       text,
@@ -308,6 +337,16 @@ export class EmailService {
 
   async sendEmailChanged(params: EmailChangedEmailParams): Promise<void> {
     const template = buildEmailChangedTemplate(params);
+    await this.sendEmail({
+      to: params.to,
+      subject: template.subject,
+      html: template.html,
+      text: template.text
+    });
+  }
+
+  async sendSignupAttemptOnExistingAccount(params: SignupAttemptOnExistingAccountEmailParams): Promise<void> {
+    const template = buildSignupAttemptOnExistingAccountTemplate(params);
     await this.sendEmail({
       to: params.to,
       subject: template.subject,
@@ -574,6 +613,7 @@ async function sendViaMailgun(
 ): Promise<void> {
   const authToken = Buffer.from(`api:${config.apiKey}`).toString('base64');
   const recipients = Array.isArray(params.to) ? params.to : [params.to];
+  const ccs = params.cc ? (Array.isArray(params.cc) ? params.cc : [params.cc]) : [];
   const replyTos = params.replyTo
     ? (Array.isArray(params.replyTo) ? params.replyTo : [params.replyTo])
     : [];
@@ -587,6 +627,7 @@ async function sendViaMailgun(
     body.set('from', params.from);
     body.set('subject', params.subject);
     for (const recipient of recipients) body.append('to', recipient);
+    for (const cc of ccs) body.append('cc', cc);
     if (params.text) body.set('text', params.text);
     body.set('html', params.html);
     for (const replyTo of replyTos) body.append('h:Reply-To', replyTo);
@@ -612,6 +653,7 @@ async function sendViaMailgun(
     body.set('from', params.from);
     body.set('subject', params.subject);
     for (const recipient of recipients) body.append('to', recipient);
+    for (const cc of ccs) body.append('cc', cc);
     if (params.text) body.set('text', params.text);
     body.set('html', params.html);
     for (const replyTo of replyTos) body.append('h:Reply-To', replyTo);
@@ -648,11 +690,11 @@ export function supportFooter(explicit: string | undefined, prefix: string): str
 
 function buildPasswordResetTemplate(params: PasswordResetEmailParams): EmailTemplate {
   const name = params.name?.trim() || 'there';
-  const subject = 'Reset your Breeze password';
-  const preheader = 'Use the link below to set a new Breeze password.';
+  const subject = 'Reset your BL4CK password';
+  const preheader = 'Use the link below to set a new BL4CK password.';
   const body = `
       <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
-      <p style="${BODY_PARA}">A password reset was requested for your Breeze account. Use the button below to set a new one.</p>
+      <p style="${BODY_PARA}">A password reset was requested for your BL4CK account. Use the button below to set a new one.</p>
       ${renderButton('Reset password', params.resetUrl)}
       <p style="${MUTED_PARA}">If you did not request this, you can safely ignore this email.</p>
   `;
@@ -667,7 +709,7 @@ function buildPasswordResetTemplate(params: PasswordResetEmailParams): EmailTemp
   const support = getSupportEmail(params.supportEmail);
   const text = [
     `Hi ${name},`,
-    'A password reset was requested for your Breeze account.',
+    'A password reset was requested for your BL4CK account.',
     `Reset your password: ${params.resetUrl}`,
     'If you did not request this, you can safely ignore this email.',
     support ? `Need help? Contact ${support}.` : null,
@@ -706,13 +748,13 @@ export function buildPortalInviteTemplate(params: PortalInviteEmailParams): Emai
 
 function buildVerificationTemplate(params: VerificationEmailParams): EmailTemplate {
   const name = params.name?.trim() || 'there';
-  const subject = 'Verify your email for Breeze RMM';
-  const preheader = 'Confirm your email address to finish setting up Breeze.';
+  const subject = 'Verify your email for BL4CK RMM';
+  const preheader = 'Confirm your email address to finish setting up BL4CK.';
   const body = `
       <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
-      <p style="${BODY_PARA}">Welcome to Breeze. Please confirm your email address so we can finish setting up your account.</p>
+      <p style="${BODY_PARA}">Welcome to BL4CK. Please confirm your email address so we can finish setting up your account.</p>
       ${renderButton('Verify email', params.verificationUrl)}
-      <p style="${MUTED_PARA}">This link expires in 24 hours. If you did not sign up for Breeze, you can safely ignore this email.</p>
+      <p style="${MUTED_PARA}">This link expires in 24 hours. If you did not sign up for BL4CK, you can safely ignore this email.</p>
   `;
   const html = renderLayout({
     title: subject,
@@ -725,9 +767,46 @@ function buildVerificationTemplate(params: VerificationEmailParams): EmailTempla
   const support = getSupportEmail(params.supportEmail);
   const text = [
     `Hi ${name},`,
-    'Welcome to Breeze. Please confirm your email address so we can finish setting up your account.',
+    'Welcome to BL4CK. Please confirm your email address so we can finish setting up your account.',
     `Verify your email: ${params.verificationUrl}`,
-    'This link expires in 24 hours. If you did not sign up for Breeze, you can safely ignore this email.',
+    'This link expires in 24 hours. If you did not sign up for BL4CK, you can safely ignore this email.',
+    support ? `Need help? Contact ${support}.` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return { subject, html, text };
+}
+
+// SR2-21 (Q5 option b): a signup was attempted against an address that ALREADY
+// has an account. The existing holder is notified — but is deliberately NOT sent
+// the signup/verification link (that would let an attacker drive a verification
+// flow against someone else's mailbox). No token, no button: just "you already
+// have an account, sign in".
+function buildSignupAttemptOnExistingAccountTemplate(
+  params: SignupAttemptOnExistingAccountEmailParams,
+): EmailTemplate {
+  const name = params.name?.trim() || 'there';
+  const subject = 'A BL4CK sign-up was attempted with your email';
+  const preheader = 'You already have a BL4CK account — no new account was created.';
+  const body = `
+      <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
+      <p style="${BODY_PARA}">Someone tried to create a BL4CK account with this address. You already have one — sign in, or reset your password if you've forgotten it.</p>
+      <p style="${MUTED_PARA}">No new account was created and no action is required. If this wasn't you, you can safely ignore this email.</p>
+  `;
+  const html = renderLayout({
+    title: subject,
+    preheader,
+    heading: 'You already have a BL4CK account',
+    body,
+    footer: supportFooter(params.supportEmail, 'Need help? Contact'),
+  });
+
+  const support = getSupportEmail(params.supportEmail);
+  const text = [
+    `Hi ${name},`,
+    "Someone tried to create a BL4CK account with this address. You already have one — sign in, or reset your password if you've forgotten it.",
+    "No new account was created and no action is required. If this wasn't you, you can safely ignore this email.",
     support ? `Need help? Contact ${support}.` : null,
   ]
     .filter(Boolean)
@@ -741,16 +820,16 @@ function buildInviteTemplate(params: InviteEmailParams): EmailTemplate {
   const inviter = params.inviterName?.trim() || 'A teammate';
   const orgName = params.orgName?.trim();
   const subject = orgName
-    ? `${inviter} invited you to ${orgName} on Breeze`
-    : `${inviter} invited you to Breeze`;
+    ? `${inviter} invited you to ${orgName} on BL4CK`
+    : `${inviter} invited you to BL4CK`;
   const preheader = orgName
-    ? `Accept your invitation to ${orgName} on Breeze.`
-    : 'Accept your invitation to Breeze.';
+    ? `Accept your invitation to ${orgName} on BL4CK.`
+    : 'Accept your invitation to BL4CK.';
   const heading = orgName ? `Join ${orgName}` : 'You are invited';
 
   const body = `
       <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
-      <p style="${BODY_PARA}">${escapeHtml(inviter)} invited you${orgName ? ` to ${escapeHtml(orgName)}` : ''} on Breeze.</p>
+      <p style="${BODY_PARA}">${escapeHtml(inviter)} invited you${orgName ? ` to ${escapeHtml(orgName)}` : ''} on BL4CK.</p>
       ${renderButton('Accept invitation', params.inviteUrl)}
       <p style="${MUTED_PARA}">This invitation expires in 7 days. If you weren't expecting it, you can ignore this email.</p>
   `;
@@ -766,7 +845,7 @@ function buildInviteTemplate(params: InviteEmailParams): EmailTemplate {
   const support = getSupportEmail(params.supportEmail);
   const text = [
     `Hi ${name},`,
-    `${inviter} invited you${orgName ? ` to ${orgName}` : ''} on Breeze.`,
+    `${inviter} invited you${orgName ? ` to ${orgName}` : ''} on BL4CK.`,
     `Accept invitation: ${params.inviteUrl}`,
     "This invitation expires in 7 days. If you weren't expecting it, you can ignore this email.",
     support ? `Questions? Contact ${support}.` : null,
@@ -802,6 +881,8 @@ export function buildInvoiceTemplate(params: InvoiceEmailParams): EmailTemplate 
     heading: `Invoice ${number}`,
     body,
     footer: supportFooter(params.supportEmail, 'Questions about this invoice? Contact'),
+    // Customer-facing: the brand line shows the MSP the invoice is from, not the platform.
+    brandName: params.partnerName,
   });
 
   const support = getSupportEmail(params.supportEmail);
@@ -850,7 +931,7 @@ function buildAlertNotificationTemplate(params: AlertNotificationEmailParams): E
       ${params.dashboardUrl ? renderButton('View details', params.dashboardUrl) : ''}
   `;
 
-  const orgSupport = params.orgName ? `${params.orgName} support` : 'Breeze support';
+  const orgSupport = params.orgName ? `${params.orgName} support` : 'BL4CK support';
   const html = renderLayout({
     title: params.alertName,
     preheader,
@@ -874,11 +955,11 @@ function buildAlertNotificationTemplate(params: AlertNotificationEmailParams): E
 
 function buildAccountLockedTemplate(params: AccountLockedEmailParams): EmailTemplate {
   const name = params.name?.trim() || 'there';
-  const subject = 'Your Breeze account was temporarily locked';
+  const subject = 'Your BL4CK account was temporarily locked';
   const preheader = `We locked sign-ins for ${params.lockoutMinutes} minutes after repeated failed attempts.`;
   const body = `
       <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
-      <p style="${BODY_PARA}">We blocked sign-ins to your Breeze account after 5 unsuccessful attempts. You can try again in ${params.lockoutMinutes} minutes, or reset your password using the button below.</p>
+      <p style="${BODY_PARA}">We blocked sign-ins to your BL4CK account after 5 unsuccessful attempts. You can try again in ${params.lockoutMinutes} minutes, or reset your password using the button below.</p>
       ${renderButton('Reset password', params.resetUrl)}
       <p style="${MUTED_PARA}"><strong>If this wasn't you</strong>, someone may be trying to guess your password. Reset your password immediately and review recent activity. If MFA isn't already enabled on your account, turn it on after you sign back in.</p>
   `;
@@ -893,7 +974,7 @@ function buildAccountLockedTemplate(params: AccountLockedEmailParams): EmailTemp
   const support = getSupportEmail(params.supportEmail);
   const text = [
     `Hi ${name},`,
-    `We blocked sign-ins to your Breeze account after 5 unsuccessful attempts. Try again in ${params.lockoutMinutes} minutes, or reset your password.`,
+    `We blocked sign-ins to your BL4CK account after 5 unsuccessful attempts. Try again in ${params.lockoutMinutes} minutes, or reset your password.`,
     `Reset your password: ${params.resetUrl}`,
     "If this wasn't you, someone may be trying to guess your password. Reset your password immediately and review recent activity.",
     support ? `Need help? Contact ${support}.` : null,
@@ -906,11 +987,46 @@ function buildAccountLockedTemplate(params: AccountLockedEmailParams): EmailTemp
 
 function buildEmailChangedTemplate(params: EmailChangedEmailParams): EmailTemplate {
   const name = params.name?.trim() || 'there';
-  const subject = 'Your Breeze account email was changed';
-  const preheader = `The email on your Breeze account was changed to ${params.newEmail}.`;
+
+  // SR2-17: a REQUESTED change has NOT moved the address yet — a verification
+  // link went to the new address and the account keeps this (old) address until
+  // it is confirmed. Say exactly that so the owner of the abandoned mailbox can
+  // act while they still control the account.
+  if (params.pending) {
+    const subject = 'Email change requested on your BL4CK account';
+    const preheader = `A change to ${params.newEmail} was requested. Your email has not changed yet.`;
+    const body = `
+      <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
+      <p style="${BODY_PARA}">Someone requested to change your BL4CK account email to <strong>${escapeHtml(params.newEmail)}</strong>. We sent a verification link to that address. <strong>Your email will not change until that link is confirmed</strong>, and this address stays in control of the account until then.</p>
+      <p style="${MUTED_PARA}"><strong>If you did not request this change</strong>, no action is required to keep your current email — but your account may be compromised, so change your password and contact support to secure it.</p>
+    `;
+    const html = renderLayout({
+      title: subject,
+      preheader,
+      heading: 'Email change requested',
+      body,
+      footer: supportFooter(params.supportEmail, 'If you did not request this change, contact'),
+    });
+
+    const support = getSupportEmail(params.supportEmail);
+    const text = [
+      `Hi ${name},`,
+      `Someone requested to change your BL4CK account email to ${params.newEmail}. We sent a verification link to that address.`,
+      'Your email will not change until that link is confirmed, and this address stays in control of the account until then.',
+      'If you did not request this change, no action is required to keep your current email, but your account may be compromised — change your password and contact support to secure it.',
+      support ? `Contact ${support}.` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return { subject, html, text };
+  }
+
+  const subject = 'Your BL4CK account email was changed';
+  const preheader = `The email on your BL4CK account was changed to ${params.newEmail}.`;
   const body = `
       <p style="${BODY_PARA}">Hi ${escapeHtml(name)},</p>
-      <p style="${BODY_PARA}">Your Breeze account email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.</p>
+      <p style="${BODY_PARA}">Your BL4CK account email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.</p>
       <p style="${MUTED_PARA}"><strong>If you did not make this change</strong>, your account may be compromised. Contact support immediately to secure it.</p>
   `;
   const html = renderLayout({
@@ -924,7 +1040,7 @@ function buildEmailChangedTemplate(params: EmailChangedEmailParams): EmailTempla
   const support = getSupportEmail(params.supportEmail);
   const text = [
     `Hi ${name},`,
-    `Your Breeze account email was changed to ${params.newEmail}.`,
+    `Your BL4CK account email was changed to ${params.newEmail}.`,
     'If you did not make this change, your account may be compromised. Contact support immediately to secure it.',
     support ? `Contact ${support}.` : null,
   ]

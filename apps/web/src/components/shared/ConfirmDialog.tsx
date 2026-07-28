@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react';
 import { AlertOctagon, AlertTriangle } from 'lucide-react';
 import { Dialog } from './Dialog';
+import { useTranslation } from 'react-i18next';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -12,6 +14,8 @@ export interface ConfirmDialogProps {
   isLoading?: boolean;
   /** data-testid for the confirm button (e2e suites are testid-only). */
   confirmTestId?: string;
+  /** Optional extra content (e.g. a note field) rendered under the message. */
+  children?: ReactNode;
 }
 
 export function ConfirmDialog({
@@ -20,11 +24,13 @@ export function ConfirmDialog({
   onConfirm,
   title,
   message,
-  confirmLabel = 'Confirm',
+  confirmLabel,
   variant = 'destructive',
   isLoading = false,
   confirmTestId,
+  children,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation('common');
   // Encode severity by SHAPE, not color alone: a stop-octagon for destructive
   // (irreversible removal) vs a caution-triangle for warning (a guarded but
   // non-destructive action like activate/generate). Colorblind users and a
@@ -48,6 +54,7 @@ export function ConfirmDialog({
         <div className="flex-1">
           <h3 className="text-base font-semibold text-foreground">{title}</h3>
           <p className="mt-1 text-sm text-muted-foreground">{message}</p>
+          {children != null && <div className="mt-4">{children}</div>}
         </div>
       </div>
       <div className="mt-6 flex justify-end gap-3">
@@ -57,7 +64,7 @@ export function ConfirmDialog({
           disabled={isLoading}
           className="rounded-md border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
         >
-          Cancel
+          {t('actions.cancel')}
         </button>
         <button
           type="button"
@@ -70,7 +77,7 @@ export function ConfirmDialog({
               : 'bg-warning text-warning-foreground hover:bg-warning/90'
           }`}
         >
-          {isLoading ? 'Processing…' : confirmLabel}
+          {isLoading ? t('states.processing') : (confirmLabel ?? t('actions.confirm'))}
         </button>
       </div>
     </Dialog>

@@ -1,7 +1,6 @@
 package agentapp
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -95,24 +94,18 @@ func TestReconcileTransientArgs(t *testing.T) {
 	}
 }
 
-func TestStaticUnitMatchesEmbedded(t *testing.T) {
-	// Test runs with cwd = package dir (agent/cmd/bl4ck-agent).
-	data, err := os.ReadFile("../../service/systemd/bl4ck-agent.service")
-	if err != nil {
-		t.Fatalf("read static unit: %v", err)
-	}
-	if string(data) != linuxUnit {
-		got, want := string(data), linuxUnit
-		i := 0
-		for i < len(got) && i < len(want) && got[i] == want[i] {
-			i++
-		}
-		t.Fatalf("static bl4ck-agent.service is not byte-identical to embedded linuxUnit "+
-			"(first divergence at byte %d: file has %q, const has %q). "+
-			"Keep them in sync (the auto-heal writes the embedded copy).",
-			i, snippetAt(got, i), snippetAt(want, i))
-	}
-}
+// NOTE (BL4CK fork): upstream's TestStaticUnitMatchesEmbedded was removed here.
+// It asserted that the static packaging copy at
+// agent/service/systemd/bl4ck-agent.service stayed byte-identical to the
+// embedded linuxUnit const. This fork is Windows-only for packaging and
+// deleted that static file along with the rest of the Linux/macOS installer
+// surface, which orphaned the test (it failed with "no such file" on every
+// run, including before the v0.102.0 merge).
+//
+// The embedded linuxUnit const remains authoritative — `service install` and
+// the reconcile auto-heal both write it directly (service_cmd_linux.go), and
+// the remaining tests in this file still guard its contents. Restore this test
+// only alongside a static unit file if Linux packaging is ever reinstated.
 
 func TestUnitIsNotReHardened(t *testing.T) {
 	forbidden := []string{
@@ -193,13 +186,4 @@ func TestUnitDoesNotClaimRuntimeChown(t *testing.T) {
 		t.Error("linuxUnit comment claims the agent re-chowns /run/bl4ck to root:breeze at " +
 			"runtime, but setupSocket only chmods it to 0755 — the comment is false (#1297)")
 	}
-}
-
-// snippetAt returns a short window of s around byte offset i for error messages.
-func snippetAt(s string, i int) string {
-	end := i + 20
-	if end > len(s) {
-		end = len(s)
-	}
-	return s[i:end]
 }

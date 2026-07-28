@@ -32,7 +32,7 @@ describe('authenticator store approver helpers', () => {
     localStorage.removeItem('breeze-auth');
   });
 
-  it('registerApproverDevice fetches options, runs startRegistration, and posts the attestation', async () => {
+  it('registerApproverDevice (password path) mints a grant, fetches options, runs startRegistration, and posts the attestation', async () => {
     const options = {
       challenge: 'reg-challenge-b64url',
       rp: { id: 'breeze.example', name: 'BL4CK' },
@@ -49,23 +49,34 @@ describe('authenticator store approver helpers', () => {
     webauthnMocks.startRegistration.mockResolvedValueOnce(attResp);
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(makeResponse({ registerGrantId: 'g-1' }))
       .mockResolvedValueOnce(makeResponse(options))
       .mockResolvedValueOnce(makeResponse({ success: true }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await registerApproverDevice('My laptop');
+    await registerApproverDevice('My laptop', { method: 'password', password: 'hunter2!' });
 
-    // Step 1: options request
-    expect(fetchMock.mock.calls[0][0]).toContain('/authenticator/devices/webauthn/options');
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST' });
+    // Step 1: mint the register grant via the password re-auth path
+    expect(fetchMock.mock.calls[0][0]).toContain('/authenticator/register-grant');
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      currentPassword: 'hunter2!',
+    });
 
-    // Step 2: startRegistration called with { optionsJSON }
-    expect(webauthnMocks.startRegistration).toHaveBeenCalledWith({ optionsJSON: options });
-
-    // Step 3: verify request carries label + the attestation response
-    expect(fetchMock.mock.calls[1][0]).toContain('/authenticator/devices/webauthn/verify');
+    // Step 2: options request, threading the minted grant
+    expect(fetchMock.mock.calls[1][0]).toContain('/authenticator/devices/webauthn/options');
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'POST' });
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
+      registerGrantId: 'g-1',
+    });
+
+    // Step 3: startRegistration called with { optionsJSON }
+    expect(webauthnMocks.startRegistration).toHaveBeenCalledWith({ optionsJSON: options });
+
+    // Step 4: verify request carries the grant, label, and the attestation response
+    expect(fetchMock.mock.calls[2][0]).toContain('/authenticator/devices/webauthn/verify');
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({
+      registerGrantId: 'g-1',
       label: 'My laptop',
       response: attResp,
     });
@@ -87,17 +98,25 @@ describe('authenticator store approver helpers', () => {
     webauthnMocks.startRegistration.mockResolvedValueOnce({ id: 'cred-1', response: {} });
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(makeResponse({ registerGrantId: 'g-2' })) // mint ok
       .mockResolvedValueOnce(makeResponse({ challenge: 'c' })) // options ok
       .mockResolvedValueOnce(makeResponse({ error: 'challenge expired' }, false, 400)); // verify fails
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(registerApproverDevice('My laptop')).rejects.toThrow(/challenge expired|registration failed/i);
+    await expect(
+      registerApproverDevice('My laptop', { method: 'password', password: 'hunter2!' })
+    ).rejects.toThrow(/challenge expired|registration failed/i);
   });
 
   it('registerApproverDevice REJECTS on a non-2xx options response', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(makeResponse({ error: 'nope' }, false, 401));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeResponse({ registerGrantId: 'g-3' })) // mint ok
+      .mockResolvedValueOnce(makeResponse({ error: 'nope' }, false, 401)); // options fails
     vi.stubGlobal('fetch', fetchMock);
-    await expect(registerApproverDevice('x')).rejects.toThrow();
+    await expect(
+      registerApproverDevice('x', { method: 'password', password: 'hunter2!' })
+    ).rejects.toThrow();
     expect(webauthnMocks.startRegistration).not.toHaveBeenCalled();
   });
 
@@ -113,6 +132,33 @@ describe('authenticator store approver helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(getApprovalAssertion('/pam/elevation-requests', 'req-z')).rejects.toMatchObject({
       name: expect.not.stringMatching(/NoApproverDeviceError/),
+    });
+    expect(webauthnMocks.startAuthentication).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an empty 2xx body', null],
+    ['an empty object', {}],
+    ['a challenge-less options object', { options: { allowCredentials: [] } }],
+  ])('getApprovalAssertion rejects on a malformed 2xx challenge (%s)', async (_label, payload) => {
+    // A malformed 200 must NOT fall through to the device-less branch: that
+    // tells a user who HAS a registered authenticator to go register one, and
+    // in PamRespondModal it silently downgrades the approve to a proofless L1.
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeResponse(payload));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getApprovalAssertion('/pam/elevation-requests', 'req-m')).rejects.toMatchObject({
+      name: expect.not.stringMatching(/NoApproverDeviceError/),
+    });
+    expect(webauthnMocks.startAuthentication).not.toHaveBeenCalled();
+  });
+
+  it('getApprovalAssertion still reports NoApproverDeviceError for a WELL-FORMED device-less challenge', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeResponse({ challenge: 'c-b64url', allowCredentials: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getApprovalAssertion('/pam/elevation-requests', 'req-n')).rejects.toMatchObject({
+      name: 'NoApproverDeviceError',
     });
     expect(webauthnMocks.startAuthentication).not.toHaveBeenCalled();
   });
@@ -204,5 +250,117 @@ describe('authenticator store approver helpers', () => {
       getApprovalAssertion('/pam/elevation-requests', 'req-x'),
     ).rejects.toMatchObject({ name: 'NoApproverDeviceError' });
     expect(webauthnMocks.startAuthentication).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerApproverDevice re-auth mint paths (#2707)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.removeItem('breeze-auth');
+  });
+
+  const optionsPayload = { options: { challenge: 'reg-challenge', rp: { id: 'x', name: 'x' } } };
+
+  it('password path: mints via /authenticator/register-grant then threads registerGrantId to options+verify', async () => {
+    webauthnMocks.startRegistration.mockResolvedValueOnce({ id: 'cred-1', response: {} });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ registerGrantId: 'g-pass' }))   // mint
+      .mockResolvedValueOnce(makeResponse(optionsPayload))                  // options
+      .mockResolvedValueOnce(makeResponse({ success: true }));              // verify
+    vi.stubGlobal('fetch', fetchMock);
+
+    await registerApproverDevice('Front desk', { method: 'password', password: 'hunter2!' });
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/authenticator/register-grant');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ currentPassword: 'hunter2!' });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ registerGrantId: 'g-pass' });
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({
+      registerGrantId: 'g-pass', label: 'Front desk',
+    });
+  });
+
+  it('totp path: mints via /auth/mfa/step-up with operation register_approver_device', async () => {
+    webauthnMocks.startRegistration.mockResolvedValueOnce({ id: 'cred-1', response: {} });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ stepUpGrantId: 'g-totp' }))
+      .mockResolvedValueOnce(makeResponse(optionsPayload))
+      .mockResolvedValueOnce(makeResponse({ success: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await registerApproverDevice('Laptop', { method: 'totp', code: '123456' });
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/auth/mfa/step-up');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      method: 'totp', code: '123456', operation: 'register_approver_device',
+    });
+    // Register-options POST carries the minted grant.
+    expect(fetchMock.mock.calls[1][0]).toContain('/authenticator/devices/webauthn/options');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ registerGrantId: 'g-totp' });
+    // Verify POST carries the grant, label, and attestation response.
+    expect(fetchMock.mock.calls[2][0]).toContain('/authenticator/devices/webauthn/verify');
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
+      registerGrantId: 'g-totp',
+      label: 'Laptop',
+      response: { id: 'cred-1', response: {} },
+    });
+  });
+
+  it('passkey path: step-up options → startAuthentication → step-up mint → register', async () => {
+    const assertion = { id: 'pk-cred', response: { signature: 's' } };
+    webauthnMocks.startAuthentication.mockResolvedValueOnce(assertion);
+    webauthnMocks.startRegistration.mockResolvedValueOnce({ id: 'cred-1', response: {} });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ options: { challenge: 'auth-challenge' } })) // step-up options
+      .mockResolvedValueOnce(makeResponse({ stepUpGrantId: 'g-pk' }))                    // step-up mint
+      .mockResolvedValueOnce(makeResponse(optionsPayload))                               // register options
+      .mockResolvedValueOnce(makeResponse({ success: true }));                           // verify
+    vi.stubGlobal('fetch', fetchMock);
+
+    await registerApproverDevice('Laptop', { method: 'passkey' });
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/auth/mfa/step-up/options');
+    expect(webauthnMocks.startAuthentication).toHaveBeenCalledWith({
+      optionsJSON: { challenge: 'auth-challenge' },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      method: 'passkey', credential: assertion, operation: 'register_approver_device',
+    });
+    // Register-options POST carries the minted grant.
+    expect(fetchMock.mock.calls[2][0]).toContain('/authenticator/devices/webauthn/options');
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ registerGrantId: 'g-pk' });
+    // Verify POST carries the grant, label, and attestation response.
+    expect(fetchMock.mock.calls[3][0]).toContain('/authenticator/devices/webauthn/verify');
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({
+      registerGrantId: 'g-pk',
+      label: 'Laptop',
+      response: { id: 'cred-1', response: {} },
+    });
+  });
+
+  it('mint failure rejects with the status attached (so the UI can map 401/403/429)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeResponse({ error: 'Invalid credentials' }, false, 401));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      registerApproverDevice('x', { method: 'password', password: 'nope' })
+    ).rejects.toMatchObject({ status: 401 });
+    expect(webauthnMocks.startRegistration).not.toHaveBeenCalled();
+  });
+
+  it('a 2xx with an unparseable body throws a clean RegisterStepError instead of returning null (no downstream null-deref)', async () => {
+    // e.g. an empty body or a truncated proxy response — response.ok is true
+    // but response.json() rejects. Must not resolve to `null`: every caller
+    // immediately reads a field off the result (data.registerGrantId), which
+    // would otherwise throw a raw TypeError deep in the ceremony.
+    const unparseableOkResponse = {
+      ok: true,
+      status: 200,
+      json: vi.fn().mockRejectedValue(new SyntaxError('Unexpected end of JSON input')),
+    } as unknown as Response;
+    const fetchMock = vi.fn().mockResolvedValueOnce(unparseableOkResponse);
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      registerApproverDevice('x', { method: 'password', password: 'hunter2!' })
+    ).rejects.toMatchObject({ message: 'Unexpected server response.' });
+    expect(webauthnMocks.startRegistration).not.toHaveBeenCalled();
   });
 });

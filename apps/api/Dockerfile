@@ -4,7 +4,7 @@
 
 # Stage 1: Base image with pnpm
 FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS base
-RUN npm install -g pnpm@10.33.4
+RUN npm install -g pnpm@10.34.5
 RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /app
 
@@ -16,6 +16,11 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/shared/package.json ./packages/shared/
+# apps/api depends on these source-only workspace packages (@breeze/extension-api
+# re-exports @breeze/extension-sdk); their manifests must be present so pnpm
+# creates the workspace symlinks the API's tsup bundle resolves at build time.
+COPY packages/extension-api/package.json ./packages/extension-api/
+COPY packages/extension-sdk/package.json ./packages/extension-sdk/
 
 # Install all dependencies
 RUN pnpm install --frozen-lockfile --prefer-offline
@@ -70,6 +75,14 @@ COPY --from=builder --chown=hono:nodejs /app/packages ./packages
 
 # Copy migration files for auto-migrate on startup
 COPY --from=builder --chown=hono:nodejs /app/apps/api/migrations ./apps/api/migrations
+# Runtime-extension mount point: deployments deliver extensions as SIGNED
+# bundles by mounting extensions.yaml (+ artifacts) here. Created empty and
+# owned by the runtime user; without a mount both the reconciler and the
+# (deprecated, flag-gated) legacy source loader treat it as a clean no-op.
+# Without this ENV the CJS bundle would fall back to a cwd-derived path that
+# does not exist in this image's layout, silently ignoring any mount.
+RUN mkdir -p /app/extensions && chown hono:nodejs /app/extensions
+ENV BREEZE_EXTENSIONS_DIR=/app/extensions
 # Run the API from its workspace path so module resolution uses apps/api/node_modules first.
 WORKDIR /app/apps/api
 

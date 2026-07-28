@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { createHash, timingSafeEqual } from 'crypto';
 import { db, withSystemDbAccessContext } from '../../db';
@@ -75,6 +75,8 @@ function tokenHashMatches(storedHash: string | null | undefined, presentedToken:
 enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => {
   const data = c.req.valid('json');
   const clientIp = getTrustedClientIp(c, 'unknown');
+  // 'unknown' is the rate-limiter fallback, not a real address — store NULL.
+  const enrollmentIp = clientIp === 'unknown' ? null : clientIp;
   const rateCheck = await rateLimiter(
     getRedis(),
     `agent-enroll:${clientIp}`,
@@ -101,7 +103,15 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
   // JWT_SECRET, etc.) so keys hashed before ENROLLMENT_KEY_PEPPER was mandatory still match.
   const enrollmentKeyCandidates = hashEnrollmentKeyCandidates(data.enrollmentKey);
 
-  return withSystemDbAccessContext(async () => {
+  // #1105: the callback below returns either an early-exit Response (error
+  // paths) or the success-path data needed to build the response. The
+  // warranty-sync enqueue (Redis round-trip) must NOT fire while the
+  // withSystemDbAccessContext transaction is still open — it now runs after
+  // this block resolves and the pooled connection is released, mirroring
+  // reliabilityWorker.ts's processScanOrgs (#2640).
+  const enrollmentOutcome = await withSystemDbAccessContext(async (): Promise<
+    Response | { deviceId: string; responseBody: Record<string, unknown> }
+  > => {
     // Re-validated in the UPDATE WHERE below to close the TOCTOU window between
     // this initial lookup and the usage_count bump.
     const validEnrollmentKeyConditions = [
@@ -187,12 +197,12 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
     if (matchingKey.keySecretHash) {
       if (!providedSecret) {
         writeAuditEvent(c, {
-          orgId: null,
+          orgId: matchingKey.orgId,
           actorType: 'system',
           action: 'agent.enroll',
           resourceType: 'device',
           resourceName: data.hostname,
-          details: { reason: 'missing_enrollment_secret' },
+          details: { reason: 'missing_enrollment_secret', keyId: matchingKey.id },
           result: 'denied',
           errorMessage: 'Enrollment secret required',
         });
@@ -203,12 +213,12 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
       const providedSecretHash = hashEnrollmentSecret(providedSecret);
       if (!timingSafeStringEqual(providedSecretHash, matchingKey.keySecretHash)) {
         writeAuditEvent(c, {
-          orgId: null,
+          orgId: matchingKey.orgId,
           actorType: 'system',
           action: 'agent.enroll',
           resourceType: 'device',
           resourceName: data.hostname,
-          details: { reason: 'invalid_enrollment_secret' },
+          details: { reason: 'invalid_enrollment_secret', keyId: matchingKey.id },
           result: 'denied',
           errorMessage: 'Invalid enrollment secret',
         });
@@ -218,12 +228,12 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
     } else if (configuredSecret) {
       if (!providedSecret) {
         writeAuditEvent(c, {
-          orgId: null,
+          orgId: matchingKey.orgId,
           actorType: 'system',
           action: 'agent.enroll',
           resourceType: 'device',
           resourceName: data.hostname,
-          details: { reason: 'missing_enrollment_secret' },
+          details: { reason: 'missing_enrollment_secret', keyId: matchingKey.id },
           result: 'denied',
           errorMessage: 'Enrollment secret required',
         });
@@ -233,12 +243,12 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
 
       if (!timingSafeStringEqual(hashEnrollmentSecret(providedSecret), hashEnrollmentSecret(configuredSecret))) {
         writeAuditEvent(c, {
-          orgId: null,
+          orgId: matchingKey.orgId,
           actorType: 'system',
           action: 'agent.enroll',
           resourceType: 'device',
           resourceName: data.hostname,
-          details: { reason: 'invalid_enrollment_secret' },
+          details: { reason: 'invalid_enrollment_secret', keyId: matchingKey.id },
           result: 'denied',
           errorMessage: 'Invalid enrollment secret',
         });
@@ -565,6 +575,26 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
           }).catch((err) => {
             console.error('[Enrollment] Failed to dispatch device-limit hook:', err instanceof Error ? err.message : err);
           });
+          // Device-cap denials are org-attributable (the key was already
+          // resolved) and must land in audit_logs like every other denial
+          // path — otherwise this signal is invisible to the abuse-signals
+          // sweep's `denied` CTE (heuristics.ts).
+          writeAuditEvent(c, {
+            orgId: key.orgId,
+            actorType: 'system',
+            action: 'agent.enroll',
+            resourceType: 'device',
+            resourceName: data.hostname,
+            details: {
+              reason: 'device_limit_reached',
+              enrollmentKeyId: key.id,
+              partnerId: deviceLimitPartnerId,
+              currentDevices: activeCount,
+              maxDevices,
+            },
+            result: 'denied',
+            errorMessage: 'Partner device limit reached',
+          });
           recordAgentEnrollment('error', deviceLimitPartnerId);
           throw new HTTPException(403, {
             message: JSON.stringify({
@@ -602,6 +632,7 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
           .update(devices)
           .set({
             agentId: agentId,
+            enrollmentIp,
             agentTokenHash: tokenHash,
             watchdogTokenHash,
             helperTokenHash,
@@ -618,6 +649,14 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
             previousWatchdogTokenExpiresAt: null,
             previousHelperTokenHash: null,
             previousHelperTokenExpiresAt: null,
+            // Issue #2621 — re-enrollment is a full credential reset, so it must
+            // also drop any staged rotation. Leaving it would let a staged set
+            // minted before the re-enrollment keep authenticating, and be
+            // promoted over the freshly issued credentials.
+            pendingTokenHash: null,
+            pendingWatchdogTokenHash: null,
+            pendingHelperTokenHash: null,
+            pendingTokenExpiresAt: null,
             deviceRole: data.deviceRole || 'unknown',
             deviceRoleSource: 'auto',
             isVirtual: data.isVirtual ?? false,
@@ -639,6 +678,7 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
             watchdogTokenHash,
             helperTokenHash,
             hostname: data.hostname,
+            enrollmentIp,
             osType: data.osType,
             osVersion: data.osVersion,
             architecture: data.architecture,
@@ -793,10 +833,8 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
       },
     });
 
-    // Queue warranty lookup for the newly enrolled device (fire-and-forget)
-    queueWarrantySyncForDevice(device.id).catch((err) => {
-      console.error('[Enrollment] Failed to queue warranty sync:', err instanceof Error ? err.message : err);
-    });
+    // Warranty sync is queued AFTER withSystemDbAccessContext resolves below
+    // (#1105) — it must not fire while this transaction is still open.
 
     // Close the MCP deployment-invite funnel if this enrollment key was
     // issued by `send_deployment_invites` (best-effort; no-op for manual
@@ -818,20 +856,39 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
       captureException(err);
     }
 
-    return c.json({
-      agentId: agentId,
+    return {
       deviceId: device.id,
-      authToken: apiKey,
-      watchdogAuthToken: watchdogApiKey,
-      helperAuthToken: helperApiKey,
-      orgId: key.orgId,
-      siteId: key.siteId,
-      config: {
-        heartbeatIntervalSeconds: 60,
-        metricsCollectionIntervalSeconds: 30
+      responseBody: {
+        agentId: agentId,
+        deviceId: device.id,
+        authToken: apiKey,
+        watchdogAuthToken: watchdogApiKey,
+        helperAuthToken: helperApiKey,
+        orgId: key.orgId,
+        siteId: key.siteId,
+        backupServerUrl: (process.env.AGENT_BACKUP_SERVER_URL ?? '').trim() || undefined,
+        config: {
+          heartbeatIntervalSeconds: 60,
+          metricsCollectionIntervalSeconds: 30
+        },
+        mtls: mtlsCert,
+        manifestTrustKeys,
       },
-      mtls: mtlsCert,
-      manifestTrustKeys,
-    }, 201);
+    };
   });
+
+  if (enrollmentOutcome instanceof Response) {
+    // Error path — no device was enrolled, so no warranty sync to queue.
+    return enrollmentOutcome;
+  }
+
+  // #1105: fire-and-forget BullMQ enqueue now runs after the transaction has
+  // committed and the pooled connection has been released. Same fire-and-
+  // forget error handling as before — an enqueue failure must never fail
+  // enrollment.
+  queueWarrantySyncForDevice(enrollmentOutcome.deviceId).catch((err) => {
+    console.error('[Enrollment] Failed to queue warranty sync:', err instanceof Error ? err.message : err);
+  });
+
+  return c.json(enrollmentOutcome.responseBody, 201);
 });

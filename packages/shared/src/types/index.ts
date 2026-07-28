@@ -11,7 +11,10 @@ export * from './auth';
 export type PartnerType = 'msp' | 'enterprise' | 'internal';
 export type PlanType = 'free' | 'pro' | 'enterprise' | 'unlimited';
 export type OrgType = 'customer' | 'internal';
-export type OrgStatus = 'active' | 'suspended' | 'trial' | 'churned';
+// `offboarding` (#2774): terminal-intent drain state — users locked out, agents
+// kept authenticated (self_uninstall-only) until drained, then auto-`churned`.
+export type OrgStatus = 'active' | 'suspended' | 'trial' | 'churned' | 'offboarding';
+export type SupportedLocale = 'en' | 'pt-BR' | 'es-419' | 'fr-FR' | 'fr-CA' | 'de-DE' | 'it-IT';
 
 export interface Partner {
   id: string;
@@ -309,7 +312,11 @@ export type DesktopAccessReason =
   | 'helper_not_connected'
   | 'virtual_display_unavailable'
   | 'unsupported_os'
-  | 'manual_install';
+  | 'manual_install'
+  | 'no_display_session'
+  | 'wayland_unsupported'
+  | 'x11_connect_failed'
+  | 'x11_auth_failed';
 
 export interface DesktopAccessState {
   mode: DesktopAccessMode;
@@ -498,8 +505,6 @@ export interface Alert {
 
 export type RemoteSessionType = 'terminal' | 'desktop' | 'file_transfer';
 export type RemoteSessionStatus = 'pending' | 'connecting' | 'active' | 'disconnected' | 'failed';
-export type FileTransferDirection = 'upload' | 'download';
-export type FileTransferStatus = 'pending' | 'transferring' | 'completed' | 'failed';
 
 export interface RemoteSession {
   id: string;
@@ -634,6 +639,12 @@ export interface InheritableDefaultSettings {
     agent?: string;
     watchdog?: string;
   };
+  /** Pre-selected link TTL in the Add Device modal. Inherit-with-override. */
+  defaultEnrollmentTtlMinutes?: number;
+  /** Pre-selected device count in the Add Device modal. Inherit-with-override. */
+  defaultEnrollmentDeviceCount?: number;
+  /** Hard ceiling on link TTL. Partner-only — orgs cannot raise it. */
+  maxEnrollmentLinkTtlMinutes?: number;
 }
 
 export interface InheritableBrandingSettings {
@@ -698,7 +709,7 @@ export interface PartnerSettings {
   timezone?: string;
   dateFormat?: DateFormat;
   timeFormat?: TimeFormat;
-  language?: 'en';
+  language?: SupportedLocale;
   businessHours?: {
     preset: BusinessHoursPreset;
     custom?: Record<string, DaySchedule>;
@@ -760,6 +771,7 @@ export * from './ai';
 // ============================================
 
 export * from './billing-enums';
+export * from './pax8-enums';
 
 // ============================================
 // Vulnerability fleet-triage SSOT

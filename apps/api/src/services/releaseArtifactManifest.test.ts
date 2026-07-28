@@ -88,13 +88,15 @@ describe("releaseArtifactManifest", () => {
     // repository field reflects whatever case the org had at repo-create time
     // (GITHUB_REPOSITORY env var in release.yml). A strict comparison against
     // a lowercased default like "bl4ckxr0sexd/bl4ck" rejects manifests written
-    // as "LanternOps/breeze", which is exactly the bug self-hosters hit when
+    // as "Bl4ckXr0seXd/Bl4ck", which is exactly the bug self-hosters hit when
     // generating an MSI installer link.
     const asset = Buffer.from("trusted-msi");
     const signed = makeSignedManifest({
       assetName: "bl4ck-agent.msi",
       assetBuffer: asset,
-      repository: "LanternOps/breeze",
+      // Must differ from expectedRepository ONLY in case — that is the whole
+      // point of this test.
+      repository: "Bl4ckXr0seXd/Bl4ck",
     });
     process.env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS = signed.publicKey;
 
@@ -108,7 +110,7 @@ describe("releaseArtifactManifest", () => {
       }),
     ).resolves.toEqual(
       expect.objectContaining({
-        repository: "LanternOps/breeze",
+        repository: "Bl4ckXr0seXd/Bl4ck",
       }),
     );
   });

@@ -13,11 +13,15 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dateTimeFormat';
+import { useHashState } from '@/lib/useHashState';
 import { Dialog } from '../shared/Dialog';
 import { fetchWithAuth } from '../../stores/auth';
 import DRExecutionView from './DRExecutionView';
 import DRPlanEditor from './DRPlanEditor';
 import AlphaBadge from '../shared/AlphaBadge';
+import { useTranslation } from 'react-i18next';
+import { OrgRequiredGate } from '../shared/OrgRequiredGate';
+import '../../lib/i18n';
 
 type DRTab = 'plans' | 'executions';
 
@@ -77,11 +81,10 @@ function statusBadge(status: string) {
   return <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">{status}</span>;
 }
 
-export default function DRDashboard() {
-  const [activeTab, setActiveTab] = useState<DRTab>(() => {
-    if (typeof window === 'undefined') return 'plans';
-    return window.location.hash.replace('#', '') === 'executions' ? 'executions' : 'plans';
-  });
+function DRDashboardInner() {
+  const { t } = useTranslation('backup');
+  // SSR-safe hash tab (#2421): starts at the default, adopts the hash post-mount.
+  const [activeTab, setActiveTab] = useHashState<DRTab>('plans', (h) => (h === 'executions' ? 'executions' : undefined));
   const [plans, setPlans] = useState<DRPlan[]>([]);
   const [executions, setExecutions] = useState<DRExecution[]>([]);
   const [groupCounts, setGroupCounts] = useState<Record<string, number>>({});
@@ -146,15 +149,6 @@ export default function DRDashboard() {
     void refreshAll();
   }, [refreshAll]);
 
-  useEffect(() => {
-    const onHashChange = () => {
-      const nextHash = window.location.hash.replace('#', '');
-      setActiveTab(nextHash === 'executions' ? 'executions' : 'plans');
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
-
   const hasRunningExecution = useMemo(
     () => executions.some((execution) => ['pending', 'running'].includes(execution.status)),
     [executions]
@@ -187,7 +181,7 @@ export default function DRDashboard() {
       <div className="flex items-center justify-center py-16">
         <div className="text-center">
           <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading disaster recovery...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('dRDashboard.loadingDisasterRecovery')}</p>
         </div>
       </div>
     );
@@ -198,10 +192,9 @@ export default function DRDashboard() {
       <AlphaBadge variant="banner" disclaimer="Disaster Recovery orchestration is in early access. DR plans, recovery groups, and rehearsal executions are functional but should be thoroughly tested in a non-production environment before relying on them for actual disaster recovery." />
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Disaster Recovery</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">{t('dRDashboard.disasterRecovery')}</h1>
           <p className="text-sm text-muted-foreground">
-            Build recovery plans, launch rehearsals, and track live execution progress.
-          </p>
+            {t('dRDashboard.buildRecoveryPlansLaunchRehearsalsAndTrackLive')} </p>
         </div>
         <div className="flex gap-3">
           <button
@@ -210,8 +203,7 @@ export default function DRDashboard() {
             className="inline-flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted"
           >
             <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
+            {t('dRDashboard.refresh')} </button>
           <button
             type="button"
             onClick={() => {
@@ -221,8 +213,7 @@ export default function DRDashboard() {
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
             <Plus className="h-4 w-4" />
-            Create Plan
-          </button>
+            {t('dRDashboard.createPlan')} </button>
         </div>
       </div>
 
@@ -259,20 +250,19 @@ export default function DRDashboard() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="px-4 py-3 text-left font-medium">Name</th>
-                <th className="px-4 py-3 text-left font-medium">Status</th>
-                <th className="px-4 py-3 text-left font-medium">RPO / RTO</th>
-                <th className="px-4 py-3 text-right font-medium">Groups</th>
-                <th className="px-4 py-3 text-left font-medium">Updated</th>
-                <th className="px-4 py-3 text-right font-medium">Actions</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.name')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.status')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.rpoRto')}</th>
+                <th className="px-4 py-3 text-right font-medium">{t('dRDashboard.groups')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.updated')}</th>
+                <th className="px-4 py-3 text-right font-medium">{t('dRDashboard.actions')}</th>
               </tr>
             </thead>
             <tbody>
               {plans.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
-                    No recovery plans yet. Create a plan to define staged restore order and objectives.
-                  </td>
+                    {t('dRDashboard.noRecoveryPlansYetCreateAPlanTo')} </td>
                 </tr>
               ) : (
                 plans.map((plan) => (
@@ -283,8 +273,7 @@ export default function DRDashboard() {
                     </td>
                     <td className="px-4 py-3">{statusBadge(plan.status)}</td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {plan.rpoTargetMinutes ?? '—'}m / {plan.rtoTargetMinutes ?? '—'}m
-                    </td>
+                      {plan.rpoTargetMinutes ?? '—'}{t('dRDashboard.m')} {plan.rtoTargetMinutes ?? '—'}{t('dRDashboard.m2')} </td>
                     <td className="px-4 py-3 text-right font-medium text-foreground">{groupCounts[plan.id] ?? 0}</td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(plan.updatedAt)}</td>
                     <td className="px-4 py-3">
@@ -298,8 +287,7 @@ export default function DRDashboard() {
                           className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
                         >
                           <FilePenLine className="h-3.5 w-3.5" />
-                          Edit
-                        </button>
+                          {t('dRDashboard.edit')} </button>
                         <button
                           type="button"
                           onClick={() => {
@@ -309,8 +297,7 @@ export default function DRDashboard() {
                           className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
                         >
                           <PlayCircle className="h-3.5 w-3.5" />
-                          Execute
-                        </button>
+                          {t('dRDashboard.execute')} </button>
                       </div>
                     </td>
                   </tr>
@@ -326,20 +313,19 @@ export default function DRDashboard() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="px-4 py-3 text-left font-medium">Type</th>
-                <th className="px-4 py-3 text-left font-medium">Status</th>
-                <th className="px-4 py-3 text-left font-medium">Duration</th>
-                <th className="px-4 py-3 text-left font-medium">Initiated by</th>
-                <th className="px-4 py-3 text-left font-medium">Started</th>
-                <th className="px-4 py-3 text-right font-medium">Actions</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.type')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.status')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.duration')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.initiatedBy')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('dRDashboard.started')}</th>
+                <th className="px-4 py-3 text-right font-medium">{t('dRDashboard.actions')}</th>
               </tr>
             </thead>
             <tbody>
               {executions.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
-                    No DR executions have been launched yet.
-                  </td>
+                    {t('dRDashboard.noDrExecutionsHaveBeenLaunchedYet')} </td>
                 </tr>
               ) : (
                 executions.map((execution) => (
@@ -362,8 +348,7 @@ export default function DRDashboard() {
                           className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
                         >
                           <Eye className="h-3.5 w-3.5" />
-                          View
-                        </button>
+                          {t('dRDashboard.view')} </button>
                       </div>
                     </td>
                   </tr>
@@ -400,15 +385,15 @@ export default function DRDashboard() {
         onClose={() => {
           if (!startingExecution) setExecutionPlan(null);
         }}
-        title="Execute recovery plan"
+        title={t('dRDashboard.executeRecoveryPlan')}
         maxWidth="md"
         className="p-6"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold text-foreground">Launch execution</h3>
+            <h3 className="text-base font-semibold text-foreground">{t('dRDashboard.launchExecution')}</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Start a new DR run for <span className="font-medium text-foreground">{executionPlan?.name}</span>.
+              {t('dRDashboard.startANewDrRunFor')} <span className="font-medium text-foreground">{executionPlan?.name}</span>.
             </p>
           </div>
           <button
@@ -453,8 +438,7 @@ export default function DRDashboard() {
             disabled={startingExecution}
             className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
           >
-            Cancel
-          </button>
+            {t('dRDashboard.cancel')} </button>
           <button
             type="button"
             onClick={async () => {
@@ -487,10 +471,20 @@ export default function DRDashboard() {
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
             {startingExecution ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
-            Start execution
-          </button>
+            {t('dRDashboard.startExecution')} </button>
         </div>
       </Dialog>
     </div>
+  );
+}
+
+// The dr APIs are per-organization (they 400 on an org-less request), so the
+// gate resolves loading/error/empty/fleet before the data component — with all
+// its fetch effects — ever mounts without an org.
+export default function DRDashboard() {
+  return (
+    <OrgRequiredGate>
+      <DRDashboardInner />
+    </OrgRequiredGate>
   );
 }

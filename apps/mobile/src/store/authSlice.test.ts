@@ -31,11 +31,27 @@ vi.mock('@sentry/react-native', () => ({
   captureException: (...a: unknown[]) => sentry.captureException(...a),
 }));
 
-import authReducer, { logoutAsync } from './authSlice';
+import authReducer, {
+  loginAsync,
+  logoutAsync,
+  verifyMfaAsync,
+  logout,
+  setApproverRegistration,
+  setCredentials,
+  clearAuthenticatorRegisterGrant,
+} from './authSlice';
+import type { User } from '../services/api';
 
 function makeStore() {
   return configureStore({ reducer: { auth: authReducer } });
 }
+
+const fakeUser: User = {
+  id: 'user-1',
+  email: 'tech@example.com',
+  name: 'Tech Nician',
+  role: 'technician',
+};
 
 beforeEach(() => {
   api.logout.mockReset().mockResolvedValue(undefined);
@@ -95,5 +111,93 @@ describe('logoutAsync', () => {
     expect(result.payload).toBe('network down; Secure wipe failed: x');
     expect(auth.clearAuthData).toHaveBeenCalledTimes(1);
     expect(store.getState().auth.token).toBeNull();
+  });
+});
+
+describe('approver registration status', () => {
+  it('records a failed registration so the UI can warn', () => {
+    const store = makeStore();
+
+    store.dispatch(setApproverRegistration({ status: 'failed', reason: 'http_400' }));
+
+    expect(store.getState().auth.approverRegistration).toBe('failed');
+    expect(store.getState().auth.approverRegistrationReason).toBe('http_400');
+  });
+
+  it('defaults the reason to null when omitted', () => {
+    const store = makeStore();
+
+    store.dispatch(setApproverRegistration({ status: 'registered' }));
+
+    expect(store.getState().auth.approverRegistration).toBe('registered');
+    expect(store.getState().auth.approverRegistrationReason).toBeNull();
+  });
+
+  it('starts idle so a fresh install shows no banner', () => {
+    expect(makeStore().getState().auth.approverRegistration).toBe('idle');
+  });
+
+  it('clears on the synchronous logout reducer', () => {
+    const store = makeStore();
+    store.dispatch(setApproverRegistration({ status: 'failed', reason: 'http_400' }));
+
+    store.dispatch(logout());
+
+    expect(store.getState().auth.approverRegistration).toBe('idle');
+    expect(store.getState().auth.approverRegistrationReason).toBeNull();
+  });
+
+  // The Sign Out button and the device_blocked listener both dispatch
+  // logoutAsync, NOT the sync logout reducer — so these are the paths that
+  // actually run in production. The root-level withLogoutReset in resettable.ts
+  // would also blank the slice, but that safety net lives in another module:
+  // asserting it here keeps the guarantee true of authSlice on its own.
+  it.each([
+    ['fulfilled', () => logoutAsync.fulfilled(undefined, 'req-id')],
+    ['rejected', () => logoutAsync.rejected(null, 'req-id')],
+  ])('clears on logoutAsync.%s — the next user must not inherit the banner or grant', (_name, action) => {
+    const store = makeStore();
+    store.dispatch(setApproverRegistration({ status: 'failed', reason: 'http_400' }));
+    // Seed a live grant via loginAsync.fulfilled so we can prove logoutAsync
+    // clears it too — not just the synchronous `logout()` reducer.
+    store.dispatch(
+      loginAsync.fulfilled(
+        { token: 't', user: fakeUser, registerGrant: 'grant-1' } as any,
+        '',
+        { email: 'e', password: 'p' },
+      ),
+    );
+    expect(store.getState().auth.authenticatorRegisterGrantId).toBe('grant-1');
+
+    store.dispatch(action() as never);
+
+    expect(store.getState().auth.approverRegistration).toBe('idle');
+    expect(store.getState().auth.approverRegistrationReason).toBeNull();
+    expect(store.getState().auth.authenticatorRegisterGrantId).toBeNull();
+  });
+});
+
+describe('authenticatorRegisterGrantId (#2707)', () => {
+  it('loginAsync.fulfilled stores the register grant; clearAuthenticatorRegisterGrant drops it', () => {
+    let state = authReducer(undefined, loginAsync.fulfilled(
+      { token: 't', user: fakeUser, registerGrant: 'grant-1' } as any, '', { email: 'e', password: 'p' }
+    ));
+    expect(state.authenticatorRegisterGrantId).toBe('grant-1');
+    state = authReducer(state, clearAuthenticatorRegisterGrant());
+    expect(state.authenticatorRegisterGrantId).toBeNull();
+  });
+
+  it('verifyMfaAsync.fulfilled stores the grant; logout clears it', () => {
+    let state = authReducer(undefined, verifyMfaAsync.fulfilled(
+      { token: 't', user: fakeUser, registerGrant: 'grant-2' } as any, '', { code: '123456', tempToken: 'tmp' }
+    ));
+    expect(state.authenticatorRegisterGrantId).toBe('grant-2');
+    state = authReducer(state, logout());
+    expect(state.authenticatorRegisterGrantId).toBeNull();
+  });
+
+  it('setCredentials (cold-start restore) does NOT set a grant', () => {
+    const state = authReducer(undefined, setCredentials({ token: 't', user: fakeUser }));
+    expect(state.authenticatorRegisterGrantId).toBeNull();
   });
 });

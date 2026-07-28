@@ -16,6 +16,7 @@ import {
   backupConfigs,
   devices,
   configurationPolicies,
+  organizations,
   configPolicyFeatureLinks,
   configPolicyBackupSettings,
   hypervVms,
@@ -32,6 +33,7 @@ import {
 } from '../routes/agentWs';
 import {
   cleanupExpiredSnapshots,
+  sweepUnreferencedBackupObjects,
 } from './backupRetention';
 import * as backupEnqueue from './backupEnqueue';
 import { resolveBackupStorageEncryptionPlan } from '../services/backupEncryption';
@@ -42,6 +44,7 @@ import { markBackupJobFailedIfInFlight } from '../services/backupResultPersisten
 import { createScheduledBackupJobIfAbsent } from '../services/backupJobCreation';
 import { recordDispatchedExpectation } from '../services/agentWorkExpectation';
 import { attachWorkerObservability } from './workerObservability';
+import { captureException } from '../services/sentry';
 import { assertQueueJobName, parseQueueJobData } from '../services/bullmqValidation';
 import {
   backupQueueJobDataSchema,
@@ -144,22 +147,77 @@ async function processCheckSchedules(): Promise<{ enqueued: number }> {
     )
     .where(eq(configurationPolicies.status, 'active'));
 
-  if (orgRows.length === 0) return { enqueued: 0 };
+  // 1b. Partner-wide backup policies (org_id NULL) cover every org under
+  // their partner — enumerate those orgs too, or partner-linked backup
+  // silently never schedules (the classic partner fan-out no-op).
+  const partnerRows = await db
+    .selectDistinct({ partnerId: configurationPolicies.partnerId })
+    .from(configurationPolicies)
+    .innerJoin(
+      configPolicyFeatureLinks,
+      and(
+        eq(configPolicyFeatureLinks.configPolicyId, configurationPolicies.id),
+        eq(configPolicyFeatureLinks.featureType, 'backup')
+      )
+    )
+    .where(and(eq(configurationPolicies.status, 'active'), isNull(configurationPolicies.orgId)));
+  const partnerIds = partnerRows
+    .map((row) => row.partnerId)
+    .filter((id): id is string => !!id);
+  const partnerOrgRows = partnerIds.length > 0
+    ? await db
+        .select({ orgId: organizations.id })
+        .from(organizations)
+        .where(inArray(organizations.partnerId, partnerIds))
+    : [];
+
+  const orgIds = new Set<string>();
+  for (const { orgId } of orgRows) {
+    if (orgId) orgIds.add(orgId);
+  }
+  for (const { orgId } of partnerOrgRows) {
+    orgIds.add(orgId);
+  }
+
+  if (orgIds.size === 0) return { enqueued: 0 };
 
   let enqueued = 0;
 
   // 2. For each org, resolve all backup-assigned devices via config policy hierarchy.
-  // Backup features are org-owned only (#1724 rejects backup on partner-wide
-  // policies), so org_id is always present here; skip defensively if NULL.
-  for (const { orgId } of orgRows) {
-    if (!orgId) continue;
+  for (const orgId of orgIds) {
     try {
       const entries = await resolveAllBackupAssignedDevices(orgId);
 
       for (const entry of entries) {
-        // configId (featurePolicyId → backupConfigs.id) is required for dispatch
+        // Broken profile link (deleted/RLS-hidden/empty/malformed selections):
+        // skip loudly. Falling through would dispatch the legacy settings row,
+        // which on a profile link carries no paths — a backup that protects
+        // nothing while reporting success.
+        //
+        // The resolver flags this in selectionError, but re-derive it here too:
+        // this is the last checkpoint before a backup runs, so it must not
+        // depend on an upstream flag being set. A link that names a profile and
+        // has no specs NEVER falls back to legacy dispatch.
+        const profileId = entry.settings?.backupProfileId ?? null;
+        const brokenProfileLink =
+          entry.selectionError ??
+          (profileId && !entry.selectionSpecs
+            ? `Backup profile ${profileId} could not be resolved into any data source`
+            : null);
+        if (brokenProfileLink) {
+          console.error(
+            `[BackupWorker] Device ${entry.deviceId} (org ${orgId}, link ${entry.featureLinkId}): ${brokenProfileLink} — no backup scheduled`
+          );
+          continue;
+        }
+
+        // Destination chain already resolved (explicit → legacy → org
+        // default). Nothing resolved = loud skip, never silent: a partner
+        // policy hit an org with no default destination.
         if (!entry.configId) {
-          console.warn(`[BackupWorker] Skipping device ${entry.deviceId}: feature link ${entry.featureLinkId} has no configId`);
+          console.error(
+            `[BackupWorker] Device ${entry.deviceId} (org ${orgId}, link ${entry.featureLinkId}) has no backup destination — set an org default destination or pin one on the policy`
+          );
           continue;
         }
 
@@ -173,25 +231,33 @@ async function processCheckSchedules(): Promise<{ enqueued: number }> {
         );
         if (!occurrenceKey) continue;
 
-        const result = await createScheduledBackupJobIfAbsent({
-          orgId,
-          configId: entry.configId,
-          featureLinkId: entry.featureLinkId,
-          deviceId: entry.deviceId,
-          occurrenceKey,
-          createdAt: now,
-          dedupeWindowMinutes: SCHEDULE_LOOKBACK_MINUTES,
-        });
-
-        if (result?.created) {
-          // 6. Enqueue dispatch
-          await enqueueBackupDispatch(
-            result.job.id,
-            result.job.configId,
+        // Profile fan-out: one job per enabled selection. Legacy custom links
+        // (no profile) create a single job with NULL mode, exactly as before.
+        const specs = entry.selectionSpecs ?? [undefined];
+        for (const spec of specs) {
+          const result = await createScheduledBackupJobIfAbsent({
             orgId,
-            entry.deviceId
-          );
-          enqueued++;
+            configId: entry.configId,
+            featureLinkId: entry.featureLinkId,
+            deviceId: entry.deviceId,
+            occurrenceKey,
+            createdAt: now,
+            dedupeWindowMinutes: SCHEDULE_LOOKBACK_MINUTES,
+            ...(spec
+              ? { backupMode: spec.backupMode, modeTargets: spec.targets }
+              : {}),
+          });
+
+          if (result?.created) {
+            // 6. Enqueue dispatch
+            await enqueueBackupDispatch(
+              result.job.id,
+              result.job.configId,
+              orgId,
+              entry.deviceId
+            );
+            enqueued++;
+          }
         }
       }
     } catch (err) {
@@ -230,7 +296,18 @@ async function processExpireRecoveryTokens(): Promise<{ expired: number }> {
   return { expired: expired.length };
 }
 
-async function processCleanupExpiredSnapshots(): Promise<{ deleted: number; skipped: number; prunedByMaxVersions: number }> {
+export async function processCleanupExpiredSnapshots(): Promise<{
+  deleted: number;
+  skipped: number;
+  prunedByMaxVersions: number;
+  gcDeleted: number;
+  // GC's unit of work is a storage identity (possibly several backupConfigs
+  // rows sharing one bucket), not a single "destination" row.
+  gcSkippedIdentities: number;
+  // Subset of gcSkippedIdentities that fail-closed on an unfetchable FILE-type
+  // manifest — the distinct signal of a possible non-self-healing storage leak.
+  gcBlockedIdentities: number;
+}> {
   const orgRows = await db
     .selectDistinct({ orgId: backupSnapshots.orgId })
     .from(backupSnapshots);
@@ -246,7 +323,28 @@ async function processCleanupExpiredSnapshots(): Promise<{ deleted: number; skip
     prunedByMaxVersions += result.prunedByMaxVersions;
   }
 
-  return { deleted, skipped, prunedByMaxVersions };
+  // Mark-and-sweep GC runs ONCE per retention cycle, after row-level
+  // retention has finished for every org — not per-org, since a
+  // destination's live set spans every retained snapshot regardless of
+  // which org iteration deleted rows (see backupRetention.ts's
+  // deleteSnapshotRow: row deletion no longer touches object storage at
+  // all; GC is the only thing that does). A GC failure must never fail this
+  // job: row-level retention already succeeded, and BullMQ would otherwise
+  // retry/re-log the whole run over an unrelated object-storage problem.
+  let gcDeleted = 0;
+  let gcSkippedIdentities = 0;
+  let gcBlockedIdentities = 0;
+  try {
+    const gcResult = await sweepUnreferencedBackupObjects();
+    gcDeleted = gcResult.deleted;
+    gcSkippedIdentities = gcResult.skippedIdentities;
+    gcBlockedIdentities = gcResult.blockedIdentities;
+  } catch (err) {
+    console.error('[BackupWorker] Backup object GC sweep failed — retention run still succeeded:', err);
+    captureException(err instanceof Error ? err : new Error(String(err)));
+  }
+
+  return { deleted, skipped, prunedByMaxVersions, gcDeleted, gcSkippedIdentities, gcBlockedIdentities };
 }
 
 // ── Backup target resolution ─────────────────────────────────────────────────
@@ -270,8 +368,15 @@ export async function resolveBackupTargets(
 ): Promise<BackupTarget[]> {
   switch (backupMode) {
     case 'file': {
-      const t = targets as { paths?: string[] };
-      return [{ commandType: 'backup_run', payload: { paths: t.paths ?? [] } }];
+      const t = targets as { paths?: string[]; excludes?: string[] };
+      // Preserve the omitted-vs-empty distinction the agent relies on: a
+      // missing excludes field means "fall back to locally-configured
+      // excludes", an explicit [] means "no exclusions for this run".
+      const payload: Record<string, unknown> = { paths: t.paths ?? [] };
+      if (t.excludes !== undefined) {
+        payload.excludes = t.excludes;
+      }
+      return [{ commandType: 'backup_run', payload }];
     }
 
     case 'system_image':
@@ -392,9 +497,14 @@ async function processDispatchBackup(
     return { dispatched: false };
   }
 
-  // Resolve backup mode from config policy backup settings (if feature link exists)
+  // Resolve backup mode: fan-out jobs carry their own selection (profile
+  // model); legacy jobs fall back to the feature link's settings row.
   const [job] = await db
-    .select({ featureLinkId: backupJobs.featureLinkId })
+    .select({
+      featureLinkId: backupJobs.featureLinkId,
+      backupMode: backupJobs.backupMode,
+      modeTargets: backupJobs.modeTargets,
+    })
     .from(backupJobs)
     .where(eq(backupJobs.id, data.jobId))
     .limit(1);
@@ -402,7 +512,10 @@ async function processDispatchBackup(
   let backupMode = 'file';
   let modeTargets: Record<string, unknown> = {};
 
-  if (job?.featureLinkId) {
+  if (job?.backupMode) {
+    backupMode = job.backupMode;
+    modeTargets = (job.modeTargets as Record<string, unknown>) ?? {};
+  } else if (job?.featureLinkId) {
     const [settings] = await db
       .select({
         backupMode: configPolicyBackupSettings.backupMode,
@@ -736,3 +849,9 @@ export async function shutdownBackupWorker(): Promise<void> {
 
   console.log('[BackupWorker] Backup worker shut down');
 }
+
+// Exported for unit tests of the schedule fan-out (profile expansion + loud
+// skips). Internal helper, not part of the worker's public surface.
+export const __testOnly = {
+  processCheckSchedules,
+};

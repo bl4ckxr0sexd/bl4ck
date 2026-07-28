@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db';
 import { devices, deviceEventLogs } from '../../db/schema';
@@ -138,37 +138,73 @@ eventLogsRoutes.put('/:id/eventlogs', zValidator('json', submitEventLogsSchema),
     };
   });
 
+  // Key matching the device_event_logs_dedup_idx axes (deviceId is constant
+  // per request) so forwarding can be gated on rows that actually inserted.
+  const eventLogRowKey = (source: string, eventId: string | null, ts: Date) =>
+    `${source}|${eventId ?? ''}|${ts.toISOString()}`;
+
   let inserted = 0;
   let insertError: unknown = null;
+  const insertedKeys = new Set<string>();
   try {
     for (let i = 0; i < rows.length; i += 100) {
       const batch = rows.slice(i, i + 100);
-      await db.insert(deviceEventLogs).values(batch).onConflictDoNothing();
-      inserted += batch.length;
+      // .returning() reveals which rows actually inserted vs. hit the
+      // device_event_logs_dedup_idx conflict. Agents deliberately re-submit a
+      // window after a sub-collector failure (#2390 retry semantics), so
+      // duplicates are expected — they must be absorbed here, not re-forwarded
+      // to the org's SIEM below.
+      const insertedRows = await db.insert(deviceEventLogs).values(batch).onConflictDoNothing().returning({
+        source: deviceEventLogs.source,
+        eventId: deviceEventLogs.eventId,
+        timestamp: deviceEventLogs.timestamp,
+      });
+      inserted += insertedRows.length;
+      for (const r of insertedRows) {
+        insertedKeys.add(eventLogRowKey(r.source, r.eventId, r.timestamp));
+      }
     }
   } catch (err) {
     insertError = err;
     console.error(`[EventLogs] Error batch inserting events for device ${device.id}:`, err);
   }
 
-  // Enqueue for log forwarding if org has it configured
-  if (!insertError) {
+  // Enqueue for log forwarding if org has it configured — only the events
+  // that actually inserted (duplicates from agent retry passes are skipped).
+  if (!insertError && insertedKeys.size > 0) {
     try {
       const fwdConfig = await getOrgForwardingConfig(device.orgId);
       if (fwdConfig) {
-        await enqueueLogForwarding({
-          orgId: device.orgId,
-          deviceId: device.id,
-          hostname: device.hostname,
-          events: filteredEvents.map((e: any, index: number) => ({
-            category: e.category,
-            level: e.level,
-            source: e.source,
-            message: e.message,
-            timestamp: rows[index]?.timestamp.toISOString() ?? now.toISOString(),
-            rawData: e.rawData,
-          })),
+        const forwardEvents = filteredEvents.flatMap((event: any, index: number) => {
+          const row = rows[index];
+          if (!row || !insertedKeys.has(eventLogRowKey(row.source, row.eventId, row.timestamp))) {
+            return [];
+          }
+          return [{
+            category: event.category,
+            level: event.level,
+            source: event.source,
+            message: event.message,
+            timestamp: row.timestamp.toISOString(),
+            // The agent's structured per-event context lives in `details`
+            // (see submitEventLogsSchema). The forward payload historically
+            // read `event.rawData`, a field the schema strips — so it was
+            // always `undefined` and nothing reached the SIEM. Forward the
+            // persisted `row.details` so the SIEM matches what was stored
+            // (including any timestamp-clamp provenance); the worker re-caps
+            // it to 16KB before shipping. `null` (no details) is normalized
+            // to `undefined` so the field is omitted rather than sent empty.
+            details: row.details ?? undefined,
+          }];
         });
+        if (forwardEvents.length > 0) {
+          await enqueueLogForwarding({
+            orgId: device.orgId,
+            deviceId: device.id,
+            hostname: device.hostname,
+            events: forwardEvents,
+          });
+        }
       }
     } catch (fwdErr) {
       console.warn(`[EventLogs] Failed to enqueue for forwarding:`, fwdErr);

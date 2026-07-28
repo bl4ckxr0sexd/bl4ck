@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import '@/lib/i18n';
+import { useHashTab } from '@/lib/useHashState';
 import { Network, Plug, ListChecks, ScrollText } from 'lucide-react';
 import DnsSecurityIntegrationsTab from './DnsSecurityIntegrationsTab';
 import DnsSecurityPoliciesTab from './DnsSecurityPoliciesTab';
@@ -9,52 +12,41 @@ type Tab = 'overview' | 'integrations' | 'policies' | 'events';
 
 const VALID_TABS: readonly Tab[] = ['overview', 'integrations', 'policies', 'events'];
 
-function readTabFromHash(): Tab {
-  if (typeof window === 'undefined') return 'overview';
-  const hash = window.location.hash.replace('#', '');
-  return (VALID_TABS as readonly string[]).includes(hash) ? (hash as Tab) : 'overview';
-}
-
 export default function DnsSecurityPage() {
-  const [activeTab, setActiveTab] = useState<Tab>(readTabFromHash);
+  const { t } = useTranslation('security');
+  // SSR-safe hash tab (#2421): starts at the default, adopts the hash post-mount.
+  const [activeTab, setActiveTab] = useHashTab<Tab>(VALID_TABS, 'overview');
 
   // Reflect tab into URL hash per the CLAUDE.md "URL State in Components"
   // rule — matches DeviceDetails.tsx / OrganizationsPage.tsx.
   const switchTab = useCallback((tab: Tab) => {
     window.location.hash = tab;
     setActiveTab(tab);
-  }, []);
-
-  useEffect(() => {
-    const onHashChange = () => setActiveTab(readTabFromHash());
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  }, [setActiveTab]);
 
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">DNS Security</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t('dnsSecurityDnsSecurityPage.title')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            DNS filtering integrations, blocklist/allowlist policies, and threat events
-            across Umbrella, Cloudflare Gateway, DNSFilter, Pi-hole, OpenDNS, Quad9, and AdGuard Home.
+            {t('dnsSecurityDnsSecurityPage.description')}
           </p>
         </div>
       </header>
 
       <nav className="flex gap-1 border-b">
         <TabButton active={activeTab === 'overview'} onClick={() => switchTab('overview')} icon={<Network className="h-4 w-4" />}>
-          Overview
+          {t('dnsSecurityDnsSecurityPage.tabs.overview')}
         </TabButton>
         <TabButton active={activeTab === 'integrations'} onClick={() => switchTab('integrations')} icon={<Plug className="h-4 w-4" />}>
-          Integrations
+          {t('dnsSecurityDnsSecurityPage.tabs.integrations')}
         </TabButton>
         <TabButton active={activeTab === 'policies'} onClick={() => switchTab('policies')} icon={<ListChecks className="h-4 w-4" />}>
-          Policies
+          {t('dnsSecurityDnsSecurityPage.tabs.policies')}
         </TabButton>
         <TabButton active={activeTab === 'events'} onClick={() => switchTab('events')} icon={<ScrollText className="h-4 w-4" />}>
-          Events
+          {t('dnsSecurityDnsSecurityPage.tabs.events')}
         </TabButton>
       </nav>
 
@@ -96,4 +88,3 @@ function TabButton({
     </button>
   );
 }
-

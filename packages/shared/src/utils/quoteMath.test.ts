@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeQuoteTotals, computeLineTotal, toCents, fromCents, markupPct, priceFromMarkup, computeQuoteProfit, validateQuoteDeposit, type QuoteLineForMath } from './quoteMath';
+import { computeQuoteTotals, computeLineTotal, toCents, fromCents, markupPct, priceFromMarkup, computeQuoteProfit, marginPct, validateQuoteDeposit, toQuoteDepositConfig, type QuoteLineForMath } from './quoteMath';
 
 const line = (over: Partial<QuoteLineForMath>): QuoteLineForMath => ({
   quantity: '1', unitPrice: '0', taxable: false, recurrence: 'one_time', customerVisible: true, ...over,
@@ -77,6 +77,35 @@ describe('quoteMath (shared)', () => {
     expect(r.monthlyRecurringNet).toBe('15.00');
     expect(r.totalCost).toBe('125.00');
     expect(r.linesMissingCost).toBe(1);
+    // Revenue is split by the SAME cadence rule, over the SAME cost-bearing
+    // lines as net (the missing-cost line contributes to neither) — the
+    // denominator marginPct needs for a per-cadence percent.
+    expect(r.oneTimeRevenue).toBe('130.00');
+    expect(r.monthlyRecurringRevenue).toBe('40.00');
+    expect(r.annualRecurringRevenue).toBe('0.00');
+  });
+
+  it('computeQuoteProfit: an EXPLICIT cost of 0 ("no cost", Task B1) is NOT missing — full price counts as net, distinct from a null (never-entered) cost', () => {
+    const lineHelper = (o: Partial<QuoteLineForMath>) => ({
+      quantity: '1', unitPrice: '0', taxable: false, customerVisible: true, recurrence: 'one_time' as const, ...o,
+    });
+    const r = computeQuoteProfit([
+      lineHelper({ unitPrice: '150', unitCost: '0' }),   // explicit no-cost labor line — net = full price
+      lineHelper({ unitPrice: '80', unitCost: null }),   // genuinely missing/unknown cost
+    ]);
+    expect(r.linesMissingCost).toBe(1); // only the null line, NOT the explicit-0 line
+    expect(r.oneTimeNet).toBe('150.00'); // 150 - 0, the null-cost line contributes nothing
+    expect(r.totalCost).toBe('0.00');
+    expect(r.oneTimeRevenue).toBe('150.00'); // only the cost-bearing (incl. $0-cost) line's revenue
+  });
+
+  it('marginPct: net/revenue·100 (margin, not markup); null on div-by-zero/non-finite', () => {
+    expect(marginPct('30', '50')).toBeCloseTo(60);
+    expect(marginPct('-10', '50')).toBeCloseTo(-20); // a loss is a valid (negative) margin
+    expect(marginPct('10', '0')).toBeNull(); // no revenue to compute a percent from
+    expect(marginPct('10', '-5')).toBeNull(); // negative revenue is nonsensical, not "0%"
+    expect(marginPct('10', Number.NaN)).toBeNull();
+    expect(marginPct(Number.NaN, '50')).toBeNull();
   });
 });
 
@@ -164,7 +193,11 @@ describe('quoteMath (shared)', () => {
       expect(r).toMatchObject({ ok: false, code: 'DEPOSIT_REQUIRES_ONE_TIME_LINES' });
     });
     it('rejects percent type without a usable percent', () => {
-      expect(validateQuoteDeposit([line({})], null, { type: 'percent', percent: null }))
+      // A missing/blank persisted percent normalizes to NaN — validation must
+      // still fail it (the union makes `percent: null` unrepresentable).
+      expect(validateQuoteDeposit([line({})], null, toQuoteDepositConfig('percent', null)))
+        .toMatchObject({ ok: false, code: 'DEPOSIT_PERCENT_INVALID' });
+      expect(validateQuoteDeposit([line({})], null, { type: 'percent', percent: Number.NaN }))
         .toMatchObject({ ok: false, code: 'DEPOSIT_PERCENT_INVALID' });
       expect(validateQuoteDeposit([line({})], null, { type: 'percent', percent: 100 }))
         .toMatchObject({ ok: false, code: 'DEPOSIT_PERCENT_INVALID' });
@@ -181,6 +214,43 @@ describe('quoteMath (shared)', () => {
     it('rejects deposit >= dueOnAcceptanceTotal (all lines flagged = "no deposit")', () => {
       const r = validateQuoteDeposit([line({ depositEligible: true })], null, { type: 'selected_lines' });
       expect(r).toMatchObject({ ok: false, code: 'DEPOSIT_NOT_BELOW_TOTAL' });
+    });
+  });
+
+  describe('toQuoteDepositConfig (flat DB/wire pair → union)', () => {
+    it('maps each type, coercing numeric-string percents', () => {
+      expect(toQuoteDepositConfig('none', null)).toEqual({ type: 'none' });
+      expect(toQuoteDepositConfig('selected_lines', null)).toEqual({ type: 'selected_lines' });
+      expect(toQuoteDepositConfig('percent', 30)).toEqual({ type: 'percent', percent: 30 });
+      // DB numeric columns arrive as strings.
+      expect(toQuoteDepositConfig('percent', '30.00')).toEqual({ type: 'percent', percent: 30 });
+      // Zero/negative pass through as-is — the isFinite && >0 gates downstream
+      // reject them, same as the pre-union Number() coercion did.
+      expect(toQuoteDepositConfig('percent', 0)).toEqual({ type: 'percent', percent: 0 });
+      expect(toQuoteDepositConfig('percent', '-5')).toEqual({ type: 'percent', percent: -5 });
+    });
+
+    it('treats a missing type as none', () => {
+      expect(toQuoteDepositConfig(null, '30.00')).toEqual({ type: 'none' });
+      expect(toQuoteDepositConfig(undefined, null)).toEqual({ type: 'none' });
+    });
+
+    it('drops a stray percent on non-percent types (illegal state normalized away)', () => {
+      expect(toQuoteDepositConfig('selected_lines', '30.00')).toEqual({ type: 'selected_lines' });
+      expect(toQuoteDepositConfig('none', 15)).toEqual({ type: 'none' });
+    });
+
+    it('normalizes a missing/blank percent on a percent deposit to NaN (still rejected, never silently "none")', () => {
+      for (const missing of [null, undefined, '', '  '] as const) {
+        const cfg = toQuoteDepositConfig('percent', missing);
+        expect(cfg.type).toBe('percent');
+        expect(cfg.type === 'percent' && Number.isNaN(cfg.percent)).toBe(true);
+        // Compute treats it as "no deposit"…
+        expect(computeQuoteTotals([line({ unitPrice: '100.00' })], null, cfg).depositDueTotal).toBeNull();
+        // …but validation still hard-fails it, matching the pre-union behavior.
+        expect(validateQuoteDeposit([line({ unitPrice: '100.00' })], null, cfg))
+          .toMatchObject({ ok: false, code: 'DEPOSIT_PERCENT_INVALID' });
+      }
     });
   });
 }

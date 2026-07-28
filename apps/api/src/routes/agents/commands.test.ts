@@ -37,6 +37,11 @@ vi.mock('../../db/schema', () => ({
     id: 'devices.id',
     agentId: 'devices.agent_id',
   },
+  deploymentResults: {
+    deploymentId: 'deployment_results.deployment_id',
+    deviceId: 'deployment_results.device_id',
+    status: 'deployment_results.status',
+  },
 }));
 
 vi.mock('../../services/restoreResultPersistence', () => ({
@@ -164,7 +169,7 @@ describe('agent commands routes', () => {
     });
 
     expect(res.status).toBe(200);
-    expect(claimPendingCommandsForDeviceMock).toHaveBeenCalledWith('device-1', 10, 'agent');
+    expect(claimPendingCommandsForDeviceMock).toHaveBeenCalledWith('device-1', 10, 'agent', undefined);
     await expect(res.json()).resolves.toEqual({
       commands: [
         {
@@ -174,6 +179,185 @@ describe('agent commands routes', () => {
         },
       ],
     });
+  });
+
+  // #2774 — during an offboarding drain the poll claims self_uninstall only.
+  it('narrows the claim to self_uninstall when the tenant is draining', async () => {
+    claimPendingCommandsForDeviceMock.mockResolvedValueOnce([]);
+
+    const drainApp = new Hono();
+    drainApp.use('*', async (c, next) => {
+      c.set('agent', {
+        deviceId: 'device-1',
+        agentId: 'agent-1',
+        orgId: 'org-1',
+        siteId: 'site-1',
+        role: 'agent',
+        tenantDraining: true,
+      });
+      await next();
+    });
+    drainApp.route('/agents', commandsRoutes);
+
+    const res = await drainApp.request(`/agents/${agentId}/commands`, { method: 'GET' });
+
+    expect(res.status).toBe(200);
+    expect(claimPendingCommandsForDeviceMock).toHaveBeenCalledWith(
+      'device-1',
+      10,
+      'agent',
+      ['self_uninstall']
+    );
+  });
+
+  // A complete, well-formed PEM private-key block (header + base64 body +
+  // footer). The base64 body must survive verbatim if redaction fails, so we
+  // assert the body marker is gone after ingest.
+  const PRIVATE_KEY_BLOCK = [
+    '-----BEGIN PRIVATE KEY-----',
+    'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDexampleAAAA1234',
+    'BODYb64lineTwoZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ567890',
+    '-----END PRIVATE KEY-----',
+  ].join('\n');
+
+  it('redacts private-key blocks from stdout, stderr, AND error before persisting the command result', async () => {
+    selectMock.mockReturnValueOnce(
+      chainMock([
+        {
+          id: commandId,
+          deviceId: 'device-1',
+          type: 'run_script',
+          status: 'sent',
+          targetRole: 'agent',
+        },
+      ])
+    );
+    const updateChain = chainMock([{ id: 'cmd-1' }]);
+    updateMock.mockReturnValueOnce(updateChain);
+
+    const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commandId,
+        status: 'completed',
+        exitCode: 0,
+        stdout: `stdout-pre ${PRIVATE_KEY_BLOCK} stdout-post`,
+        stderr: `stderr-pre ${PRIVATE_KEY_BLOCK} stderr-post`,
+        error: `error-pre ${PRIVATE_KEY_BLOCK} error-post`,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+
+    // Assert on exactly what is handed to db.update(...).set(...).
+    const stored = updateChain.set.mock.calls[0][0];
+    expect(stored.result.stdout).toBe('stdout-pre [PRIVATE_KEY_REDACTED] stdout-post');
+    expect(stored.result.stderr).toBe('stderr-pre [PRIVATE_KEY_REDACTED] stderr-post');
+    expect(stored.result.error).toBe('error-pre [PRIVATE_KEY_REDACTED] error-post');
+
+    // No fragment of the key (header, footer, or base64 body) survives anywhere
+    // in the persisted result object.
+    const serialized = JSON.stringify(stored.result);
+    expect(serialized).not.toContain('BEGIN PRIVATE KEY');
+    expect(serialized).not.toContain('END PRIVATE KEY');
+    expect(serialized).not.toContain('MIIEvQ');
+    expect(serialized).not.toContain('BODYb64lineTwo');
+  });
+
+  it('stores capture_pprof stdout byte-for-byte (secret redaction would corrupt the base64 profiles, #2401)', async () => {
+    selectMock.mockReturnValueOnce(
+      chainMock([
+        {
+          id: commandId,
+          deviceId: 'device-1',
+          type: 'capture_pprof',
+          status: 'sent',
+          targetRole: 'agent',
+        },
+      ])
+    );
+    const updateChain = chainMock([{ id: 'cmd-1' }]);
+    updateMock.mockReturnValueOnce(updateChain);
+
+    // Base64 profile payload containing substrings the redaction patterns
+    // fire on (case-insensitive AKIA + 16 alnum; token=...). In random
+    // base64 these occur by chance roughly once per ~MB — redaction would
+    // silently corrupt the gzip protobuf.
+    const pprofStdout = JSON.stringify({
+      capturedAt: '2026-07-12T10:00:00Z',
+      heapProfileBase64: `QUJDakiAABCDEF1234567890abToken=abcdefgh12345678REVG${'Zm9v'.repeat(100)}`,
+      heapProfileBytes: 4096,
+    });
+
+    const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commandId,
+        status: 'completed',
+        exitCode: 0,
+        stdout: pprofStdout,
+        stderr: `stderr-pre ${PRIVATE_KEY_BLOCK} stderr-post`,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const stored = updateChain.set.mock.calls[0][0];
+    // stdout is the artifact channel — byte-for-byte.
+    expect(stored.result.stdout).toBe(pprofStdout);
+    // stderr is NOT exempt.
+    expect(stored.result.stderr).toBe('stderr-pre [PRIVATE_KEY_REDACTED] stderr-post');
+  });
+
+  it('redacts private-key blocks from the software-install deployment result path', async () => {
+    // sw-install commandId embeds deployment + device UUIDs; the device UUID
+    // must equal the authenticated agent's deviceId for the update to fire.
+    const deploymentUuid = '11111111-1111-4111-8111-111111111111';
+    const deviceUuid = '33333333-3333-4333-8333-333333333333';
+    const swCommandId = `sw-install-${deploymentUuid}-${deviceUuid}`;
+
+    const swApp = new Hono();
+    swApp.use('*', async (c, next) => {
+      c.set('agent', {
+        deviceId: deviceUuid,
+        agentId: 'agent-1',
+        orgId: 'org-1',
+        siteId: 'site-1',
+        role: 'agent',
+      });
+      await next();
+    });
+    swApp.route('/agents', commandsRoutes);
+
+    const updateChain = chainMock([]);
+    updateMock.mockReturnValueOnce(updateChain);
+
+    const res = await swApp.request(`/agents/${agentId}/commands/${swCommandId}/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commandId: swCommandId,
+        status: 'completed',
+        exitCode: 0,
+        stdout: `install-log ${PRIVATE_KEY_BLOCK} done`,
+        error: `install-error ${PRIVATE_KEY_BLOCK} boom`,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+
+    // deployment_results is never queried via selectMock on this path.
+    expect(selectMock).not.toHaveBeenCalled();
+    const stored = updateChain.set.mock.calls[0][0];
+    expect(stored.output).toBe('install-log [PRIVATE_KEY_REDACTED] done');
+    expect(stored.errorMessage).toBe('install-error [PRIVATE_KEY_REDACTED] boom');
+
+    const serialized = JSON.stringify(stored);
+    expect(serialized).not.toContain('BEGIN PRIVATE KEY');
+    expect(serialized).not.toContain('MIIEvQ');
+    expect(serialized).not.toContain('BODYb64lineTwo');
   });
 
   it('rejects normal agent results for watchdog-targeted commands', async () => {
@@ -200,5 +384,41 @@ describe('agent commands routes', () => {
 
     expect(res.status).toBe(403);
     expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('hands per-type post-processing handlers redacted error/stderr (#2434 chokepoint)', async () => {
+    const { processBackupVerificationResult } = await import('../backup/verificationService');
+    selectMock.mockReturnValueOnce(
+      chainMock([
+        {
+          id: commandId,
+          deviceId: 'device-1',
+          type: 'backup_verify',
+          status: 'sent',
+          targetRole: 'agent',
+        },
+      ])
+    );
+    updateMock.mockReturnValueOnce(chainMock([{ id: 'cmd-1' }]));
+
+    const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commandId,
+        status: 'failed',
+        exitCode: 1,
+        error: `verify failed ${PRIVATE_KEY_BLOCK} end`,
+        stderr: `stderr ${PRIVATE_KEY_BLOCK} end`,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(processBackupVerificationResult).toHaveBeenCalledTimes(1);
+    const handlerArg = vi.mocked(processBackupVerificationResult).mock.calls[0]![1] as {
+      error?: string;
+    };
+    expect(handlerArg.error).toBe('verify failed [PRIVATE_KEY_REDACTED] end');
+    expect(JSON.stringify(handlerArg)).not.toContain('BEGIN PRIVATE KEY');
   });
 });

@@ -37,7 +37,6 @@ var allCommandTypes = []string{
 	tools.CmdTerminalResize, tools.CmdTerminalStop,
 
 	// handlers_desktop.go init()
-	tools.CmdFileTransfer, tools.CmdCancelTransfer,
 	tools.CmdStartDesktop, tools.CmdStopDesktop,
 	tools.CmdDesktopStreamStart, tools.CmdDesktopStreamStop,
 	tools.CmdDesktopInput, tools.CmdDesktopConfig,
@@ -90,6 +89,9 @@ var allCommandTypes = []string{
 
 	// handlers.go — log shipping
 	tools.CmdSetLogLevel,
+
+	// handlers.go — runtime diagnostics (handlers_diag.go)
+	tools.CmdCapturePprof,
 
 	// handlers_autoupdate.go
 	tools.CmdSetAutoUpdate,

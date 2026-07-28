@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/breeze-rmm/agent/internal/logging"
+	"github.com/breeze-rmm/agent/internal/netcache"
 	"github.com/breeze-rmm/agent/internal/observability"
 	"github.com/breeze-rmm/agent/internal/secmem"
 )
@@ -21,10 +22,21 @@ import (
 var log = logging.L("websocket")
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 64 * 1024 * 1024 // 64MB — file_write commands carry base64 content
+	writeWait  = 10 * time.Second
+	pongWait   = 60 * time.Second
+	pingPeriod = (pongWait * 9) / 10
+	// maxMessageSize bounds inbound WS frames via conn.SetReadLimit. Exceeding
+	// it is NOT a graceful rejection: gorilla returns ErrReadLimit and closes
+	// the connection, forcing a reconnect — so keep generous headroom over the
+	// largest legitimate frame. Audited 2026-07 (issue #2399): the largest
+	// legit server→agent frame is a file_write command at ~5.6MB (4MB decoded
+	// cap, tools.MaxFileWriteSize, base64-encoded + JSON envelope); the
+	// "connected" welcome frame's pending-command batch is budgeted
+	// server-side to 6MB of payloads. Everything else (http_request ~1.37MB,
+	// tunnel_data ~1.33MB, scripts 1MB, terminal input 256KB, desktop SDP
+	// 64KB) is far smaller. 16MB ≈ 2.8x the largest legit frame; the
+	// relationship is pinned by TestMaxMessageSizeCoversLargestLegitimateFrame.
+	maxMessageSize = 16 * 1024 * 1024
 	initialBackoff = 1 * time.Second
 	maxBackoff     = 60 * time.Second
 	backoffFactor  = 2.0
@@ -50,13 +62,34 @@ type Command struct {
 	Payload map[string]any `json:"payload"`
 }
 
-// CommandResult represents the result of a command execution
+// CommandResult is the WS wire form of a command execution result.
+//
+// Stdout, Stderr and ExitCode mirror the server's command_result schema
+// (apps/api/src/routes/agentWs.ts, commandResultSchema). ExitCode is
+// deliberately NOT omitempty — matching tools.CommandResult — because the
+// server persists `result.exitCode ?? null`: omitting the zero value would
+// store NULL exit_code for every successful (exit-0) script run (#2474).
+// Failure paths that never spawn a process send a synthetic exit code 1 so
+// exitCode:0 always means "a process ran and exited cleanly".
 type CommandResult struct {
 	Type      string `json:"type"`
 	CommandID string `json:"commandId"`
 	Status    string `json:"status"`
+	ExitCode  int    `json:"exitCode"`
+	Stdout    string `json:"stdout,omitempty"`
+	Stderr    string `json:"stderr,omitempty"`
 	Result    any    `json:"result,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+// outboundResult pairs a marshalled command-result frame with the structured
+// result it was encoded from, so writePump can hand the structured value back
+// to the outbox owner (OnResultWriteFailed) if the write is dropped — see the
+// resultChan handling in writePump. The bytes are marshalled once in
+// SendResult so the pump never has to re-encode.
+type outboundResult struct {
+	data   []byte
+	result CommandResult
 }
 
 // CommandHandler processes commands received via WebSocket
@@ -64,19 +97,65 @@ type CommandHandler func(cmd Command) CommandResult
 
 // Client manages the WebSocket connection to the server
 type Client struct {
-	config          *Config
-	tlsConfigMu     sync.RWMutex
-	conn            *websocket.Conn
-	connMu          sync.RWMutex
-	capabilitiesMu  sync.RWMutex
+	config               *Config
+	serverURLMu          sync.RWMutex
+	tlsConfigMu          sync.RWMutex
+	conn                 *websocket.Conn
+	connMu               sync.RWMutex
+	capabilitiesMu       sync.RWMutex
 	terminalOutputBase64 bool
-	cmdHandler      CommandHandler
-	done            chan struct{}
-	sendChan        chan []byte
+	// serverCapabilities holds the full capability set advertised by the
+	// server's most recent "connected" handshake message, keyed by name.
+	// Reset to nil on every (re)connect until the next handshake lands, so a
+	// dropped connection never leaves a stale capability latched on.
+	serverCapabilities map[string]bool
+	cmdHandler         CommandHandler
+	done               chan struct{}
+	sendChan           chan []byte
+	// resultChan carries command results on a dedicated path (separate from the
+	// generic sendChan) so writePump can distinguish a terminal command result
+	// from an ephemeral status/progress frame. A result popped from this
+	// channel that then fails to write (conn nil during a teardown gap, or a
+	// WriteMessage error) is handed to OnResultWriteFailed instead of being
+	// dropped — closing the loss window where SendResult reported success but
+	// the frame never reached the wire. Results still buffered in this channel
+	// when a pump exits are NOT drained: the next reconnect's writePump drains
+	// them onto the fresh connection, so a plain WS blip loses nothing.
+	resultChan      chan outboundResult
 	binaryFrameChan chan []byte
 	stopOnce        sync.Once
 	isRunning       bool
 	runningMu       sync.RWMutex
+
+	// OnConnected, if set, is invoked synchronously from the read pump once
+	// the server's "connected" welcome frame has been parsed — i.e. after a
+	// full (re)connect handshake, not just a raw TCP/TLS dial. This is the
+	// same message the capability negotiation handshake uses. Callers (e.g.
+	// the heartbeat's backup-result outbox) use it to retry anything that
+	// couldn't be sent before the last disconnect. Must not block: it runs
+	// inline before the pump resumes reading. Set once at construction time,
+	// before Start() is called — never mutated afterwards, so it's safe to
+	// read without a lock.
+	OnConnected func()
+
+	// OnResultWriteFailed, if set, is invoked from writePump when a command
+	// result popped off resultChan cannot be delivered to the wire — either the
+	// connection was already torn down (conn == nil) or WriteMessage returned an
+	// error. Without this, SendResult would have already reported success (the
+	// frame made it into the channel) yet the terminal result would be silently
+	// lost on a WS blip. The heartbeat layer sets this to re-persist the result
+	// to its backup-result outbox, which the next reconnect flushes. Runs inline
+	// on the write-pump goroutine and must not block. Set once at construction
+	// time (see SetWebSocketClient), before Start(), so it needs no lock.
+	//
+	// NOTE: this hook fires for EVERY failed command-result write, not just
+	// backup results — writePump can't tell them apart. That is deliberately
+	// safe: the outbox re-sends via SendResult and the server tolerates a late
+	// or duplicate terminal result. The only residual loss window is a result
+	// whose WriteMessage returns nil (bytes accepted by the OS TCP buffer) but
+	// which the server never processes before the connection drops; closing
+	// that fully would need an application-level per-result ACK.
+	OnResultWriteFailed func(CommandResult)
 }
 
 // New creates a new WebSocket client
@@ -86,8 +165,23 @@ func New(cfg *Config, handler CommandHandler) *Client {
 		cmdHandler:      handler,
 		done:            make(chan struct{}),
 		sendChan:        make(chan []byte, 256),
+		resultChan:      make(chan outboundResult, 256),
 		binaryFrameChan: make(chan []byte, 30),
 	}
+}
+
+// SetServerURL updates the control-plane base URL used by future WebSocket
+// connection attempts after a backup server promotion.
+func (c *Client) SetServerURL(u string) {
+	c.serverURLMu.Lock()
+	defer c.serverURLMu.Unlock()
+	c.config.ServerURL = u
+}
+
+func (c *Client) serverURL() string {
+	c.serverURLMu.RLock()
+	defer c.serverURLMu.RUnlock()
+	return c.config.ServerURL
 }
 
 // Start begins the WebSocket client
@@ -170,6 +264,9 @@ func (c *Client) connect() error {
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
 		TLSClientConfig:  c.currentTLSConfig(),
+		// Last-known-good DNS cache (#2288) — TCP dial layer only; the TLS
+		// handshake above still verifies the URL hostname.
+		NetDialContext: netcache.Shared().DialContext,
 	}
 	headers := http.Header{
 		"Authorization": {"Bearer " + c.config.AuthToken.Reveal()},
@@ -184,12 +281,12 @@ func (c *Client) connect() error {
 	c.connMu.Unlock()
 
 	conn.SetReadLimit(maxMessageSize)
-	log.Info("connected", "server", c.config.ServerURL)
+	log.Info("connected", "server", c.serverURL())
 	return nil
 }
 
 func (c *Client) buildWSURL() (string, error) {
-	serverURL, err := url.Parse(c.config.ServerURL)
+	serverURL, err := url.Parse(c.serverURL())
 	if err != nil {
 		return "", err
 	}
@@ -346,17 +443,24 @@ func (c *Client) handleConnectedMessage(raw []byte) {
 	}
 
 	enabled := false
+	caps := make(map[string]bool, len(msg.Capabilities))
 	for _, capability := range msg.Capabilities {
+		caps[capability] = true
 		if capability == capabilityTerminalOutputBase64 {
 			enabled = true
-			break
 		}
 	}
 	c.setTerminalOutputBase64(enabled)
+	c.setServerCapabilities(caps)
+
+	if c.OnConnected != nil {
+		c.OnConnected()
+	}
 }
 
 func (c *Client) resetConnectionCapabilities() {
 	c.setTerminalOutputBase64(false)
+	c.setServerCapabilities(nil)
 }
 
 func (c *Client) setTerminalOutputBase64(enabled bool) {
@@ -369,6 +473,23 @@ func (c *Client) terminalOutputBase64Enabled() bool {
 	c.capabilitiesMu.RLock()
 	defer c.capabilitiesMu.RUnlock()
 	return c.terminalOutputBase64
+}
+
+func (c *Client) setServerCapabilities(caps map[string]bool) {
+	c.capabilitiesMu.Lock()
+	c.serverCapabilities = caps
+	c.capabilitiesMu.Unlock()
+}
+
+// HasServerCapability reports whether the server advertised the named
+// capability in its most recent "connected" handshake message. Returns false
+// before the first handshake and after any (re)connect until the next one
+// lands — callers must not assume a capability persists across a dropped
+// connection.
+func (c *Client) HasServerCapability(name string) bool {
+	c.capabilitiesMu.RLock()
+	defer c.capabilitiesMu.RUnlock()
+	return c.serverCapabilities[name]
 }
 
 func (c *Client) writePump(done <-chan struct{}, exited chan<- struct{}) {
@@ -396,6 +517,29 @@ func (c *Client) writePump(done <-chan struct{}, exited chan<- struct{}) {
 			conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				log.Warn("write error", "error", err.Error())
+				return
+			}
+
+		case res := <-c.resultChan:
+			c.connMu.RLock()
+			conn := c.conn
+			c.connMu.RUnlock()
+
+			if conn == nil {
+				// Teardown gap: no live connection to write to. Hand the result
+				// back to the outbox owner so the next reconnect re-delivers it
+				// rather than dropping it silently. (FIX 3)
+				c.handleResultWriteFailure(res.result)
+				continue
+			}
+
+			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := conn.WriteMessage(websocket.TextMessage, res.data); err != nil {
+				log.Warn("result write error", "commandId", res.result.CommandID, "error", err.Error())
+				// The write failed with the frame in flight; preserve the result
+				// before the pump exits so the reconnect flush re-delivers it,
+				// instead of losing a terminal result on a WS blip. (FIX 3)
+				c.handleResultWriteFailure(res.result)
 				return
 			}
 
@@ -444,7 +588,13 @@ func (c *Client) processCommand(cmd Command) {
 	}
 }
 
-// SendResult sends a command result back to the server
+// SendResult sends a command result back to the server.
+//
+// Command results travel on the dedicated resultChan (not the generic
+// sendChan) so writePump can preserve them via OnResultWriteFailed if the
+// write is dropped. A nil return means the result was accepted into the
+// channel — NOT that it reached the wire; the pump completes delivery and
+// re-persists it on failure.
 func (c *Client) SendResult(result CommandResult) error {
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -452,12 +602,22 @@ func (c *Client) SendResult(result CommandResult) error {
 	}
 
 	select {
-	case c.sendChan <- data:
+	case c.resultChan <- outboundResult{data: data, result: result}:
 		return nil
 	case <-c.done:
 		return fmt.Errorf("client is stopped")
 	default:
 		return fmt.Errorf("send channel is full")
+	}
+}
+
+// handleResultWriteFailure hands a command result that writePump could not
+// deliver back to the outbox owner (if one is registered) so it can be
+// re-persisted for redelivery on the next reconnect. Safe to call with no
+// hook set.
+func (c *Client) handleResultWriteFailure(result CommandResult) {
+	if c.OnResultWriteFailed != nil {
+		c.OnResultWriteFailed(result)
 	}
 }
 

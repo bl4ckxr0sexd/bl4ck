@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { z } from 'zod';
 import { eq, sql, desc, and } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
@@ -553,6 +553,8 @@ commandsRoutes.get(
       return c.json({ error: 'Command not found' }, 404);
     }
 
-    return c.json({ data: sanitizeCommandForHistory(command) });
+    // allowRawStdout only takes effect for artifact-bearing command types
+    // (capture_pprof profiles); everything else stays redacted (#2401).
+    return c.json({ data: sanitizeCommandForHistory(command, { allowRawStdout: true }) });
   }
 );

@@ -1,8 +1,10 @@
+import '@/lib/i18n';
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Pencil, Trash2, Globe } from 'lucide-react';
+import { Layers, Plus, Pencil, Trash2, Globe } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../../stores/auth';
 import { useOrgStore } from '../../stores/orgStore';
-import { getJwtClaims } from '@/lib/authScope';
+import { useDefaultOwnerScope } from '@/hooks/useDefaultOwnerScope';
 import { DETECTION_CLASSES, DATA_TYPE_COLORS } from './constants';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { showToast } from '../shared/Toast';
@@ -40,6 +42,7 @@ const defaultForm: FormState = {
 };
 
 export default function PoliciesTab() {
+  const { t } = useTranslation('security');
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -56,9 +59,7 @@ export default function PoliciesTab() {
   // creators may own the policy partner-wide ("all orgs"). Gate on the JWT
   // scope; default to partner-wide when viewing All orgs. Create-only.
   const currentOrgId = useOrgStore((s) => s.currentOrgId);
-  const allOrgs = useOrgStore((s) => s.allOrgs);
-  const { scope: jwtScope, partnerId: jwtPartnerId } = getJwtClaims();
-  const isPartnerScope = jwtScope === 'partner' && !!jwtPartnerId;
+  const { isPartnerScope, defaultOwnerScope } = useDefaultOwnerScope();
   const [ownerScope, setOwnerScope] = useState<'organization' | 'partner'>('organization');
 
   const fetchPolicies = useCallback(async () => {
@@ -66,15 +67,25 @@ export default function PoliciesTab() {
       setLoading(true);
       setError(undefined);
       const res = await fetchWithAuth('/sensitive-data/policies');
-      if (!res.ok) throw new Error('Failed to fetch policies');
+      if (!res.ok) {
+        throw new Error(
+          t('sensitiveDataPoliciesTab.errors.fetchPolicies', {
+            defaultValue: 'Failed to fetch policies',
+          }),
+        );
+      }
       const json = await res.json();
       setPolicies(json.data ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(
+        err instanceof Error
+          ? err.message
+          : t('sensitiveDataPoliciesTab.errors.generic', { defaultValue: 'An error occurred' }),
+      );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     fetchPolicies();
@@ -83,7 +94,7 @@ export default function PoliciesTab() {
   const openCreate = () => {
     setEditingId(null);
     setForm(defaultForm);
-    setOwnerScope(isPartnerScope && (allOrgs || !currentOrgId) ? 'partner' : 'organization');
+    setOwnerScope(defaultOwnerScope);
     setShowForm(true);
   };
 
@@ -136,14 +147,28 @@ export default function PoliciesTab() {
       const res = await fetchWithAuth(url, { method, body: JSON.stringify(body) });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error || 'Failed to save policy');
+        throw new Error(
+          json.error ||
+            t('sensitiveDataPoliciesTab.errors.savePolicy', {
+              defaultValue: 'Failed to save policy',
+            }),
+        );
       }
 
       setShowForm(false);
       await fetchPolicies();
-      showToast({ message: editingId ? 'Policy updated' : 'Policy created', type: 'success' });
+      showToast({
+        message: editingId
+          ? t('sensitiveDataPoliciesTab.toasts.policyUpdated', { defaultValue: 'Policy updated' })
+          : t('sensitiveDataPoliciesTab.toasts.policyCreated', { defaultValue: 'Policy created' }),
+        type: 'success',
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      setError(
+        err instanceof Error
+          ? err.message
+          : t('sensitiveDataPoliciesTab.errors.saveFailed', { defaultValue: 'Save failed' }),
+      );
     } finally {
       setSaving(false);
     }
@@ -158,13 +183,29 @@ export default function PoliciesTab() {
     setDeleting(true);
     try {
       const res = await fetchWithAuth(`/sensitive-data/policies/${deleteTarget.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Failed to delete policy');
+      if (!res.ok) {
+        throw new Error(
+          t('sensitiveDataPoliciesTab.errors.deletePolicy', {
+            defaultValue: 'Failed to delete policy',
+          }),
+        );
+      }
       const deletedName = deleteTarget.name;
       setDeleteTarget(null);
       await fetchPolicies();
-      showToast({ message: `Policy "${deletedName}" deleted`, type: 'success' });
+      showToast({
+        message: t('sensitiveDataPoliciesTab.toasts.policyDeleted', {
+          defaultValue: 'Policy "{{name}}" deleted',
+          name: deletedName,
+        }),
+        type: 'success',
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed');
+      setError(
+        err instanceof Error
+          ? err.message
+          : t('sensitiveDataPoliciesTab.errors.deleteFailed', { defaultValue: 'Delete failed' }),
+      );
     } finally {
       setDeleting(false);
     }
@@ -176,10 +217,20 @@ export default function PoliciesTab() {
         method: 'PUT',
         body: JSON.stringify({ isActive: !policy.isActive }),
       });
-      if (!res.ok) throw new Error('Failed to update policy');
+      if (!res.ok) {
+        throw new Error(
+          t('sensitiveDataPoliciesTab.errors.updatePolicy', {
+            defaultValue: 'Failed to update policy',
+          }),
+        );
+      }
       await fetchPolicies();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Update failed');
+      setError(
+        err instanceof Error
+          ? err.message
+          : t('sensitiveDataPoliciesTab.errors.updateFailed', { defaultValue: 'Update failed' }),
+      );
     }
   };
 
@@ -188,10 +239,18 @@ export default function PoliciesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">Scan Policies</h2>
+          <h2 className="text-lg font-semibold">
+            {t('sensitiveDataPoliciesTab.heading', { defaultValue: 'Scan Policies' })}
+          </h2>
           <p className="text-sm text-muted-foreground">
-            Manage sensitive data scan policies. For hierarchical assignment, use{' '}
-            <a href="/configuration-policies" className="text-primary underline underline-offset-2">Configuration Policies</a>.
+            {t('sensitiveDataPoliciesTab.descriptionPrefix', {
+              defaultValue: 'Manage sensitive data scan policies. For hierarchical assignment, use',
+            })}{' '}
+            <a href="/configuration-policies" className="text-primary underline underline-offset-2">
+              {t('sensitiveDataPoliciesTab.configurationPoliciesLink', {
+                defaultValue: 'Configuration Policies',
+              })}
+            </a>.
           </p>
         </div>
         <button
@@ -199,7 +258,7 @@ export default function PoliciesTab() {
           onClick={openCreate}
           className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
-          <Plus className="h-4 w-4" /> New Policy
+          <Plus className="h-4 w-4" /> {t('sensitiveDataPoliciesTab.actions.newPolicy', { defaultValue: 'New Policy' })}
         </button>
       </div>
 
@@ -210,12 +269,18 @@ export default function PoliciesTab() {
       {/* Inline form */}
       {showForm && (
         <div className="rounded-lg border bg-card p-5 shadow-xs">
-          <h3 className="text-sm font-semibold">{editingId ? 'Edit Policy' : 'Create Policy'}</h3>
+          <h3 className="text-sm font-semibold">
+            {editingId
+              ? t('sensitiveDataPoliciesTab.form.editPolicy', { defaultValue: 'Edit Policy' })
+              : t('sensitiveDataPoliciesTab.form.createPolicy', { defaultValue: 'Create Policy' })}
+          </h3>
           <div className="mt-4 grid gap-4">
             {/* Ownership scope — partner-scope creators only, create-only (#2131) */}
             {!editingId && isPartnerScope && (
               <fieldset className="space-y-2 rounded-md border p-4" data-testid="sensitive-policy-owner">
-                <legend className="px-1 text-xs font-medium uppercase text-muted-foreground">Scope</legend>
+                <legend className="px-1 text-xs font-medium uppercase text-muted-foreground">
+                  {t('sensitiveDataPoliciesTab.form.scope', { defaultValue: 'Scope' })}
+                </legend>
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="radio"
@@ -223,7 +288,14 @@ export default function PoliciesTab() {
                     onChange={() => setOwnerScope('partner')}
                     data-testid="sensitive-policy-owner-partner"
                   />
-                  All organizations <span className="text-muted-foreground">(partner-wide policy)</span>
+                  {t('sensitiveDataPoliciesTab.form.allOrganizations', {
+                    defaultValue: 'All organizations',
+                  })}{' '}
+                  <span className="text-muted-foreground">
+                    {t('sensitiveDataPoliciesTab.form.partnerWidePolicyParenthetical', {
+                      defaultValue: '(partner-wide policy)',
+                    })}
+                  </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -232,21 +304,29 @@ export default function PoliciesTab() {
                     onChange={() => setOwnerScope('organization')}
                     data-testid="sensitive-policy-owner-org"
                   />
-                  This organization only
+                  {t('sensitiveDataPoliciesTab.form.thisOrganizationOnly', {
+                    defaultValue: 'This organization only',
+                  })}
                 </label>
               </fieldset>
             )}
             <div>
-              <label className="text-sm font-medium">Name</label>
+              <label className="text-sm font-medium">{t('sensitiveDataPoliciesTab.form.name', { defaultValue: 'Name' })}</label>
               <input
                 value={form.name}
                 onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="Policy name"
+                placeholder={t('sensitiveDataPoliciesTab.form.policyNamePlaceholder', {
+                  defaultValue: 'Policy name',
+                })}
                 className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
               />
             </div>
             <div>
-              <label className="text-sm font-medium">Detection Classes</label>
+              <label className="text-sm font-medium">
+                {t('sensitiveDataPoliciesTab.form.detectionClasses', {
+                  defaultValue: 'Detection Classes',
+                })}
+              </label>
               <div className="mt-2 flex flex-wrap gap-2">
                 {DETECTION_CLASSES.map((cls) => (
                   <button
@@ -266,20 +346,26 @@ export default function PoliciesTab() {
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <label className="text-sm font-medium">Schedule Type</label>
+                <label className="text-sm font-medium">
+                  {t('sensitiveDataPoliciesTab.form.scheduleType', { defaultValue: 'Schedule Type' })}
+                </label>
                 <select
                   value={form.scheduleType}
                   onChange={(e) => setForm((prev) => ({ ...prev, scheduleType: e.target.value }))}
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
                 >
-                  <option value="manual">Manual</option>
-                  <option value="interval">Interval</option>
-                  <option value="cron">Cron</option>
+                  <option value="manual">{t('sensitiveDataPoliciesTab.schedule.manual', { defaultValue: 'Manual' })}</option>
+                  <option value="interval">{t('sensitiveDataPoliciesTab.schedule.interval', { defaultValue: 'Interval' })}</option>
+                  <option value="cron">{t('sensitiveDataPoliciesTab.schedule.cron', { defaultValue: 'Cron' })}</option>
                 </select>
               </div>
               {form.scheduleType === 'interval' && (
                 <div>
-                  <label className="text-sm font-medium">Interval (minutes)</label>
+                  <label className="text-sm font-medium">
+                    {t('sensitiveDataPoliciesTab.form.intervalMinutes', {
+                      defaultValue: 'Interval (minutes)',
+                    })}
+                  </label>
                   <input
                     type="number"
                     min={5}
@@ -292,11 +378,17 @@ export default function PoliciesTab() {
               )}
               {form.scheduleType === 'cron' && (
                 <div>
-                  <label className="text-sm font-medium">Cron Expression</label>
+                  <label className="text-sm font-medium">
+                    {t('sensitiveDataPoliciesTab.form.cronExpression', {
+                      defaultValue: 'Cron Expression',
+                    })}
+                  </label>
                   <input
                     value={form.cron}
                     onChange={(e) => setForm((prev) => ({ ...prev, cron: e.target.value }))}
-                    placeholder="0 2 * * *"
+                    placeholder={t('sensitiveDataPoliciesTab.form.cronPlaceholder', {
+                      defaultValue: '0 2 * * *',
+                    })}
                     className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
                   />
                 </div>
@@ -305,7 +397,7 @@ export default function PoliciesTab() {
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <button type="button" onClick={() => setShowForm(false)} className="h-9 rounded-md border px-4 text-sm font-medium hover:bg-muted">
-              Cancel
+              {t('common:actions.cancel', { defaultValue: 'Cancel' })}
             </button>
             <button
               type="button"
@@ -313,7 +405,11 @@ export default function PoliciesTab() {
               disabled={saving || !form.name.trim()}
               className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
-              {saving ? 'Saving...' : editingId ? 'Update' : 'Create'}
+              {saving
+                ? t('sensitiveDataPoliciesTab.actions.saving', { defaultValue: 'Saving...' })
+                : editingId
+                  ? t('sensitiveDataPoliciesTab.actions.update', { defaultValue: 'Update' })
+                  : t('common:actions.create', { defaultValue: 'Create' })}
             </button>
           </div>
         </div>
@@ -324,11 +420,11 @@ export default function PoliciesTab() {
         <table className="min-w-full divide-y">
           <thead className="bg-muted/40">
             <tr className="text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Detection Classes</th>
-              <th className="px-4 py-3">Schedule</th>
-              <th className="px-4 py-3">Active</th>
-              <th className="px-4 py-3 text-right">Actions</th>
+              <th className="px-4 py-3">{t('sensitiveDataPoliciesTab.table.name', { defaultValue: 'Name' })}</th>
+              <th className="px-4 py-3">{t('sensitiveDataPoliciesTab.table.detectionClasses', { defaultValue: 'Detection Classes' })}</th>
+              <th className="px-4 py-3">{t('sensitiveDataPoliciesTab.table.schedule', { defaultValue: 'Schedule' })}</th>
+              <th className="px-4 py-3">{t('sensitiveDataPoliciesTab.table.active', { defaultValue: 'Active' })}</th>
+              <th className="px-4 py-3 text-right">{t('sensitiveDataPoliciesTab.table.actions', { defaultValue: 'Actions' })}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -342,7 +438,9 @@ export default function PoliciesTab() {
             {!loading && policies.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  No policies yet. Create one to get started.
+                  {t('sensitiveDataPoliciesTab.empty', {
+                    defaultValue: 'No policies yet. Create one to get started.',
+                  })}
                 </td>
               </tr>
             )}
@@ -350,10 +448,13 @@ export default function PoliciesTab() {
               const classes = Array.isArray(policy.detectionClasses) ? policy.detectionClasses as string[] : [];
               const schedule = policy.schedule as Record<string, unknown> | null;
               const scheduleLabel = schedule?.type === 'interval'
-                ? `Every ${schedule.intervalMinutes}m`
+                ? t('sensitiveDataPoliciesTab.schedule.everyMinutes', {
+                    defaultValue: 'Every {{minutes}}m',
+                    minutes: schedule.intervalMinutes,
+                  })
                 : schedule?.type === 'cron'
                   ? String(schedule.cron ?? 'cron')
-                  : 'Manual';
+                  : t('sensitiveDataPoliciesTab.schedule.manual', { defaultValue: 'Manual' });
 
               return (
                 <tr key={policy.id} className="text-sm hover:bg-muted/20">
@@ -363,11 +464,14 @@ export default function PoliciesTab() {
                       {policy.orgId === null && (
                         <span
                           className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
-                          title="Partner-wide policy — scans devices in every organization"
+                          title={t('sensitiveDataPoliciesTab.badges.partnerWideTitle', {
+                            defaultValue:
+                              'Partner-wide policy — scans devices in every organization',
+                          })}
                           data-testid="sensitive-policy-partner-wide-badge"
                         >
-                          <Globe className="h-3 w-3" />
-                          All orgs
+                          <Layers className="h-3 w-3" />
+                          {t('sensitiveDataPoliciesTab.badges.allOrgs', { defaultValue: 'All orgs' })}
                         </span>
                       )}
                     </div>
@@ -423,9 +527,13 @@ export default function PoliciesTab() {
       open={deleteTarget !== null}
       onClose={() => setDeleteTarget(null)}
       onConfirm={handleConfirmDelete}
-      title="Delete Scan Policy"
-      message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone and any scheduled scans under this policy will stop.`}
-      confirmLabel="Delete Policy"
+      title={t('sensitiveDataPoliciesTab.deleteDialog.title', { defaultValue: 'Delete Scan Policy' })}
+      message={t('sensitiveDataPoliciesTab.deleteDialog.message', {
+        defaultValue:
+          'Are you sure you want to delete "{{name}}"? This action cannot be undone and any scheduled scans under this policy will stop.',
+        name: deleteTarget?.name,
+      })}
+      confirmLabel={t('sensitiveDataPoliciesTab.deleteDialog.confirm', { defaultValue: 'Delete Policy' })}
       variant="destructive"
       isLoading={deleting}
     />

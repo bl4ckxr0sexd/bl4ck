@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean, jsonb, pgEnum, integer, real, bigint, date, primaryKey, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, boolean, jsonb, pgEnum, integer, real, bigint, date, primaryKey, index, unique, uniqueIndex } from 'drizzle-orm/pg-core';
 import { organizations, sites } from './orgs';
 import { users } from './users';
 import type { BatteryStatus, DesktopAccessState, InterfaceBandwidth, TCCPermissions, VpnPresence } from '@breeze/shared';
@@ -27,6 +27,13 @@ export const devices = pgTable('devices', {
   helperTokenIssuedAt: timestamp('helper_token_issued_at', { withTimezone: true }),
   previousHelperTokenHash: varchar('previous_helper_token_hash', { length: 64 }),
   previousHelperTokenExpiresAt: timestamp('previous_helper_token_expires_at', { withTimezone: true }),
+  // Issue #2621 — staged credentials for a two-phase rotation. These hashes are
+  // accepted for auth while pending, but only become current once the agent
+  // confirms it durably persisted the matching plaintext.
+  pendingTokenHash: varchar('pending_token_hash', { length: 64 }),
+  pendingWatchdogTokenHash: varchar('pending_watchdog_token_hash', { length: 64 }),
+  pendingHelperTokenHash: varchar('pending_helper_token_hash', { length: 64 }),
+  pendingTokenExpiresAt: timestamp('pending_token_expires_at', { withTimezone: true }),
   mtlsCertSerialNumber: varchar('mtls_cert_serial_number', { length: 128 }),
   mtlsCertExpiresAt: timestamp('mtls_cert_expires_at'),
   mtlsCertIssuedAt: timestamp('mtls_cert_issued_at'),
@@ -44,6 +51,9 @@ export const devices = pgTable('devices', {
   // dedup) and update this column fire-and-forget so the next request can
   // compare.
   lastSeenIp: varchar('last_seen_ip', { length: 45 }),
+  // Public IP the agent enrolled from (point-in-time; lastSeenIp above tracks
+  // the ongoing value). Feeds the abuse-signals sweep's IP-spread heuristics.
+  enrollmentIp: varchar('enrollment_ip', { length: 45 }),
   hostname: varchar('hostname', { length: 255 }).notNull(),
   displayName: varchar('display_name', { length: 255 }),
   osType: osTypeEnum('os_type').notNull(),
@@ -66,6 +76,21 @@ export const devices = pgTable('devices', {
   lastSeenAt: timestamp('last_seen_at'),
   enrolledAt: timestamp('enrolled_at').defaultNow().notNull(),
   enrolledBy: uuid('enrolled_by').references(() => users.id),
+  // Linked device profiles for multi-boot systems (#2138). NULL => unlinked.
+  // When set, the device is one boot profile of a physical machine grouped in
+  // `device_link_groups`. A composite FK (link_group_id, org_id) ->
+  // device_link_groups(id, org_id) — declared in the migration, not here,
+  // matching the users(org_id, partner_id) composite-FK convention — pins every
+  // member of a group to the group's org (same-org invariant).
+  linkGroupId: uuid('link_group_id'),
+  // Member role within an ASYMMETRIC link group (#2308). NULL for unlinked
+  // devices and for members of symmetric kinds (multiboot — all peers). For a
+  // kind='vm_host' group exactly one member is 'host' (the hypervisor/server
+  // record) and the rest are 'guest' (its VMs). Values are app-enforced
+  // ('host' | 'guest'), matching kind's varchar-without-CHECK convention.
+  // Invariant: link_group_id IS NULL => link_group_role IS NULL (every unlink
+  // path clears both together).
+  linkGroupRole: varchar('link_group_role', { length: 16 }),
   tags: text('tags').array().default([]),
   customFields: jsonb('custom_fields').default({}),
   managementPosture: jsonb('management_posture'),
@@ -96,6 +121,9 @@ export const devices = pgTable('devices', {
   watchdogStatus: watchdogStatusEnum('watchdog_status'),
   watchdogLastSeen: timestamp('watchdog_last_seen'),
   watchdogVersion: varchar('watchdog_version', { length: 50 }),
+  // #2288 — the control-plane URL the agent last heartbeated to. Reported by
+  // the agent; shows fleet position during a server URL migration.
+  agentServerUrl: varchar('agent_server_url', { length: 512 }),
   // Asymmetry detector (#800): set when the watchdog is still reporting
   // in but the main agent has gone silent past the offline threshold.
   // Cleared when the main agent next heartbeats. Distinct from
@@ -104,8 +132,38 @@ export const devices = pgTable('devices', {
   // their support workflow is "remote restart" not "physical visit."
   mainAgentSilentSince: timestamp('main_agent_silent_since'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  partnerExportUpdatedAt: timestamp('partner_export_updated_at', { precision: 3 }).defaultNow().notNull()
+}, (table) => ({
+  idOrgUnique: uniqueIndex('devices_id_org_id_uniq').on(table.id, table.orgId),
+}));
+
+// Linked device profiles for multi-boot systems (#2138). One row per physical
+// machine whose OS boot profiles are surfaced as separate device records. This
+// is a NON-destructive UI/monitoring overlay — the linked device rows keep all
+// of their own inventory/software/scripts/history/audit. Shape 1 (direct
+// org_id): auto-discovered by the rls-coverage contract test. Membership lives
+// on `devices.link_group_id` (one group per device), not a child table.
+export const deviceLinkGroups = pgTable('device_link_groups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  // What the link MEANS. 'multiboot' (v1, #2138): members are peer boot
+  // profiles of one physical machine. 'vm_host' (#2308): asymmetric — one
+  // member is the host server (devices.link_group_role = 'host') and the rest
+  // are its guest VMs ('guest'), nested under the host in the device list.
+  kind: varchar('kind', { length: 32 }).notNull().default('multiboot'),
+  name: varchar('name', { length: 255 }),
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull()
-});
+}, (table) => ({
+  orgIdIdx: index('device_link_groups_org_id_idx').on(table.orgId),
+  // UNIQUE INDEX (not a constraint) to match the migration's
+  // `CREATE UNIQUE INDEX` and satisfy db:check-drift — same convention as the
+  // pax8/ticketMailbox composite-(id, axis) FK targets. Backs the composite FK
+  // devices(link_group_id, org_id) -> device_link_groups(id, org_id).
+  idOrgUnique: uniqueIndex('device_link_groups_id_org_id_uniq').on(table.id, table.orgId),
+}));
 
 export const deviceHardware = pgTable('device_hardware', {
   deviceId: uuid('device_id').primaryKey().references(() => devices.id),
@@ -123,15 +181,45 @@ export const deviceHardware = pgTable('device_hardware', {
   motherboardProduct: varchar('motherboard_product', { length: 255 }),
   motherboardVersion: varchar('motherboard_version', { length: 255 }),
   biosVersion: varchar('bios_version', { length: 100 }),
-  updatedAt: timestamp('updated_at').defaultNow().notNull()
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  partnerExportUpdatedAt: timestamp('partner_export_updated_at', { precision: 3 }).defaultNow().notNull()
 });
+
+// Resource-specific material fingerprints for reconstruction exports. Deferred
+// database triggers refresh these only when the final durable child state has
+// actually changed, so periodic delete/reinsert inventory collection and
+// heartbeat fields do not create false incremental changes.
+export const partnerExportDeviceMaterialState = pgTable('partner_export_device_material_state', {
+  deviceId: uuid('device_id').primaryKey().references(() => devices.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  inventoryUpdatedAt: timestamp('inventory_updated_at', { precision: 3 }).defaultNow().notNull(),
+  softwareUpdatedAt: timestamp('software_updated_at', { precision: 3 }).defaultNow().notNull(),
+  relationshipsUpdatedAt: timestamp('relationships_updated_at', { precision: 3 }).defaultNow().notNull(),
+}, (table) => ({
+  orgIdIdx: index('partner_export_device_material_state_org_id_idx').on(table.orgId),
+  orgDeviceUnique: uniqueIndex('partner_export_device_material_state_org_device_uniq').on(table.orgId, table.deviceId),
+}));
+
+export const partnerExportSiteMaterialState = pgTable('partner_export_site_material_state', {
+  siteId: uuid('site_id').primaryKey().references(() => sites.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  inventoryUpdatedAt: timestamp('inventory_updated_at', { precision: 3 }).defaultNow().notNull(),
+  relationshipsUpdatedAt: timestamp('relationships_updated_at', { precision: 3 }).defaultNow().notNull(),
+}, (table) => ({
+  orgIdIdx: index('partner_export_site_material_state_org_id_idx').on(table.orgId),
+  orgSiteUnique: uniqueIndex('partner_export_site_material_state_org_site_uniq').on(table.orgId, table.siteId),
+}));
 
 export const deviceNetwork = pgTable('device_network', {
   id: uuid('id').primaryKey().defaultRandom(),
   deviceId: uuid('device_id').notNull().references(() => devices.id),
   orgId: uuid('org_id').notNull().references(() => organizations.id),
   interfaceName: text('interface_name').notNull(),
-  macAddress: varchar('mac_address', { length: 17 }),
+  // 64 (not 17) to fit Windows pseudo-interface (Teredo/ISATAP) and
+  // InfiniBand EUI-64 / tunnel MACs — matches the agent payload schema's
+  // z.string().max(64) (see routes/agents/schemas.ts). See migration
+  // 2026-08-04-widen-device-mac-address-columns.sql (Sentry BREEZE-3).
+  macAddress: varchar('mac_address', { length: 64 }),
   ipAddress: varchar('ip_address', { length: 45 }),
   ipType: varchar('ip_type', { length: 4 }).notNull().default('ipv4'),
   isPrimary: boolean('is_primary').notNull().default(false),
@@ -147,7 +235,10 @@ export const deviceIpHistory = pgTable('device_ip_history', {
   ipAddress: varchar('ip_address', { length: 45 }).notNull(),
   ipType: varchar('ip_type', { length: 4 }).notNull().default('ipv4'),
   assignmentType: ipAssignmentTypeEnum('assignment_type').notNull().default('unknown'),
-  macAddress: varchar('mac_address', { length: 17 }),
+  // 64 to match device_network.mac_address — same agent-reported hardware
+  // addresses (Teredo/ISATAP/InfiniBand can exceed 17 chars). See migration
+  // 2026-08-04-widen-device-mac-address-columns.sql.
+  macAddress: varchar('mac_address', { length: 64 }),
   subnetMask: varchar('subnet_mask', { length: 45 }),
   gateway: varchar('gateway', { length: 45 }),
   dnsServers: text('dns_servers').array(),

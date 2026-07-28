@@ -36,11 +36,42 @@ export function computeLineTotal(quantity: string | number, unitPrice: string | 
   return fromCents(roundHalfUp(fractionalCents));
 }
 
-export type QuoteDepositType = 'none' | 'percent' | 'selected_lines';
-export interface QuoteDepositConfig {
-  type: QuoteDepositType;
-  /** Required for type 'percent'. Whole-percent scale (30 = 30%), 2dp. */
-  percent?: number | string | null;
+/**
+ * Deposit config as a discriminated union so illegal states ({ type: 'percent' }
+ * with no percent, or a percent on a non-percent type) are unrepresentable at
+ * compile time. Mirrors the QuoteDepositValidation union below.
+ */
+export type QuoteDepositConfig =
+  /** No deposit. */
+  | { type: 'none' }
+  /** Whole-percent scale (30 = 30%), 2dp. May be NaN when normalized from a
+   *  missing/blank source value — validateQuoteDeposit rejects it and
+   *  computeQuoteTotals treats it as "no deposit" (both gate on isFinite). */
+  | { type: 'percent'; percent: number }
+  /** Eligibility lives on the lines (QuoteLineForMath.depositEligible). */
+  | { type: 'selected_lines' };
+
+export type QuoteDepositType = QuoteDepositConfig['type'];
+
+/**
+ * Normalize the flat persisted/wire pair (deposit_type, deposit_percent) into
+ * the union. The DB and API keep the flat columns/fields — this is the single
+ * read-boundary adapter, so construction sites don't hand-build literals.
+ * A missing/blank percent on a 'percent' deposit becomes NaN (NOT a silent
+ * 'none'): validateQuoteDeposit must still fail it with DEPOSIT_PERCENT_INVALID,
+ * exactly as the pre-union code did.
+ */
+export function toQuoteDepositConfig(
+  type: QuoteDepositType | null | undefined,
+  percent: number | string | null | undefined,
+): QuoteDepositConfig {
+  if (type === 'percent') {
+    const blank = percent === null || percent === undefined
+      || (typeof percent === 'string' && percent.trim() === '');
+    return { type: 'percent', percent: blank ? Number.NaN : Number(percent) };
+  }
+  if (type === 'selected_lines') return { type: 'selected_lines' };
+  return { type: 'none' };
 }
 
 export interface QuoteLineForMath {
@@ -125,9 +156,11 @@ export function computeQuoteTotals(
 
   let depositCents: number | null = null;
   if (deposit && deposit.type === 'percent') {
-    const pct = Number(deposit.percent);
-    if (Number.isFinite(pct) && pct > 0) {
-      depositCents = Math.floor(dueOnAcceptanceCents * (pct / 100) + 0.5);
+    // The union guarantees a number, but not a *sane* one (NaN from a blank
+    // normalized source, or ≤0 from an unvalidated caller) — money code keeps
+    // the finite-positive gate rather than trusting compile-time alone.
+    if (Number.isFinite(deposit.percent) && deposit.percent > 0) {
+      depositCents = Math.floor(dueOnAcceptanceCents * (deposit.percent / 100) + 0.5);
     }
   } else if (deposit && deposit.type === 'selected_lines') {
     depositCents = eligibleCents + Math.floor(eligibleTaxableCents * rate + 0.5);
@@ -176,7 +209,7 @@ export function validateQuoteDeposit(
       message: 'A deposit needs at least one one-time, customer-visible line' };
   }
   if (deposit.type === 'percent') {
-    const pct = Number(deposit.percent);
+    const pct = deposit.percent;
     if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
       return { ok: false, code: 'DEPOSIT_PERCENT_INVALID', message: 'Deposit percent must be between 0 and 100 (exclusive)' };
     }
@@ -216,14 +249,33 @@ export interface QuoteProfit {
   monthlyRecurringNet: string;
   annualRecurringNet: string;
   totalCost: string;
+  /**
+   * Revenue (pre-tax) that the net figures above were computed from, split by
+   * the same cadence — ONLY lines that have a cost (a line missing cost
+   * contributes to neither the net nor the revenue here, same exclusion as
+   * `linesMissingCost`). This is the denominator for a margin percent
+   * (net / revenue · 100, see `marginPct`); a cadence with no cost-bearing
+   * lines yields '0.00', which is how callers detect "nothing to compute a
+   * percent from" rather than showing a misleading 0%.
+   */
+  oneTimeRevenue: string;
+  monthlyRecurringRevenue: string;
+  annualRecurringRevenue: string;
   /** Count of billed lines with no cost — excluded from net, so the figure is partial. */
   linesMissingCost: number;
 }
 
 /** Net = revenue − cost, EXCLUDING tax, over billed (customerVisible) lines, split
- *  by cadence. Lines with no unitCost are excluded and counted in linesMissingCost. */
+ *  by cadence. Lines with no unitCost (null/undefined/empty string — never entered)
+ *  are excluded and counted in linesMissingCost. An EXPLICIT cost of 0 (e.g. a
+ *  labor/service line deliberately marked "no cost" — Task B1) is NOT missing:
+ *  it's a real, known cost of $0, so the line counts fully toward net (net =
+ *  full revenue) and is never counted in linesMissingCost. Only the string
+ *  `l.unitCost === null | undefined | ''` triggers the exclusion below — '0'/'0.00'
+ *  fails that check and falls through to the normal cents math. */
 export function computeQuoteProfit(lines: QuoteLineForMath[]): QuoteProfit {
   let oneTimeNet = 0, monthlyNet = 0, annualNet = 0, totalCost = 0, missing = 0;
+  let oneTimeRevenue = 0, monthlyRevenue = 0, annualRevenue = 0;
   for (const l of lines) {
     if (!l.customerVisible) continue;
     if (l.unitCost === null || l.unitCost === undefined || l.unitCost === '') { missing++; continue; }
@@ -231,15 +283,31 @@ export function computeQuoteProfit(lines: QuoteLineForMath[]): QuoteProfit {
     const costCents = toCents(computeLineTotal(l.quantity, l.unitCost));
     const netCents = revenueCents - costCents;
     totalCost += costCents;
-    if (l.recurrence === 'monthly') monthlyNet += netCents;
-    else if (l.recurrence === 'annual') annualNet += netCents;
-    else oneTimeNet += netCents;
+    if (l.recurrence === 'monthly') { monthlyNet += netCents; monthlyRevenue += revenueCents; }
+    else if (l.recurrence === 'annual') { annualNet += netCents; annualRevenue += revenueCents; }
+    else { oneTimeNet += netCents; oneTimeRevenue += revenueCents; }
   }
   return {
     oneTimeNet: fromCents(oneTimeNet),
     monthlyRecurringNet: fromCents(monthlyNet),
     annualRecurringNet: fromCents(annualNet),
     totalCost: fromCents(totalCost),
+    oneTimeRevenue: fromCents(oneTimeRevenue),
+    monthlyRecurringRevenue: fromCents(monthlyRevenue),
+    annualRecurringRevenue: fromCents(annualRevenue),
     linesMissingCost: missing,
   };
+}
+
+/**
+ * Profit MARGIN = net / revenue · 100 — NOT markup (net / cost). Null when
+ * revenue is zero, negative, or non-finite, which also covers "no cost-bearing
+ * lines in this cadence" (computeQuoteProfit's revenue fields are 0 in that
+ * case) — callers use null to suppress the percent instead of showing a
+ * misleading 0% or NaN.
+ */
+export function marginPct(net: string | number, revenue: string | number): number | null {
+  const n = Number(net); const r = Number(revenue);
+  if (!Number.isFinite(n) || !Number.isFinite(r) || r <= 0) return null;
+  return (n / r) * 100;
 }

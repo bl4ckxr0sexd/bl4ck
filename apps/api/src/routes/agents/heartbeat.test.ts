@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 
 // ---------- mocks ----------
@@ -78,6 +78,18 @@ vi.mock('../../db/schema', () => ({
     version: 'agent_versions.version',
     createdAt: 'agent_versions.created_at',
   },
+  // Resolved via a dynamic import inside PUT /:id/monitoring-results.
+  serviceProcessCheckResults: {
+    orgId: 'service_process_check_results.org_id',
+    deviceId: 'service_process_check_results.device_id',
+    details: 'service_process_check_results.details',
+  },
+}));
+
+// Same route dynamically imports getRedis; null disables the failure-counter
+// branch so the test focuses on what is persisted.
+vi.mock('../../services/redis', () => ({
+  getRedis: vi.fn(() => null),
 }));
 
 // Heartbeat schema is large — bypass it by stubbing the validator to make
@@ -110,6 +122,11 @@ vi.mock('./helpers', () => ({
   buildHelperConfigUpdate: vi.fn(() => undefined),
   buildPamConfigUpdate: vi.fn(async () => ({ uacInterceptionEnabled: false })),
   buildPatchSourceConfigUpdate: vi.fn(async () => ({ exclusiveWindowsUpdate: false })),
+  // Null = no onedrive policy for the device. Tests that exercise delivery
+  // override this per-test. Omitting it entirely would make every heartbeat
+  // test silently exercise only the builder-throws path (undefined is not a
+  // function) — which is how the delivery merge went untested pre-#2322-review.
+  buildOnedriveHelperConfigUpdate: vi.fn(async () => null),
   // Permissive default (staged + no window = upgrade anytime) and no version
   // pins (issue #2124), so the upgrade gating is transparent to tests that don't
   // care about the org policy. The heartbeat resolves BOTH from this one call.
@@ -131,8 +148,17 @@ vi.mock('../../services/deviceIpHistory', () => ({
   processDeviceIPHistoryUpdate: vi.fn(),
 }));
 
+const claimPendingCommandsForDeviceMock = vi.fn(async (): Promise<unknown[]> => []);
+const releaseClaimedCommandDeliveryMock = vi.fn(async () => undefined);
+
+// Only claim/release are mocked; the batch decrypt-and-release helper
+// (services/commandDelivery, #2414) runs for real so the heartbeat tests below
+// exercise the actual release-on-decrypt-failure behavior.
 vi.mock('../../services/commandDispatch', () => ({
-  claimPendingCommandsForDevice: vi.fn(async () => []),
+  claimPendingCommandsForDevice: (...args: unknown[]) =>
+    claimPendingCommandsForDeviceMock(...(args as [])),
+  releaseClaimedCommandDelivery: (...args: unknown[]) =>
+    releaseClaimedCommandDeliveryMock(...(args as [])),
 }));
 
 vi.mock('../../services/eventBus', () => ({
@@ -183,6 +209,19 @@ function selectChainResolving(value: unknown) {
   };
 }
 
+// A `where(...)` result for the db.update chain that is BOTH awaitable (the
+// watchdog-branch update and any caller that ignores the result) AND carries a
+// `.returning()` method (the guarded main-branch update reads back whether a
+// row actually changed — finding #10 state-transition audit). `returningRows`
+// defaults to one row so the guarded write reads as "took effect"; pass `[]` to
+// model a terminal-status device whose guarded update matched 0 rows.
+function whereResultWithReturning(returningRows: unknown[] = [{ id: 'device-1' }]) {
+  const result: Promise<undefined> & { returning?: ReturnType<typeof vi.fn> } =
+    Promise.resolve(undefined);
+  result.returning = vi.fn().mockResolvedValue(returningRows);
+  return result;
+}
+
 function buildApp(): Hono {
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -215,6 +254,25 @@ function buildWatchdogApp(): Hono {
   return app;
 }
 
+// #2774 — an offboarding tenant's agent authenticates but is narrowed to
+// self_uninstall delivery. agentAuthMiddleware sets `tenantDraining`.
+function buildDrainingApp(role: 'agent' | 'watchdog' = 'agent'): Hono {
+  const app = new Hono();
+  app.use('*', async (c, next) => {
+    c.set('agent', {
+      deviceId: 'device-1',
+      agentId: 'agent-1',
+      orgId: 'org-1',
+      siteId: 'site-1',
+      role,
+      tenantDraining: true,
+    });
+    await next();
+  });
+  app.route('/agents', heartbeatRoutes);
+  return app;
+}
+
 const minimalHeartbeatBody = {
   agentVersion: '0.65.10',
   metrics: {
@@ -225,6 +283,16 @@ const minimalHeartbeatBody = {
     diskUsedGb: 30,
   },
 };
+
+const originalAgentBackupServerUrl = process.env.AGENT_BACKUP_SERVER_URL;
+
+afterEach(() => {
+  if (originalAgentBackupServerUrl === undefined) {
+    delete process.env.AGENT_BACKUP_SERVER_URL;
+  } else {
+    process.env.AGENT_BACKUP_SERVER_URL = originalAgentBackupServerUrl;
+  }
+});
 
 describe('POST /agents/:id/heartbeat — manifestTrustKeys delivery (#639)', () => {
   beforeEach(() => {
@@ -254,7 +322,7 @@ describe('POST /agents/:id/heartbeat — manifestTrustKeys delivery (#639)', () 
     // db.update for devices → no return needed
     updateMock.mockReturnValue({
       set: vi.fn(() => ({
-        where: vi.fn().mockResolvedValue(undefined),
+        where: vi.fn(() => whereResultWithReturning()),
       })),
     });
 
@@ -300,6 +368,38 @@ describe('POST /agents/:id/heartbeat — manifestTrustKeys delivery (#639)', () 
     expect(resp.status).toBe(200);
     const body = (await resp.json()) as Record<string, unknown>;
     expect(body.manifestTrustKeys).toEqual([]);
+  });
+
+  it('always includes backup_server_url in configUpdate — value when env set', async () => {
+    process.env.AGENT_BACKUP_SERVER_URL = 'https://new.example.com';
+    getActiveTrustKeysetMock.mockResolvedValue([]);
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as Record<string, unknown>;
+    const configUpdate = body.configUpdate as Record<string, unknown>;
+    expect(configUpdate.backup_server_url).toBe('https://new.example.com');
+  });
+
+  it('always includes backup_server_url in configUpdate — empty string when env unset (clear signal)', async () => {
+    delete process.env.AGENT_BACKUP_SERVER_URL;
+    getActiveTrustKeysetMock.mockResolvedValue([]);
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as Record<string, unknown>;
+    const configUpdate = body.configUpdate as Record<string, unknown>;
+    expect(configUpdate.backup_server_url).toBe('');
   });
 
   it('#1105: fetches the trust keyset AFTER the org DB context is released (not while holding the tx)', async () => {
@@ -376,7 +476,7 @@ describe('POST /agents/:id/heartbeat — main-agent-silent asymmetry detector (#
       ]),
     );
 
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     updateMock.mockReturnValue({ set: setSpy });
 
     selectMock.mockReturnValue(selectChainResolving([])); // agentVersions etc
@@ -422,7 +522,7 @@ describe('POST /agents/:id/heartbeat — main-agent-silent asymmetry detector (#
         },
       ]),
     );
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     updateMock.mockReturnValue({ set: setSpy });
     selectMock.mockReturnValue(selectChainResolving([]));
 
@@ -452,7 +552,7 @@ describe('POST /agents/:id/heartbeat — main-agent-silent asymmetry detector (#
         },
       ]),
     );
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     updateMock.mockReturnValue({ set: setSpy });
     selectMock.mockReturnValue(selectChainResolving([]));
 
@@ -486,7 +586,7 @@ describe('POST /agents/:id/heartbeat — main-agent-silent asymmetry detector (#
         },
       ]),
     );
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     updateMock.mockReturnValue({ set: setSpy });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
     selectMock.mockReturnValue(selectChainResolving([]));
@@ -518,7 +618,7 @@ describe('POST /agents/:id/heartbeat — main-agent-silent asymmetry detector (#
         },
       ]),
     );
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     updateMock.mockReturnValue({ set: setSpy });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
     selectMock.mockReturnValue(selectChainResolving([]));
@@ -563,8 +663,13 @@ describe('POST /agents/:id/heartbeat — watchdog restart-stats logging (#799)',
   let capturedInsertTable: unknown;
   let capturedInsertValues: unknown;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+
+    // The restart-log dedupe cache is module-global; clear it so each test
+    // sees first-occurrence behavior.
+    const { resetWatchdogRestartLogCacheForTests } = await import('./heartbeat');
+    resetWatchdogRestartLogCacheForTests();
 
     // Device lookup → returns a row with watchdog columns.
     selectMock.mockReturnValueOnce(
@@ -574,7 +679,7 @@ describe('POST /agents/:id/heartbeat — watchdog restart-stats logging (#799)',
     // db.update for devices (watchdog status update) → no return needed.
     updateMock.mockReturnValue({
       set: vi.fn(() => ({
-        where: vi.fn().mockResolvedValue(undefined),
+        where: vi.fn(() => whereResultWithReturning()),
       })),
     });
 
@@ -661,6 +766,184 @@ describe('POST /agents/:id/heartbeat — watchdog restart-stats logging (#799)',
     expect(capturedInsertTable).toBeUndefined();
     expect(capturedInsertValues).toBeUndefined();
   });
+
+  it('suppresses a repeat heartbeat with an identical restart signature (flap-log dedupe)', async () => {
+    const body = JSON.stringify({
+      role: 'watchdog',
+      agentVersion: '0.65.20',
+      watchdogState: 'FAILOVER',
+      mainAgentRestartCount24h: 5,
+      mainAgentLastRestartAt: '2026-05-22T10:00:00Z',
+      flapDetected: true,
+    });
+    const app = buildWatchdogApp();
+
+    const first = await app.request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    expect(first.status).toBe(200);
+    expect(capturedInsertValues).toBeDefined();
+
+    // Same signature 30s later must not write another row.
+    capturedInsertTable = undefined;
+    capturedInsertValues = undefined;
+    selectMock.mockReturnValueOnce(selectChainResolving([watchdogDeviceRow]));
+    const second = await app.request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    expect(second.status).toBe(200);
+    expect(capturedInsertTable).toBeUndefined();
+    expect(capturedInsertValues).toBeUndefined();
+  });
+
+  it('a failed insert does not consume the dedupe slot — next heartbeat retries', async () => {
+    // First request: the agentLogs insert rejects (transient DB error).
+    insertMock.mockImplementationOnce(() => ({
+      values: vi.fn(() => Promise.reject(new Error('db down'))),
+    }));
+    const body = JSON.stringify({
+      role: 'watchdog',
+      agentVersion: '0.65.20',
+      watchdogState: 'FAILOVER',
+      mainAgentRestartCount24h: 5,
+      mainAgentLastRestartAt: '2026-05-22T10:00:00Z',
+      flapDetected: true,
+    });
+    const app = buildWatchdogApp();
+    const first = await app.request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    expect(first.status).toBe(200); // insert failure is swallowed
+    expect(capturedInsertValues).toBeUndefined();
+
+    // Identical signature 30s later must be retried and land.
+    selectMock.mockReturnValueOnce(selectChainResolving([watchdogDeviceRow]));
+    const second = await app.request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    expect(second.status).toBe(200);
+    expect(capturedInsertValues).toBeDefined();
+    expect((capturedInsertValues as Record<string, unknown>).level).toBe('error');
+  });
+
+  it('writes again when the restart signature changes', async () => {
+    const app = buildWatchdogApp();
+    const first = await app.request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        role: 'watchdog',
+        agentVersion: '0.65.20',
+        watchdogState: 'RECOVERING',
+        mainAgentRestartCount24h: 3,
+        mainAgentLastRestartAt: '2026-05-22T10:00:00Z',
+        flapDetected: false,
+      }),
+    });
+    expect(first.status).toBe(200);
+    expect(capturedInsertValues).toBeDefined();
+
+    capturedInsertTable = undefined;
+    capturedInsertValues = undefined;
+    selectMock.mockReturnValueOnce(selectChainResolving([watchdogDeviceRow]));
+    const second = await app.request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        role: 'watchdog',
+        agentVersion: '0.65.20',
+        watchdogState: 'RECOVERING',
+        mainAgentRestartCount24h: 4,
+        mainAgentLastRestartAt: '2026-05-22T11:00:00Z',
+        flapDetected: false,
+      }),
+    });
+    expect(second.status).toBe(200);
+    const vals = capturedInsertValues as Record<string, unknown>;
+    expect(vals).toBeDefined();
+    expect((vals.fields as Record<string, unknown>).count24h).toBe(4);
+  });
+});
+
+describe('shouldLogWatchdogRestartActivity (flap-log dedupe unit)', () => {
+  beforeEach(async () => {
+    const { resetWatchdogRestartLogCacheForTests } = await import('./heartbeat');
+    resetWatchdogRestartLogCacheForTests();
+  });
+
+  it('logs first occurrence, suppresses identical signature within the hour, re-logs after', async () => {
+    const {
+      shouldLogWatchdogRestartActivity: shouldLog,
+      markWatchdogRestartActivityLogged: mark,
+    } = await import('./heartbeat');
+    const t0 = 1_000_000;
+    expect(shouldLog('dev-a', '5|true|x', t0)).toBe(true);
+    mark('dev-a', '5|true|x', t0);
+    expect(shouldLog('dev-a', '5|true|x', t0 + 30_000)).toBe(false);
+    expect(shouldLog('dev-a', '5|true|x', t0 + 59 * 60_000)).toBe(false);
+    // Hourly keep-alive: same signature past the interval logs again.
+    expect(shouldLog('dev-a', '5|true|x', t0 + 61 * 60_000)).toBe(true);
+  });
+
+  it('an unmarked check does not suppress — a failed insert stays retryable', async () => {
+    const { shouldLogWatchdogRestartActivity: shouldLog } = await import('./heartbeat');
+    const t0 = 1_000_000;
+    expect(shouldLog('dev-a', '5|true|x', t0)).toBe(true);
+    // No mark (insert failed) → the next heartbeat retries.
+    expect(shouldLog('dev-a', '5|true|x', t0 + 30_000)).toBe(true);
+  });
+
+  it('a changed signature logs immediately and devices are independent', async () => {
+    const {
+      shouldLogWatchdogRestartActivity: shouldLog,
+      markWatchdogRestartActivityLogged: mark,
+    } = await import('./heartbeat');
+    const t0 = 1_000_000;
+    expect(shouldLog('dev-a', '3|false|x', t0)).toBe(true);
+    mark('dev-a', '3|false|x', t0);
+    expect(shouldLog('dev-a', '4|false|y', t0 + 1_000)).toBe(true);
+    mark('dev-a', '4|false|y', t0 + 1_000);
+    // Different device with the same signature is not deduped against dev-a.
+    expect(shouldLog('dev-b', '4|false|y', t0 + 2_000)).toBe(true);
+    // Suppression re-arms after each write.
+    expect(shouldLog('dev-a', '4|false|y', t0 + 3_000)).toBe(false);
+  });
+
+  it('bounds the cache: a capacity insert prunes >24h-stale entries', async () => {
+    const {
+      markWatchdogRestartActivityLogged: mark,
+      watchdogRestartLogCacheSizeForTests: cacheSize,
+    } = await import('./heartbeat');
+    const t0 = 1_000_000;
+    for (let i = 0; i < 10_000; i++) mark(`dev-${i}`, 'sig', t0);
+    expect(cacheSize()).toBe(10_000);
+    mark('dev-new', 'sig', t0 + 25 * 60 * 60_000);
+    // Every stale entry pruned; only the new one remains.
+    expect(cacheSize()).toBe(1);
+  });
+
+  it('bounds the cache when all entries are fresh: evicts oldest-inserted', async () => {
+    const {
+      shouldLogWatchdogRestartActivity: shouldLog,
+      markWatchdogRestartActivityLogged: mark,
+      watchdogRestartLogCacheSizeForTests: cacheSize,
+    } = await import('./heartbeat');
+    const t0 = 1_000_000;
+    for (let i = 0; i < 10_000; i++) mark(`dev-${i}`, 'sig', t0);
+    mark('dev-new', 'sig', t0 + 60_000);
+    expect(cacheSize()).toBe(10_000);
+    // dev-0 (oldest-inserted) was evicted → no longer suppressed.
+    expect(shouldLog('dev-0', 'sig', t0 + 61_000)).toBe(true);
+    expect(shouldLog('dev-new', 'sig', t0 + 61_000)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------
@@ -685,7 +968,7 @@ describe('POST /agents/:id/heartbeat — watchdog-branch agent recovery upgradeT
     getActiveTrustKeysetMock.mockReset();
     getActiveTrustKeysetMock.mockResolvedValue([]);
     updateMock.mockReturnValue({
-      set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      set: vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) })),
     });
   });
 
@@ -871,7 +1154,7 @@ describe('POST /agents/:id/heartbeat — controlled fleet rollout (promotion gat
     getActiveTrustKeysetMock.mockReset();
     getActiveTrustKeysetMock.mockResolvedValue([]);
     updateMock.mockReturnValue({
-      set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      set: vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) })),
     });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
   });
@@ -990,7 +1273,7 @@ describe('pendingReboot persistence', () => {
   }
 
   it('persists pendingReboot=true from the main-agent heartbeat', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     setupMocks(setSpy);
 
     const resp = await buildApp().request('/agents/device-1/heartbeat', {
@@ -1005,7 +1288,7 @@ describe('pendingReboot persistence', () => {
   });
 
   it('clears pendingReboot when the field is absent (old agents / post-reboot)', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     setupMocks(setSpy);
 
     // minimalHeartbeatBody has no pendingReboot key — simulates old agents and
@@ -1022,7 +1305,7 @@ describe('pendingReboot persistence', () => {
   });
 
   it('watchdog heartbeats never touch pendingReboot', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     // Watchdog device lookup needs lastSeenAt for the silence-detector.
     vi.clearAllMocks();
     getActiveTrustKeysetMock.mockResolvedValue([]);
@@ -1083,7 +1366,7 @@ describe('batteryStatus persistence', () => {
   }
 
   it('persists a battery snapshot, stamping reportedAt and keeping only sent fields', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     setupMocks(setSpy);
 
     const resp = await buildApp().request('/agents/device-1/heartbeat', {
@@ -1111,7 +1394,7 @@ describe('batteryStatus persistence', () => {
   });
 
   it('persists a charging snapshot with timeToFullMinutes', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     setupMocks(setSpy);
 
     const resp = await buildApp().request('/agents/device-1/heartbeat', {
@@ -1131,7 +1414,7 @@ describe('batteryStatus persistence', () => {
   });
 
   it('records a no-battery desktop as { present: false }', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     setupMocks(setSpy);
 
     const resp = await buildApp().request('/agents/device-1/heartbeat', {
@@ -1149,7 +1432,7 @@ describe('batteryStatus persistence', () => {
   });
 
   it('leaves batteryStatus untouched when the agent omits battery (old agent)', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     setupMocks(setSpy);
 
     const resp = await buildApp().request('/agents/device-1/heartbeat', {
@@ -1196,7 +1479,7 @@ describe('POST /agents/:id/heartbeat — uacInterceptionEnabled delivery', () =>
     // db.update for devices → no return needed
     updateMock.mockReturnValue({
       set: vi.fn(() => ({
-        where: vi.fn().mockResolvedValue(undefined),
+        where: vi.fn(() => whereResultWithReturning()),
       })),
     });
 
@@ -1270,6 +1553,54 @@ describe('POST /agents/:id/heartbeat — uacInterceptionEnabled delivery', () =>
     const configUpdate = body.configUpdate as Record<string, unknown> | null;
     expect(configUpdate?.patch_source_settings).toBeUndefined();
   });
+
+  it('delivers onedrive_helper_settings in configUpdate alongside other config (post-#1105 hoist merge)', async () => {
+    const { buildOnedriveHelperConfigUpdate, buildPatchSourceConfigUpdate } = await import('./helpers');
+    const settings = {
+      base: {
+        silentAccountConfig: true, filesOnDemand: true, kfmSilentOptIn: false,
+        kfmFolders: [], kfmBlockOptOut: false, tenantAssociationId: null, restartOnChange: true,
+      },
+      libraries: [{
+        libraryId: 'lib-1', displayName: 'Docs', siteUrl: null, targetingMode: 'graph_group',
+        groupId: 'g-1', groupName: null, hiveScope: 'hkcu', allowedUpns: ['u@contoso.com'],
+      }],
+    };
+    vi.mocked(buildOnedriveHelperConfigUpdate).mockResolvedValueOnce(settings as any);
+    vi.mocked(buildPatchSourceConfigUpdate).mockResolvedValueOnce({ exclusiveWindowsUpdate: true });
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as Record<string, unknown>;
+    const configUpdate = body.configUpdate as Record<string, unknown> | null;
+    // The exact wire key the agent reads — a rename here darkens the feature fleet-wide.
+    expect(configUpdate?.onedrive_helper_settings).toEqual(settings);
+    // And the three-way spread must compose, not replace, the other config.
+    expect(configUpdate?.patch_source_settings).toEqual({ exclusiveWindowsUpdate: true });
+  });
+
+  it('omits onedrive_helper_settings when the builder throws — heartbeat still 200 with other config intact', async () => {
+    const { buildOnedriveHelperConfigUpdate, buildPatchSourceConfigUpdate } = await import('./helpers');
+    vi.mocked(buildOnedriveHelperConfigUpdate).mockRejectedValueOnce(new Error('graph down'));
+    vi.mocked(buildPatchSourceConfigUpdate).mockResolvedValueOnce({ exclusiveWindowsUpdate: true });
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as Record<string, unknown>;
+    const configUpdate = body.configUpdate as Record<string, unknown> | null;
+    expect(configUpdate?.onedrive_helper_settings).toBeUndefined();
+    expect(configUpdate?.patch_source_settings).toEqual({ exclusiveWindowsUpdate: true });
+  });
 });
 
 // ---------------------------------------------------------------------
@@ -1294,7 +1625,7 @@ describe('POST /agents/:id/heartbeat — org agent update policy gating', () => 
     getActiveTrustKeysetMock.mockReset();
     getActiveTrustKeysetMock.mockResolvedValue([]);
     updateMock.mockReturnValue({
-      set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      set: vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) })),
     });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
   });
@@ -1454,7 +1785,7 @@ describe('POST /agents/:id/heartbeat — helper/watchdog upgrade gating', () => 
     getActiveTrustKeysetMock.mockReset();
     getActiveTrustKeysetMock.mockResolvedValue([]);
     updateMock.mockReturnValue({
-      set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      set: vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) })),
     });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
   });
@@ -1618,7 +1949,7 @@ describe('POST /agents/:id/heartbeat — watchdogVersion telemetry (#1802)', () 
   }
 
   it('persists the watchdogVersion the main agent reports to the device row', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     arrange(setSpy);
 
     const resp = await post({ agentVersion: '0.66.0', watchdogVersion: '0.66.0' });
@@ -1629,7 +1960,7 @@ describe('POST /agents/:id/heartbeat — watchdogVersion telemetry (#1802)', () 
   });
 
   it('leaves the stored watchdogVersion untouched when an old agent omits it', async () => {
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     arrange(setSpy);
 
     const resp = await post({ agentVersion: '0.66.0' });
@@ -1641,7 +1972,7 @@ describe('POST /agents/:id/heartbeat — watchdogVersion telemetry (#1802)', () 
 
   it('uses the reported version (not the stale column) to suppress redundant re-sends', async () => {
     const { compareAgentVersions, getOrgAgentUpdateConfig } = await import('./helpers');
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     arrange(setSpy);
     vi.mocked(getOrgAgentUpdateConfig).mockResolvedValue({ settings: { policy: 'auto', maintenanceWindow: null }, pins: { agent: null, watchdog: null } });
     vi.mocked(compareAgentVersions).mockImplementation(realishCompare);
@@ -1657,7 +1988,7 @@ describe('POST /agents/:id/heartbeat — watchdogVersion telemetry (#1802)', () 
 
   it('still upgrades when the reported watchdogVersion is genuinely behind latest', async () => {
     const { compareAgentVersions, getOrgAgentUpdateConfig } = await import('./helpers');
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     arrange(setSpy);
     vi.mocked(getOrgAgentUpdateConfig).mockResolvedValue({ settings: { policy: 'auto', maintenanceWindow: null }, pins: { agent: null, watchdog: null } });
     vi.mocked(compareAgentVersions).mockImplementation(realishCompare);
@@ -1667,6 +1998,65 @@ describe('POST /agents/:id/heartbeat — watchdogVersion telemetry (#1802)', () 
     expect(resp.status).toBe(200);
     const body = await resp.json() as { watchdogUpgradeTo?: string | null };
     expect(body.watchdogUpgradeTo).toBe('0.66.0');
+  });
+});
+
+// ---------------------------------------------------------------------
+// #2288 — active control-plane URL persistence
+// ---------------------------------------------------------------------
+
+describe('POST /agents/:id/heartbeat — active server URL telemetry (#2288)', () => {
+  const deviceRow = {
+    id: 'device-1', orgId: 'org-1', siteId: 'site-1', hostname: 'host',
+    osType: 'windows', architecture: 'amd64', agentVersion: '0.66.0',
+    deviceRoleSource: 'auto', lastSeenAt: new Date(), mainAgentSilentSince: null,
+  };
+
+  let capturedDeviceUpdate: Record<string, unknown>;
+
+  function arrange() {
+    vi.clearAllMocks();
+    getActiveTrustKeysetMock.mockResolvedValue([]);
+    selectMock.mockReturnValueOnce(selectChainResolving([deviceRow]));
+    selectMock.mockReturnValue(selectChainResolving([]));
+    updateMock.mockReturnValue({
+      set: vi.fn((values: Record<string, unknown>) => {
+        capturedDeviceUpdate = values;
+        return { where: vi.fn(() => whereResultWithReturning()) };
+      }),
+    });
+    insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
+  }
+
+  async function postHeartbeat(body: Record<string, unknown>) {
+    arrange();
+    return buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('persists a valid serverUrl to devices.agent_server_url', async () => {
+    await postHeartbeat({ ...minimalHeartbeatBody, serverUrl: 'https://old.example.com' });
+    expect(capturedDeviceUpdate.agentServerUrl).toBe('https://old.example.com');
+  });
+
+  it('ignores a malformed serverUrl instead of failing the heartbeat', async () => {
+    const res = await postHeartbeat({ ...minimalHeartbeatBody, serverUrl: 'not a url' });
+    expect(res.status).toBe(200);
+    expect(capturedDeviceUpdate.agentServerUrl).toBeUndefined();
+  });
+
+  it('drops parseable-but-non-http(s) serverUrl schemes (value is echoed into the web UI)', async () => {
+    const res = await postHeartbeat({ ...minimalHeartbeatBody, serverUrl: 'javascript:alert(1)' });
+    expect(res.status).toBe(200);
+    expect(capturedDeviceUpdate.agentServerUrl).toBeUndefined();
+  });
+
+  it('leaves stored value untouched when serverUrl absent (old agent)', async () => {
+    await postHeartbeat(minimalHeartbeatBody);
+    expect(Object.hasOwn(capturedDeviceUpdate, 'agentServerUrl')).toBe(false);
   });
 });
 
@@ -1699,7 +2089,7 @@ describe('POST /agents/:id/heartbeat — virtualization attribute (#1387)', () =
         },
       ]),
     );
-    const setSpy = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const setSpy = vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) }));
     updateMock.mockReturnValue({ set: setSpy });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
     selectMock.mockReturnValue(selectChainResolving([]));
@@ -1790,7 +2180,7 @@ describe('POST /agents/:id/heartbeat — version-pin threading (#2124)', () => {
     getActiveTrustKeysetMock.mockResolvedValue([]);
     selectMock.mockReturnValueOnce(selectChainResolving([deviceRow]));
     selectMock.mockReturnValue(selectChainResolving([{ version: '0.66.0' }]));
-    updateMock.mockReturnValue({ set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })) });
+    updateMock.mockReturnValue({ set: vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) })) });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
   }
 
@@ -1884,7 +2274,9 @@ describe('POST /agents/:id/heartbeat — terminal-status guard (#2230)', () => {
         },
       ]),
     );
-    const whereSpy = vi.fn().mockResolvedValue(undefined);
+    // Guarded write matches 0 rows (device is terminal-status) → `.returning()`
+    // yields an empty array, which must suppress the state-transition audit.
+    const whereSpy = vi.fn(() => whereResultWithReturning([]));
     const setSpy = vi.fn(() => ({ where: whereSpy }));
     updateMock.mockReturnValue({ set: setSpy });
     insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
@@ -1900,8 +2292,586 @@ describe('POST /agents/:id/heartbeat — terminal-status guard (#2230)', () => {
     // The first devices update is the deviceUpdates write.
     const firstSet = (setSpy.mock.calls as any[])[0]?.[0] as Record<string, unknown>;
     expect(firstSet.status).toBe('online');
-    expect(whereSpy.mock.calls[0]?.[0]).toEqual(
+    expect((whereSpy.mock.calls as any[])[0]?.[0]).toEqual(
       and(eq(devices.id, 'device-1'), notInArray(devices.status, ['decommissioned', 'quarantined'])),
     );
+
+    // Finding #10: a guard-rejected (0-row) write must NOT record a phantom
+    // state transition.
+    const { writeAuditEvent } = await import('../../services/auditEvents');
+    expect(vi.mocked(writeAuditEvent)).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'agent.heartbeat.state_change' }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------
+// Finding #10 — durable audit of security-relevant heartbeat state changes.
+// The main-agent heartbeat mutates several security-relevant device fields
+// (status, hostname, agentServerUrl, tcc/desktop access, main-agent-silent
+// recovery) but previously left no persisted trail. These tests assert one
+// content-minimal `agent.heartbeat.state_change` audit fires ONLY on a genuine
+// transition, and NOT on a steady-state beat.
+// ---------------------------------------------------------------------
+describe('POST /agents/:id/heartbeat — state-change audit (finding #10)', () => {
+  // Steady-state baseline the handler will diff against. status already online,
+  // hostname/agentServerUrl/tcc/desktop already match what a steady beat sends.
+  const baselineDevice = {
+    id: 'device-1',
+    orgId: 'org-1',
+    siteId: 'site-1',
+    hostname: 'host-1',
+    osType: 'linux',
+    osVersion: 'Ubuntu 22.04',
+    osBuild: null,
+    architecture: 'amd64',
+    agentVersion: '0.65.10',
+    deviceRole: 'server',
+    deviceRoleSource: 'auto',
+    agentTokenHash: 'hash',
+    tokenIssuedAt: new Date(),
+    status: 'online',
+    agentServerUrl: 'https://cp.example.com',
+    tccPermissions: { screenRecording: 'granted' },
+    desktopAccess: { level: 'full' },
+    mainAgentSilentSince: null,
+  };
+
+  function arrange(deviceOverrides: Record<string, unknown> = {}) {
+    vi.clearAllMocks();
+    getActiveTrustKeysetMock.mockResolvedValue([]);
+    selectMock.mockReturnValueOnce(
+      selectChainResolving([{ ...baselineDevice, ...deviceOverrides }]),
+    );
+    updateMock.mockReturnValue({
+      set: vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning([{ id: 'device-1' }])) })),
+    });
+    insertMock.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
+    selectMock.mockReturnValue(selectChainResolving([]));
+  }
+
+  async function beat(body: Record<string, unknown>) {
+    return buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function auditCalls() {
+    const { writeAuditEvent } = await import('../../services/auditEvents');
+    return vi
+      .mocked(writeAuditEvent)
+      .mock.calls.filter((c) => (c[1] as { action?: string })?.action === 'agent.heartbeat.state_change');
+  }
+
+  it('offline→online emits exactly one state_change audit carrying before/after status', async () => {
+    arrange({ status: 'offline' });
+
+    const resp = await beat({
+      ...minimalHeartbeatBody,
+      hostname: 'host-1', // unchanged
+      serverUrl: 'https://cp.example.com', // unchanged
+      tccPermissions: { screenRecording: 'granted' }, // unchanged
+      desktopAccess: { level: 'full' }, // unchanged
+    });
+    expect(resp.status).toBe(200);
+
+    const calls = await auditCalls();
+    expect(calls).toHaveLength(1);
+    const details = (calls[0]![1] as unknown as { details: { changes: any[] } }).details;
+    expect(details.changes).toEqual([{ field: 'status', before: 'offline', after: 'online' }]);
+    // Actor/resource shape mirrors the co-located threshold-scan audit.
+    expect(calls[0]![1]).toMatchObject({
+      orgId: 'org-1',
+      actorType: 'agent',
+      actorId: 'device-1', // = the :id path param (agentId), mirroring the threshold-scan audit
+      resourceType: 'device',
+      resourceId: 'device-1',
+    });
+  });
+
+  it('hostname change emits a state_change audit with before/after', async () => {
+    arrange(); // status already online, hostname host-1
+    const resp = await beat({ ...minimalHeartbeatBody, hostname: 'renamed-host' });
+    expect(resp.status).toBe(200);
+
+    const calls = await auditCalls();
+    expect(calls).toHaveLength(1);
+    const changes = (calls[0]![1] as unknown as { details: { changes: any[] } }).details.changes;
+    expect(changes).toContainEqual({ field: 'hostname', before: 'host-1', after: 'renamed-host' });
+  });
+
+  it('agentServerUrl change emits a state_change audit with before/after', async () => {
+    arrange();
+    const resp = await beat({ ...minimalHeartbeatBody, serverUrl: 'https://new-cp.example.com' });
+    expect(resp.status).toBe(200);
+
+    const changes = (await auditCalls())[0]?.[1] as unknown as { details: { changes: any[] } };
+    expect(changes.details.changes).toContainEqual({
+      field: 'agentServerUrl',
+      before: 'https://cp.example.com',
+      after: 'https://new-cp.example.com',
+    });
+  });
+
+  it('tccPermissions change emits a state_change audit', async () => {
+    arrange();
+    const resp = await beat({
+      ...minimalHeartbeatBody,
+      tccPermissions: { screenRecording: 'denied' },
+    });
+    expect(resp.status).toBe(200);
+
+    const changes = ((await auditCalls())[0]?.[1] as unknown as { details: { changes: any[] } }).details.changes;
+    expect(changes).toContainEqual({
+      field: 'tccPermissions',
+      before: { screenRecording: 'granted' },
+      after: { screenRecording: 'denied' },
+    });
+  });
+
+  it('desktopAccess change emits a state_change audit', async () => {
+    arrange();
+    const resp = await beat({
+      ...minimalHeartbeatBody,
+      desktopAccess: { level: 'restricted' },
+    });
+    expect(resp.status).toBe(200);
+
+    const changes = ((await auditCalls())[0]?.[1] as unknown as { details: { changes: any[] } }).details.changes;
+    expect(changes).toContainEqual({
+      field: 'desktopAccess',
+      before: { level: 'full' },
+      after: { level: 'restricted' },
+    });
+  });
+
+  it('main-agent recovery (mainAgentSilentSince non-null→null) emits a mainAgentSilent transition', async () => {
+    arrange({ mainAgentSilentSince: new Date(Date.now() - 5 * 60 * 1000) });
+    const resp = await beat({
+      ...minimalHeartbeatBody,
+      hostname: 'host-1',
+      serverUrl: 'https://cp.example.com',
+      tccPermissions: { screenRecording: 'granted' },
+      desktopAccess: { level: 'full' },
+    });
+    expect(resp.status).toBe(200);
+
+    const changes = ((await auditCalls())[0]?.[1] as unknown as { details: { changes: any[] } }).details.changes;
+    expect(changes).toContainEqual({ field: 'mainAgentSilent', before: true, after: false });
+  });
+
+  it('steady-state heartbeat (nothing security-relevant changed) emits NO audit', async () => {
+    arrange(); // baseline already online with matching fields
+    const resp = await beat({
+      ...minimalHeartbeatBody,
+      // Re-report identical values — must not be treated as changes.
+      hostname: 'host-1',
+      serverUrl: 'https://cp.example.com',
+      tccPermissions: { screenRecording: 'granted' },
+      desktopAccess: { level: 'full' },
+    });
+    expect(resp.status).toBe(200);
+
+    expect(await auditCalls()).toHaveLength(0);
+  });
+
+  it('batches multiple simultaneous changes into a single audit event', async () => {
+    arrange({ status: 'offline' });
+    const resp = await beat({
+      ...minimalHeartbeatBody,
+      hostname: 'renamed-host',
+      serverUrl: 'https://new-cp.example.com',
+    });
+    expect(resp.status).toBe(200);
+
+    const calls = await auditCalls();
+    expect(calls).toHaveLength(1); // ONE event, not three
+    const fields = (calls[0]![1] as unknown as { details: { changes: any[] } }).details.changes.map((c) => c.field);
+    expect(fields).toEqual(expect.arrayContaining(['status', 'hostname', 'agentServerUrl']));
+  });
+});
+
+describe('POST /agents/:id/heartbeat — agentRuntime gauges (#2389)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Device lookup → returns a row
+    selectMock.mockReturnValueOnce(
+      selectChainResolving([
+        {
+          id: 'device-1',
+          orgId: 'org-1',
+          siteId: 'site-1',
+          hostname: 'host-1',
+          osType: 'linux',
+          osVersion: 'Ubuntu 22.04',
+          osBuild: null,
+          architecture: 'amd64',
+          agentVersion: '0.65.10',
+          deviceRole: 'server',
+          deviceRoleSource: 'auto',
+          agentTokenHash: 'hash',
+          tokenIssuedAt: new Date(),
+        },
+      ]),
+    );
+
+    updateMock.mockReturnValue({
+      set: vi.fn(() => ({
+        where: vi.fn(() => whereResultWithReturning()),
+      })),
+    });
+
+    selectMock.mockReturnValue(selectChainResolving([]));
+    getActiveTrustKeysetMock.mockResolvedValue([]);
+  });
+
+  // Finds the deviceMetrics insert among all insert calls by its cpuPercent
+  // marker column, so an unrelated insert (audit, agent logs) can't be
+  // mistaken for it.
+  function findMetricsInsert(valuesSpy: ReturnType<typeof vi.fn>): Record<string, unknown> | undefined {
+    return valuesSpy.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((v) => v && typeof v === 'object' && 'cpuPercent' in v);
+  }
+
+  it('persists agentRuntime into device_metrics.custom_metrics', async () => {
+    const valuesSpy = vi.fn().mockResolvedValue(undefined);
+    insertMock.mockReturnValue({ values: valuesSpy });
+
+    const agentRuntime = {
+      heapAllocBytes: 12_345_678,
+      heapInuseBytes: 23_456_789,
+      heapReleasedBytes: 1_048_576,
+      sysBytes: 99_999_999,
+      numGc: 42,
+      goroutines: 87,
+    };
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...minimalHeartbeatBody, agentRuntime }),
+    });
+
+    expect(resp.status).toBe(200);
+    const metricsInsert = findMetricsInsert(valuesSpy);
+    expect(metricsInsert).toBeDefined();
+    expect(metricsInsert?.customMetrics).toEqual({ agentRuntime });
+  });
+
+  it('writes customMetrics: null when an old agent omits agentRuntime', async () => {
+    const valuesSpy = vi.fn().mockResolvedValue(undefined);
+    insertMock.mockReturnValue({ values: valuesSpy });
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    const metricsInsert = findMetricsInsert(valuesSpy);
+    expect(metricsInsert).toBeDefined();
+    expect(metricsInsert?.customMetrics).toBeNull();
+  });
+
+  // NOTE: schema-level tolerance (malformed agentRuntime dropped via .catch)
+  // is covered in schemas.heartbeatTolerance.test.ts — this route test mocks
+  // zValidator out, so the handler never sees schema-dropped fields.
+
+  it('warns loudly (no metrics insert) when agentRuntime arrives without metrics', async () => {
+    // The gauges ride the device_metrics insert; when OS metrics collection
+    // failed there is no row to attach them to, and that drop must be
+    // observable (see #2389 review) — not silent.
+    const valuesSpy = vi.fn().mockResolvedValue(undefined);
+    insertMock.mockReturnValue({ values: valuesSpy });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const { metrics: _omitted, ...noMetricsBody } = minimalHeartbeatBody;
+      const resp = await buildApp().request('/agents/device-1/heartbeat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...noMetricsBody,
+          metricsAvailable: false,
+          agentRuntime: {
+            heapAllocBytes: 1,
+            heapInuseBytes: 2,
+            heapReleasedBytes: 3,
+            sysBytes: 4,
+            numGc: 5,
+            goroutines: 6,
+          },
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(findMetricsInsert(valuesSpy)).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('agentRuntime received without metrics'),
+        expect.objectContaining({ deviceId: 'device-1', goroutines: 6 }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe('POST /agents/:id/heartbeat — undecryptable claimed commands are released, siblings deliver (#2414)', () => {
+  const claimedAt = new Date('2026-07-13T00:00:00Z');
+  const goodCommand = {
+    id: 'cmd-good',
+    type: 'run_script',
+    payload: { scriptId: 'script-1' },
+    executedAt: claimedAt,
+  };
+  // A well-formed-looking but undecryptable sensitive payload (e.g. after an
+  // APP_ENCRYPTION_KEY rotation) — the real services/commandDelivery +
+  // sensitiveCommandPayload modules run here, so decryption genuinely fails.
+  const undecryptableCommand = {
+    id: 'cmd-bad',
+    type: 'encryption_rotate_key',
+    payload: { password: 'enc:v3:deadbeef:not-real-ciphertext' },
+    executedAt: claimedAt,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getActiveTrustKeysetMock.mockResolvedValue([]);
+    updateMock.mockReturnValue({
+      set: vi.fn(() => ({ where: vi.fn(() => whereResultWithReturning()) })),
+    });
+    insertMock.mockReturnValue({
+      values: vi.fn().mockResolvedValue(undefined),
+    });
+  });
+
+  it('agent path: releases the undecryptable command back to pending and still delivers its sibling', async () => {
+    selectMock.mockReturnValueOnce(
+      selectChainResolving([
+        {
+          id: 'device-1',
+          orgId: 'org-1',
+          siteId: 'site-1',
+          hostname: 'host-1',
+          osType: 'linux',
+          architecture: 'amd64',
+          agentVersion: '0.65.10',
+          agentTokenHash: 'hash',
+          tokenIssuedAt: new Date(),
+        },
+      ]),
+    );
+    selectMock.mockReturnValue(selectChainResolving([]));
+    claimPendingCommandsForDeviceMock.mockResolvedValueOnce([goodCommand, undecryptableCommand]);
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { commands: Array<{ id: string }> };
+    // The decryptable sibling still delivers; the undecryptable one is dropped
+    // from the response...
+    expect(body.commands.map((cmd) => cmd.id)).toEqual(['cmd-good']);
+    // ...and released back to pending (NOT stranded as 'sent' awaiting a
+    // misattributed agent-timeout reap).
+    expect(releaseClaimedCommandDeliveryMock).toHaveBeenCalledWith('cmd-bad', claimedAt);
+    const { captureException } = await import('../../services/sentry');
+    expect(captureException).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('commandId=cmd-bad'),
+      }),
+    );
+  });
+
+  it('watchdog path: releases the undecryptable command back to pending and still delivers its sibling', async () => {
+    selectMock.mockReturnValueOnce(
+      selectChainResolving([
+        {
+          id: 'device-1',
+          orgId: 'org-1',
+          hostname: 'host-1',
+          osType: 'linux',
+          architecture: 'amd64',
+          lastSeenAt: new Date(),
+          mainAgentSilentSince: null,
+        },
+      ]),
+    );
+    selectMock.mockReturnValue(selectChainResolving([]));
+    claimPendingCommandsForDeviceMock.mockResolvedValueOnce([goodCommand, undecryptableCommand]);
+
+    const resp = await buildWatchdogApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentVersion: '0.65.15', role: 'watchdog', watchdogState: 'MONITORING' }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(claimPendingCommandsForDeviceMock).toHaveBeenCalledWith('device-1', 10, 'watchdog', undefined);
+    const body = (await resp.json()) as { commands: Array<{ id: string }> };
+    expect(body.commands.map((cmd) => cmd.id)).toEqual(['cmd-good']);
+    expect(releaseClaimedCommandDeliveryMock).toHaveBeenCalledWith('cmd-bad', claimedAt);
+  });
+
+  it('agent path: normal delivery is untouched — every claimed command decrypts, nothing is released', async () => {
+    selectMock.mockReturnValueOnce(
+      selectChainResolving([
+        {
+          id: 'device-1',
+          orgId: 'org-1',
+          siteId: 'site-1',
+          hostname: 'host-1',
+          osType: 'linux',
+          architecture: 'amd64',
+          agentVersion: '0.65.10',
+          agentTokenHash: 'hash',
+          tokenIssuedAt: new Date(),
+        },
+      ]),
+    );
+    selectMock.mockReturnValue(selectChainResolving([]));
+    claimPendingCommandsForDeviceMock.mockResolvedValueOnce([goodCommand]);
+
+    const resp = await buildApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { commands: Array<{ id: string; type: string; payload: unknown }> };
+    expect(body.commands).toEqual([
+      { id: 'cmd-good', type: 'run_script', payload: { scriptId: 'script-1' } },
+    ]);
+    expect(releaseClaimedCommandDeliveryMock).not.toHaveBeenCalled();
+  });
+
+  // #2774 — the heartbeat is the PRIMARY command carrier (the GET poll is
+  // watchdog-failover only), so this is the filter that actually stops a
+  // departing customer's machines from executing scripts/automations queued
+  // by workers AFTER drain entry cancelled the then-pending set.
+  it('agent path: narrows the claim to self_uninstall when the tenant is draining', async () => {
+    selectMock.mockReturnValueOnce(
+      selectChainResolving([
+        {
+          id: 'device-1',
+          orgId: 'org-1',
+          siteId: 'site-1',
+          hostname: 'host-1',
+          osType: 'linux',
+          architecture: 'amd64',
+          agentVersion: '0.65.10',
+          agentTokenHash: 'hash',
+          tokenIssuedAt: new Date(),
+        },
+      ]),
+    );
+    selectMock.mockReturnValue(selectChainResolving([]));
+    claimPendingCommandsForDeviceMock.mockResolvedValueOnce([]);
+
+    const resp = await buildDrainingApp().request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minimalHeartbeatBody),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(claimPendingCommandsForDeviceMock).toHaveBeenCalledWith('device-1', 10, 'agent', [
+      'self_uninstall',
+    ]);
+  });
+
+  it('watchdog path: narrows the claim to self_uninstall when the tenant is draining', async () => {
+    selectMock.mockReturnValueOnce(
+      selectChainResolving([
+        {
+          id: 'device-1',
+          orgId: 'org-1',
+          hostname: 'host-1',
+          osType: 'linux',
+          architecture: 'amd64',
+          lastSeenAt: new Date(),
+          mainAgentSilentSince: null,
+        },
+      ]),
+    );
+    selectMock.mockReturnValue(selectChainResolving([]));
+    claimPendingCommandsForDeviceMock.mockResolvedValueOnce([]);
+
+    const resp = await buildDrainingApp('watchdog').request('/agents/device-1/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentVersion: '0.65.15', role: 'watchdog', watchdogState: 'MONITORING' }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(claimPendingCommandsForDeviceMock).toHaveBeenCalledWith('device-1', 10, 'watchdog', [
+      'self_uninstall',
+    ]);
+  });
+});
+
+// #2434 — the service/process monitoring ingest persists an agent-supplied
+// free-form `details` blob straight into a jsonb column that the monitoring UI
+// renders. It is a separate REST ingest from the command-result path, so the
+// command-result chokepoint never sees it.
+describe('PUT /:id/monitoring-results — secret redaction (#2434)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('redacts secrets from agent-supplied check details before persistence', async () => {
+    const pem =
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKe0m0h\n-----END RSA PRIVATE KEY-----';
+
+    // device lookup by agentId
+    selectMock.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue([
+            { id: 'device-1', orgId: 'org-1', siteId: 'site-1' },
+          ]),
+        }),
+      }),
+    });
+
+    const values = vi.fn().mockResolvedValue(undefined);
+    insertMock.mockReturnValue({ values });
+
+    const res = await buildApp().request('/agents/agent-1/monitoring-results', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        results: [{
+          watchType: 'service',
+          name: 'sshd',
+          status: 'error',
+          details: {
+            lastError: `service failed to start:\n${pem}`,
+            nested: { hint: `config holds:\n${pem}` },
+          },
+        }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(values).toHaveBeenCalledTimes(1);
+
+    const inserted = values.mock.calls[0]![0] as Array<{ details: Record<string, any> }>;
+    expect(inserted[0]!.details.lastError).toContain('[PRIVATE_KEY_REDACTED]');
+    expect(inserted[0]!.details.nested.hint).toContain('[PRIVATE_KEY_REDACTED]');
+
+    const serialized = JSON.stringify(inserted);
+    expect(serialized).not.toContain('BEGIN RSA PRIVATE KEY');
+    expect(serialized).not.toContain('MIIBOgIBAAJBAKe0m0h');
   });
 });

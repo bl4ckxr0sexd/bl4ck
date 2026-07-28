@@ -1,6 +1,8 @@
 import { isIP } from 'net';
 import { z } from 'zod';
-import { isRecognizedSelfHostSignal } from './env';
+import { validateM365CustomerGraphReadRuntimeConfigAtBoot } from '../services/m365ControlPlane/runtimeConfig';
+import { validateM365CustomerGraphActionsRuntimeConfigAtBoot } from '../services/m365ControlPlane/writeActionRuntimeConfig';
+import { decodePartnerApiCursorSigningKey, isRecognizedSelfHostSignal } from './env';
 
 // ---------------------------------------------------------------------------
 // Insecure default detection
@@ -341,12 +343,19 @@ const envSchema = z
         (v) => !v || v.startsWith('postgres://') || v.startsWith('postgresql://'),
         { message: 'DATABASE_URL_APP must be a valid postgres:// or postgresql:// URL' },
       )
-      .describe('Optional unprivileged application DB connection. If unset, falls back to DATABASE_URL.'),
+      .describe(
+        'Explicit unprivileged request DB connection. If unset, Breeze derives the breeze_app URL using BREEZE_APP_DB_PASSWORD or POSTGRES_PASSWORD; production refuses direct DATABASE_URL fallback.',
+      ),
 
     BREEZE_APP_DB_PASSWORD: z
       .string()
       .optional()
       .describe('Password for the breeze_app role. If unset, ensureAppRole falls back to POSTGRES_PASSWORD.'),
+
+    POSTGRES_PASSWORD: z
+      .string()
+      .optional()
+      .describe('Standard Compose PostgreSQL password and fallback breeze_app derivation credential.'),
 
     // Issue #915: dedicated connection string for the `breeze_audit_admin`
     // login role used ONLY by the audit-log retention worker. When set,
@@ -386,6 +395,8 @@ const envSchema = z
       .string({ error: 'MFA_ENCRYPTION_KEY is required' })
       .min(1, 'MFA_ENCRYPTION_KEY must not be empty'),
 
+    PARTNER_API_CURSOR_SIGNING_KEY: z.string().optional(),
+
     // -- Production-required -------------------------------------------------
     CORS_ALLOWED_ORIGINS: z.string().optional(),
     FORCE_HTTPS: z.string().optional(),
@@ -401,6 +412,7 @@ const envSchema = z
     RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: z.string().optional(),
     BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: z.string().optional(),
     IS_HOSTED: z.string().optional(),
+    AGENT_BACKUP_SERVER_URL: z.string().optional(),
 
     // Controlled agent-fleet rollout (decouple registration from promotion).
     // When false, binarySync registers new binaries WITHOUT touching
@@ -505,6 +517,27 @@ const envSchema = z
     CF_ACCESS_AUD: z.string().optional(),
     CF_ACCESS_TRUSTS_MFA: z.string().optional(),
 
+    // -- Native APNs push (replaces the Expo push relay) ---------------------
+    // All optional at boot: push is an optional feature. If ANY APNS_* is set,
+    // the superRefine "all-or-none" block below requires the four credential
+    // fields (key/kid/team/bundle); APNS_ENVIRONMENT stays optional and
+    // defaults to 'production' at the sender. APNS_AUTH_KEY holds the raw .p8
+    // PEM contents and may contain literal "\n" escapes (env files can't carry
+    // real newlines); the sender normalizes them before importPKCS8.
+    APNS_AUTH_KEY: z.string().optional(),
+    APNS_KEY_ID: z.string().optional(),
+    APNS_TEAM_ID: z.string().optional(),
+    APNS_BUNDLE_ID: z.string().optional(),
+    // Empty string means "unset", matching the trim() semantics the all-or-none
+    // block uses. Compose maps this as `${APNS_ENVIRONMENT:-}`, which always
+    // injects the key — as "" when the operator hasn't set it — and a bare
+    // `.optional()` enum rejects "" and refuses to boot. The string fields above
+    // tolerate "" natively; only the enum needs this.
+    APNS_ENVIRONMENT: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+      z.enum(['sandbox', 'production']).optional()
+    ),
+
     // -- Optional with defaults -----------------------------------------------
     API_PORT: portSchema,
     REDIS_URL: z.string().default('redis://localhost:6379'),
@@ -546,6 +579,47 @@ const envSchema = z
   // --- Cross-field refinements (insecure defaults for required secrets) -------
   .superRefine((data, ctx) => {
     const isProduction = data.NODE_ENV === 'production';
+
+    if (
+      isProduction
+      && !data.DATABASE_URL_APP?.trim()
+      && !data.BREEZE_APP_DB_PASSWORD?.trim()
+      && !data.POSTGRES_PASSWORD?.trim()
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DATABASE_URL_APP'],
+        message:
+          'Production requires DATABASE_URL_APP, BREEZE_APP_DB_PASSWORD, or POSTGRES_PASSWORD to configure the unprivileged request database role.',
+      });
+    }
+
+    // #2288 — instance-level backup control-plane URL pushed to agents.
+    // Malformed value = refuse to boot; a silently-dropped backup URL would
+    // defeat the whole failover story exactly when it's needed.
+    const backupUrlRaw = (data.AGENT_BACKUP_SERVER_URL ?? '').trim();
+    if (backupUrlRaw) {
+      let parsed: URL | null = null;
+      try {
+        parsed = new URL(backupUrlRaw);
+      } catch {
+        parsed = null;
+      }
+      const isLoopback =
+        parsed !== null &&
+        ['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname);
+      const ok =
+        parsed !== null &&
+        (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && isLoopback));
+      if (!ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AGENT_BACKUP_SERVER_URL'],
+          message:
+            'AGENT_BACKUP_SERVER_URL must be a valid https:// URL (http:// allowed only for localhost)',
+        });
+      }
+    }
 
     // --- JWT signing keyring (zero-downtime rotation) ---
     // Validated in every environment: a malformed keyring would break auth
@@ -682,6 +756,24 @@ const envSchema = z
 
     // --- Required secrets: reject insecure values in production only ---
     if (isProduction) {
+      const cursorSigningKey = decodePartnerApiCursorSigningKey(data.PARTNER_API_CURSOR_SIGNING_KEY);
+      if (!cursorSigningKey || cursorSigningKey.length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PARTNER_API_CURSOR_SIGNING_KEY'],
+          message:
+            'PARTNER_API_CURSOR_SIGNING_KEY must decode to at least 32 bytes of random key material from canonical base64 in production.',
+        });
+      }
+      if (cursorSigningKey?.equals(Buffer.from(data.JWT_SECRET, 'utf8'))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PARTNER_API_CURSOR_SIGNING_KEY'],
+          message:
+            'PARTNER_API_CURSOR_SIGNING_KEY must not reuse UTF-8 JWT_SECRET key material. Generate a dedicated random key.',
+        });
+      }
+
       // E2E_MODE must never be enabled in production
       if (data.E2E_MODE === '1' || data.E2E_MODE === 'true') {
         ctx.addIssue({
@@ -800,6 +892,7 @@ const envSchema = z
       rejectSecretReuse(
         [
           { key: 'JWT_SECRET', value: data.JWT_SECRET },
+          { key: 'PARTNER_API_CURSOR_SIGNING_KEY', value: data.PARTNER_API_CURSOR_SIGNING_KEY },
           { key: 'APP_ENCRYPTION_KEY', value: data.APP_ENCRYPTION_KEY },
           { key: 'MFA_ENCRYPTION_KEY', value: data.MFA_ENCRYPTION_KEY },
           { key: 'ENROLLMENT_KEY_PEPPER', value: data.ENROLLMENT_KEY_PEPPER },
@@ -1146,6 +1239,40 @@ const envSchema = z
           'AGENT_AUTO_PROMOTE must be a boolean (true/false, 1/0, yes/no, on/off) when set. Defaults to true (sync immediately becomes the fleet upgrade target). Set false to require explicit promotion via POST /agent-versions/promote.',
       });
     }
+
+    // --- Native APNs push (all-or-none) ---
+    // Push is optional, so an empty APNS_* set is fine. But a partial set
+    // (e.g. team + bundle without the signing key) would silently fail to
+    // deliver at first use rather than at boot. If the operator has opted in
+    // by setting ANY APNS_* field, require the four credentials. Environment
+    // stays optional (defaults to 'production' at the sender). Validated in
+    // every NODE_ENV — a half-configured push relay is a bug regardless.
+    const apnsFields = [
+      data.APNS_AUTH_KEY,
+      data.APNS_KEY_ID,
+      data.APNS_TEAM_ID,
+      data.APNS_BUNDLE_ID,
+      data.APNS_ENVIRONMENT,
+    ];
+    const anyApnsSet = apnsFields.some((v) => v != null && v.trim() !== '');
+    if (anyApnsSet) {
+      const required: Array<[keyof typeof data, string | undefined]> = [
+        ['APNS_AUTH_KEY', data.APNS_AUTH_KEY],
+        ['APNS_KEY_ID', data.APNS_KEY_ID],
+        ['APNS_TEAM_ID', data.APNS_TEAM_ID],
+        ['APNS_BUNDLE_ID', data.APNS_BUNDLE_ID],
+      ];
+      for (const [key, value] of required) {
+        if (!value || value.trim() === '') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key as string],
+            message:
+              `${key} is required when any APNS_* variable is set. Native APNs push needs APNS_AUTH_KEY (the .p8 PEM), APNS_KEY_ID, APNS_TEAM_ID and APNS_BUNDLE_ID together; APNS_ENVIRONMENT is optional (defaults to production).`,
+          });
+        }
+      }
+    }
   });
 
 // Inferred config type from the schema
@@ -1195,6 +1322,28 @@ function collectWarnings(env: Record<string, string | undefined>): ConfigWarning
     // (AGENT_ENROLLMENT_SECRET is now a hard error in production — see the
     // schema superRefine. No warning needed here; the validator throws if
     // it's missing or weak.)
+
+    // SR2-16: a prod deploy that trusts proxy headers but leaves
+    // TRUST_CF_CONNECTING_IP off resolves client IPs from X-Forwarded-For only.
+    // That is correct for a non-Cloudflare front, but a Cloudflare-fronted
+    // deploy that forgets the flag silently loses CF-Connecting-IP attribution —
+    // rate limits, audit-log IPs and partner IP allowlists then key off XFF (or
+    // the proxy hop if XFF isn't populated). Warn so the flag is a conscious
+    // choice; hard-failing would break legitimate non-Cloudflare self-hosters.
+    const trustProxy = (env.TRUST_PROXY_HEADERS ?? '').trim().toLowerCase();
+    const proxyTrustOn = ['1', 'true', 'yes', 'on'].includes(trustProxy);
+    const trustCf = (env.TRUST_CF_CONNECTING_IP ?? '').trim().toLowerCase();
+    const cfTrustOff = !['1', 'true', 'yes', 'on'].includes(trustCf);
+    if (proxyTrustOn && cfTrustOff) {
+      warnings.push({
+        key: 'TRUST_CF_CONNECTING_IP',
+        message:
+          'Proxy header trust is enabled but TRUST_CF_CONNECTING_IP is off, so CF-Connecting-IP is ignored. ' +
+          'This is correct for a non-Cloudflare front. If this deployment IS behind Cloudflare, set ' +
+          'TRUST_CF_CONNECTING_IP=true — otherwise client IPs (rate limits, audit logs, IP allowlists) resolve ' +
+          'from X-Forwarded-For instead of the Cloudflare edge IP.',
+      });
+    }
   }
 
   // Warn when 2FA is globally disabled: this neuters ALL requireMfa() step-up
@@ -1269,12 +1418,14 @@ export function validateConfig(): AppConfig {
     DATABASE_URL: env.DATABASE_URL,
     DATABASE_URL_APP: env.DATABASE_URL_APP,
     BREEZE_APP_DB_PASSWORD: env.BREEZE_APP_DB_PASSWORD,
+    POSTGRES_PASSWORD: env.POSTGRES_PASSWORD,
     AUDIT_ADMIN_DATABASE_URL: env.AUDIT_ADMIN_DATABASE_URL,
     JWT_SECRET: env.JWT_SECRET,
     JWT_SIGNING_KEYRING: env.JWT_SIGNING_KEYRING,
     JWT_ACTIVE_KID: env.JWT_ACTIVE_KID,
     APP_ENCRYPTION_KEY: env.APP_ENCRYPTION_KEY,
     MFA_ENCRYPTION_KEY: env.MFA_ENCRYPTION_KEY,
+    PARTNER_API_CURSOR_SIGNING_KEY: env.PARTNER_API_CURSOR_SIGNING_KEY,
     CORS_ALLOWED_ORIGINS: env.CORS_ALLOWED_ORIGINS,
     FORCE_HTTPS: env.FORCE_HTTPS,
     TRUST_PROXY_HEADERS: env.TRUST_PROXY_HEADERS,
@@ -1289,6 +1440,7 @@ export function validateConfig(): AppConfig {
     RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS,
     BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: env.BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS,
     IS_HOSTED: env.IS_HOSTED,
+    AGENT_BACKUP_SERVER_URL: env.AGENT_BACKUP_SERVER_URL,
     ENABLE_2FA: env.ENABLE_2FA,
     OAUTH_DCR_ENABLED: env.OAUTH_DCR_ENABLED,
     OAUTH_DCR_REQUIRE_IAT: env.OAUTH_DCR_REQUIRE_IAT,
@@ -1323,6 +1475,11 @@ export function validateConfig(): AppConfig {
     CF_ACCESS_TEAM_DOMAIN: env.CF_ACCESS_TEAM_DOMAIN,
     CF_ACCESS_AUD: env.CF_ACCESS_AUD,
     CF_ACCESS_TRUSTS_MFA: env.CF_ACCESS_TRUSTS_MFA,
+    APNS_AUTH_KEY: env.APNS_AUTH_KEY,
+    APNS_KEY_ID: env.APNS_KEY_ID,
+    APNS_TEAM_ID: env.APNS_TEAM_ID,
+    APNS_BUNDLE_ID: env.APNS_BUNDLE_ID,
+    APNS_ENVIRONMENT: env.APNS_ENVIRONMENT,
     API_PORT: env.API_PORT,
     REDIS_URL: env.REDIS_URL,
     REDIS_HOST: env.REDIS_HOST,
@@ -1370,6 +1527,15 @@ export function validateConfig(): AppConfig {
 
     throw new Error(message);
   }
+
+  // The Graph-read descriptor stays out of AppConfig/public config. Parse it
+  // lazily, but fail boot closed when the new-consent rollout is enabled.
+  validateM365CustomerGraphReadRuntimeConfigAtBoot(env);
+
+  // Same fail-closed contract for the Graph write-action executor descriptor
+  // (customer-graph-actions): parsed lazily, but validated eagerly at boot
+  // when the write-action tools rollout is enabled.
+  validateM365CustomerGraphActionsRuntimeConfigAtBoot(env);
 
   _config = result.data;
 

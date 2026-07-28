@@ -49,6 +49,15 @@ vi.mock('../db', () => ({
     insert: (...args: unknown[]) => insertMock(...(args as [])),
     update: (...args: unknown[]) => updateMock(...(args as [])),
     delete: (...args: unknown[]) => deleteMock(...(args as [])),
+    // Default-destination demote + promote are transactional; route the tx
+    // through the same mocks so assertions still see every statement.
+    transaction: (fn: (tx: unknown) => unknown) =>
+      fn({
+        select: (...args: unknown[]) => selectMock(...(args as [])),
+        insert: (...args: unknown[]) => insertMock(...(args as [])),
+        update: (...args: unknown[]) => updateMock(...(args as [])),
+        delete: (...args: unknown[]) => deleteMock(...(args as [])),
+      }),
   },
   runOutsideDbContext: vi.fn((fn: () => any) => fn()),
   withSystemDbAccessContext: vi.fn(async (fn: () => any) => fn()),
@@ -63,6 +72,7 @@ vi.mock('../db/schema', async () => {
     id: 'backup_configs.id',
     orgId: 'backup_configs.org_id',
     provider: 'backup_configs.provider',
+    providerConfig: 'backup_configs.provider_config',
     name: 'backup_configs.name',
   },
   backupJobs: {
@@ -295,6 +305,7 @@ describe('backup routes', () => {
     expect(unprotected.data.protected).toBe(false);
     expect(unprotected.data.featureLinkId).toBeNull();
     expect(unprotected.data.configId).toBeNull();
+    expect(unprotected.data.timezone).toBeNull();
     expect(unprotected.data.lastJob).toBeNull();
   });
 
@@ -319,11 +330,13 @@ describe('backup routes', () => {
       orgId: ORG_ID,
       deviceId: DEVICE_ID,
       snapshotId: 'snap-ext-001',
+      configId: 'cfg-ext-001',
     };
 
     selectMock
       .mockReturnValueOnce(chainMock([snapshot]))
-      .mockReturnValueOnce(chainMock([{ id: DEVICE_ID, status: 'online' }]));
+      .mockReturnValueOnce(chainMock([{ id: DEVICE_ID, status: 'online' }]))
+      .mockReturnValueOnce(chainMock([{ provider: 's3', providerConfig: { bucket: 'breeze-backups', region: 'us-east-1' } }]));
 
     const restoreRecord = {
       id: RESTORE_ID,

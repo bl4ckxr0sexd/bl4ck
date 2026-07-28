@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -16,8 +16,9 @@ import {
 } from '../../services/backupEncryption';
 import { checkBackupProviderCapabilities, type ProviderCapabilityStatus } from '../../services/backupSnapshotStorage';
 import { PERMISSIONS } from '../../services/permissions';
+import { coerceS3EndpointUrl, deriveS3RegionFromEndpoint } from '@breeze/shared';
 import { resolveScopedOrgId } from './helpers';
-import { configSchema, configUpdateSchema } from './schemas';
+import { configSchema, configUpdateSchema, validateS3Details } from './schemas';
 
 export const configsRoutes = new Hono();
 
@@ -146,7 +147,7 @@ async function probeLocalConfig(details: Record<string, unknown>): Promise<void>
 
 async function probeS3Config(details: Record<string, unknown>): Promise<void> {
   const bucket = typeof details.bucket === 'string' ? details.bucket : '';
-  const region = typeof details.region === 'string' ? details.region : 'us-east-1';
+  const storedRegion = typeof details.region === 'string' ? details.region.trim() : '';
   const accessKeyId = typeof details.accessKey === 'string' ? details.accessKey : '';
   const secretAccessKey = typeof details.secretKey === 'string' ? details.secretKey : '';
   const endpoint = typeof details.endpoint === 'string' ? details.endpoint : undefined;
@@ -156,10 +157,26 @@ async function probeS3Config(details: Record<string, unknown>): Promise<void> {
     throw new Error('S3 bucket and credentials are required');
   }
 
+  // Configs saved before region validation existed can carry '' — derive
+  // from the endpoint (required for B2 etc., where the signing region must
+  // match) and only fall back to us-east-1 for endpoint-less AWS configs.
+  const region = storedRegion || deriveS3RegionFromEndpoint(endpoint) || (endpoint ? '' : 'us-east-1');
+  if (!region) {
+    throw new Error('S3 region is not configured — edit the storage configuration and set the region for this endpoint');
+  }
+
+  // Coerce here too (not just at config-save time in validateS3Details) —
+  // configs saved before that validation existed can still carry a
+  // scheme-less endpoint, which would otherwise reach the SDK and fail
+  // opaquely deep inside @smithy/core's endpoint resolver instead of giving a
+  // message a user can act on (Sentry BREEZE-P). See coerceS3EndpointUrl for
+  // the two distinct failure modes a scheme-less value produces.
+  const normalizedEndpoint = coerceS3EndpointUrl(endpoint);
+
   const client = new S3Client({
     region,
-    endpoint,
-    forcePathStyle: Boolean(endpoint),
+    endpoint: normalizedEndpoint,
+    forcePathStyle: Boolean(normalizedEndpoint),
     credentials: {
       accessKeyId,
       secretAccessKey,
@@ -208,34 +225,59 @@ configsRoutes.post(
     }
 
     const payload = c.req.valid('json');
+    const details: Record<string, unknown> = { ...(payload.details ?? {}) };
+    if (payload.provider === 's3') {
+      // Schema already rejected unresolvable configs; persist the resolved
+      // region AND the normalized endpoint so both are explicit in storage.
+      // The endpoint matters most: it is shipped verbatim to the Go agent
+      // (jobs/backupWorker.ts -> agent/internal/backup/providers/s3.go), which
+      // does no scheme coercion of its own, so a scheme-less value stored here
+      // fails on every device while this API's own test probe passes.
+      const { region, endpoint } = validateS3Details(details);
+      if (region) details.region = region;
+      if (endpoint) details.endpoint = endpoint;
+    }
     const encryption = payload.encryption ?? false;
     try {
       assertBackupStorageEncryptionSupported({
         encryption,
         provider: payload.provider,
-        providerConfig: payload.details ?? {},
+        providerConfig: details,
       });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Backup encryption is not supported for this config' }, 400);
     }
 
     const now = new Date();
-    const [row] = await db
-      .insert(backupConfigs)
-      .values({
-        orgId,
-        name: payload.name,
-        type: 'file',
-        provider: payload.provider,
-        providerConfig: payload.details ?? {},
-        providerCapabilities: null,
-        providerCapabilitiesCheckedAt: null,
-        encryption,
-        isActive: payload.enabled ?? true,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
+    // Demote + insert atomically: a failed insert must not leave the org with
+    // its previous default already cleared and no new one to replace it (the
+    // org default is the destination every partner-wide backup resolves to).
+    // The partial unique index on (org_id) WHERE is_default enforces at most one.
+    const [row] = await db.transaction(async (tx) => {
+      if (payload.isDefault === true) {
+        await tx
+          .update(backupConfigs)
+          .set({ isDefault: false, updatedAt: now })
+          .where(and(eq(backupConfigs.orgId, orgId), eq(backupConfigs.isDefault, true)));
+      }
+      return tx
+        .insert(backupConfigs)
+        .values({
+          orgId,
+          name: payload.name,
+          type: 'file',
+          provider: payload.provider,
+          providerConfig: details,
+          providerCapabilities: null,
+          providerCapabilitiesCheckedAt: null,
+          encryption,
+          isActive: payload.enabled ?? true,
+          isDefault: payload.isDefault ?? false,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+    });
 
     if (!row) {
       return c.json({ error: 'Failed to create config' }, 500);
@@ -291,24 +333,45 @@ configsRoutes.patch(
     const { id: configId } = c.req.valid('param');
     const payload = c.req.valid('json');
 
+    // Every validation and existence check runs BEFORE any write. Demoting the
+    // org's current default and then bailing out with a 400/404 would leave the
+    // org with NO default destination — and the org default is what every
+    // partner-wide and profile-linked backup resolves to, so their scheduled
+    // backups would start skipping with no obvious cause.
+    const [current] = await db
+      .select()
+      .from(backupConfigs)
+      .where(and(eq(backupConfigs.id, configId), eq(backupConfigs.orgId, orgId)))
+      .limit(1);
+
+    if (!current) {
+      return c.json({ error: 'Config not found' }, 404);
+    }
+
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (payload.name !== undefined) updateData.name = payload.name;
     if (payload.enabled !== undefined) updateData.isActive = payload.enabled;
     if (payload.encryption !== undefined) updateData.encryption = payload.encryption;
+    if (payload.isDefault !== undefined) updateData.isDefault = payload.isDefault;
+
     if (payload.details !== undefined || payload.encryption !== undefined) {
-      const [current] = await db
-        .select()
-        .from(backupConfigs)
-        .where(and(eq(backupConfigs.id, configId), eq(backupConfigs.orgId, orgId)))
-        .limit(1);
-
-      if (!current) {
-        return c.json({ error: 'Config not found' }, 404);
-      }
-
       const nextProviderConfig = payload.details !== undefined
         ? preserveSecretFields(payload.details, current.providerConfig)
         : current.providerConfig;
+      if (payload.details !== undefined && current.provider === 's3' && isRecord(nextProviderConfig)) {
+        // NOTE: configUpdateSchema has no superRefine (it cannot — `provider`
+        // is not part of an update payload, so the schema can't tell an s3
+        // config from a local one). This hand-rolled call is therefore the
+        // ONLY thing standing between a malformed endpoint and the database on
+        // the PATCH path. Do not remove it without adding equivalent
+        // validation elsewhere. Covered by the PATCH tests in configs.test.ts.
+        const { error, region, endpoint } = validateS3Details(nextProviderConfig);
+        if (error) {
+          return c.json({ error }, 400);
+        }
+        if (region) nextProviderConfig.region = region;
+        if (endpoint) nextProviderConfig.endpoint = endpoint;
+      }
       const nextEncryption = payload.encryption ?? current.encryption;
 
       try {
@@ -328,13 +391,22 @@ configsRoutes.patch(
       }
     }
 
-    const [row] = await db
-      .update(backupConfigs)
-      .set(updateData)
-      .where(
-        and(eq(backupConfigs.id, configId), eq(backupConfigs.orgId, orgId))
-      )
-      .returning();
+    // Demote + promote atomically: the partial unique index on (org_id) WHERE
+    // is_default allows at most one default, so a concurrent promote must not
+    // see a half-applied swap.
+    const [row] = await db.transaction(async (tx) => {
+      if (payload.isDefault === true) {
+        await tx
+          .update(backupConfigs)
+          .set({ isDefault: false, updatedAt: new Date() })
+          .where(and(eq(backupConfigs.orgId, orgId), eq(backupConfigs.isDefault, true)));
+      }
+      return tx
+        .update(backupConfigs)
+        .set(updateData)
+        .where(and(eq(backupConfigs.id, configId), eq(backupConfigs.orgId, orgId)))
+        .returning();
+    });
 
     if (!row) {
       return c.json({ error: 'Config not found' }, 404);
@@ -492,6 +564,7 @@ function toConfigResponse(row: typeof backupConfigs.$inferSelect) {
     name: row.name,
     provider: row.provider,
     enabled: row.isActive,
+    isDefault: row.isDefault,
     encryption: buildBackupStorageEncryptionResponse({
       encryption: row.encryption,
       provider: row.provider,

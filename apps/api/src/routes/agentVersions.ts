@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { zValidator } from "@hono/zod-validator";
+import { zValidator } from '../lib/validation';
 import { z } from "zod";
 import { createPublicKey, verify as verifySignature } from "node:crypto";
 import { and, eq, desc } from "drizzle-orm";
@@ -78,7 +78,7 @@ const createVersionSchema = z.object({
 
 // Controlled fleet rollout: explicitly promote a registered version to the
 // fleet upgrade target. Omitting `component` promotes ALL components of the
-// version. See docs/superpowers/specs/2026-06-23-controlled-agent-fleet-rollout.md.
+// version. See docs/superpowers/specs/agent/2026-06-23-controlled-agent-fleet-rollout.md.
 const promoteSchema = z.object({
   version: z.string().min(1).max(20),
   component: componentEnum.optional(),

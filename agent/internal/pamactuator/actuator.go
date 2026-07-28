@@ -38,6 +38,8 @@ package pamactuator
 
 import "context"
 
+const dismissCancelledReason = "dismiss_cancelled"
+
 // Request is the input to Actuator.Trigger. Carries everything needed to
 // drive a single consent.exe prompt to completion. Username + password are
 // the cleartext dormant-admin credentials to type — they live in process
@@ -58,7 +60,42 @@ type Request struct {
 	// TimeoutMs bounds how long the actuator will wait for consent.exe
 	// to appear on the secure desktop. Server defaults to 8000.
 	TimeoutMs int
+
+	// TargetPath is the absolute path of the executable to launch elevated.
+	// Used only by the token_launch strategy (Path B); the sendinput strategy
+	// ignores it (it injects into an already-pending consent.exe).
+	TargetPath string
+
+	// CommandLine is the full command line for the elevated launch (Path B).
+	// Ignored by the sendinput strategy.
+	CommandLine string
+
+	// SubjectSessionID is the interactive session id that raised the elevation,
+	// when known. Reserved seam for a future ETW change that surfaces the
+	// requesting session directly — currently always 0 (unset), because the ETW
+	// 15028 event's writing process is the session-0 AppInfo service, so its
+	// header session id is not the interactive one. When 0 the resolver falls
+	// back to SubjectUsername. token_launch only.
+	SubjectSessionID uint32
+
+	// SubjectUsername is the account that requested the elevation — from the
+	// server-echoed elevation_requests.subject_username (remote path) or from
+	// ETW discovery (local path). The token_launch resolver maps it to that
+	// user's live interactive session so the elevated process lands in front of
+	// the requester (not the physical console) on RDP/multi-session hosts. NOT a
+	// credential; used only to choose a local session. Ignored by sendinput.
+	SubjectUsername string
 }
+
+// ReasonNoConsentWindow is returned when the helper looked at the consent
+// desktop and found no UAC prompt at all.
+//
+// This string is load-bearing beyond logging: the PAM fail-closed gate treats
+// it as PROOF that no denied prompt can still be on screen (see
+// sessionbroker.PamDismissOutcome.Cleared). Renaming the literal without
+// updating that check fails closed into a permanent PAM lockout, so producers
+// and consumers both reference this constant rather than repeating the string.
+const ReasonNoConsentWindow = "no_consent_window"
 
 // Result reports what the actuator did. Returned to the server so the
 // approval flow can mark the elevation_requests row as satisfied or
@@ -71,8 +108,16 @@ type Result struct {
 	// Reason is a short stable code suitable for switch statements on
 	// the server side. One of: "ok", "no_consent_window", "desktop_open_failed",
 	// "set_thread_desktop_failed", "send_input_failed", "consent_did_not_close",
-	// "unsupported_platform". Dismiss returns from this same code set (it shares
-	// Trigger's desktop-attach / input / close-verification failure reasons).
+	// "unsupported_platform", "dismiss_cancelled". Dismiss returns from this
+	// same code set (it shares Trigger's desktop-attach / input /
+	// close-verification failure reasons).
+	//
+	// The above codes are the sendinput (Path A) strategy's set. The
+	// token_launch (Path B) strategy — tokenLaunchActuator, in
+	// tokenlaunch_windows.go — contributes its own additional codes:
+	// "empty_target", "session_lookup_failed", "logon_failed",
+	// "set_session_failed", "desktop_grant_failed", "create_process_failed".
+	// See tokenlaunch_windows.go for the full reason-code contract.
 	Reason string
 
 	// DetailMessage is a free-form human-readable string for logs. Never
@@ -95,12 +140,55 @@ type Actuator interface {
 	// "no_consent_window" if none was found, or one of Trigger's failure
 	// reasons for desktop-attach / input / close-verification failures
 	// ("desktop_open_failed", "set_thread_desktop_failed", "send_input_failed",
-	// "consent_did_not_close", "unsupported_platform").
+	// "consent_did_not_close", "unsupported_platform", "dismiss_cancelled").
 	Dismiss(ctx context.Context) Result
+}
+
+// dismissCancellationResult gives every platform implementation the same
+// stable result when the caller's input-injection window has closed.
+func dismissCancellationResult(ctx context.Context) (Result, bool) {
+	if err := ctx.Err(); err != nil {
+		return Result{
+			Success:       false,
+			Reason:        dismissCancelledReason,
+			DetailMessage: "PAM consent dismissal cancelled before input: " + err.Error(),
+		}, true
+	}
+	return Result{}, false
+}
+
+func dismissPostInputCancellationResult(ctx context.Context) (Result, bool) {
+	if err := ctx.Err(); err != nil {
+		return Result{
+			Success:       false,
+			Reason:        dismissCancelledReason,
+			DetailMessage: "PAM consent dismissal cancelled after Escape while waiting for consent.exe to close: " + err.Error(),
+		}, true
+	}
+	return Result{}, false
 }
 
 // New returns the platform-default Actuator. On non-Windows this returns
 // a no-op that always reports Reason="unsupported_platform".
 func New() Actuator {
 	return newActuator()
+}
+
+// Strategy selects the concrete Windows actuator implementation.
+type Strategy string
+
+const (
+	// StrategySendInput is Path A: inject dormant-admin credentials into the
+	// live consent.exe prompt via SendInput on the secure desktop.
+	StrategySendInput Strategy = "sendinput"
+	// StrategyTokenLaunch is Path B: suppress consent.exe and launch the target
+	// elevated via LogonUser(~breeze_elev) → CreateProcessAsUser.
+	StrategyTokenLaunch Strategy = "token_launch"
+)
+
+// NewWithStrategy returns the Windows actuator for the given strategy. An
+// unrecognized strategy falls back to the platform default (sendinput on
+// Windows, no-op elsewhere). On non-Windows this always returns the no-op.
+func NewWithStrategy(s Strategy) Actuator {
+	return newActuatorForStrategy(s)
 }

@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import AutomationTab from './AutomationTab';
 import { fetchWithAuth } from '../../../stores/auth';
+import { applyLocale, i18n } from '@/lib/i18n';
 
 const saveMock = vi.fn();
 const removeMock = vi.fn();
@@ -49,9 +50,26 @@ function renderTab() {
 }
 
 describe('AutomationTab — deploy_software action', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en');
     vi.clearAllMocks();
     fetchMock.mockResolvedValue(makeJsonResponse({ data: CATALOG }));
+  });
+
+  afterEach(async () => {
+    await i18n.changeLanguage('en');
+  });
+
+  it('updates mounted action options when the locale changes', async () => {
+    renderTab();
+    fireEvent.click(screen.getAllByRole('button', { name: /Add Automation/i })[0]);
+    expect(screen.getByRole('option', { name: 'Deploy Software' })).toBeInTheDocument();
+
+    await act(async () => {
+      await applyLocale('pt-BR');
+    });
+
+    expect(screen.getByRole('option', { name: 'Implantar software' })).toBeInTheDocument();
   });
 
   it('renders a catalog picker + helper text and emits { type:"deploy_software", catalogId }', async () => {
@@ -76,8 +94,10 @@ describe('AutomationTab — deploy_software action', () => {
       expect(fetchMock).toHaveBeenCalledWith('/software/catalog?limit=100'),
     );
 
-    // Open the picker dropdown and select an entry.
-    fireEvent.click(screen.getByText('Select software...'));
+    // Open the picker dropdown and select an entry. findByText: the picker
+    // shows "Loading..." until the catalog fetch resolves — the waitFor above
+    // only proves the fetch was CALLED, not that the state update flushed.
+    fireEvent.click(await screen.findByText('Select software...'));
     fireEvent.click(await screen.findByText('Google Chrome'));
 
     // Persist and assert the emitted action shape.

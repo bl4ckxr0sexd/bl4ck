@@ -1,12 +1,13 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import PartnerSettingsPage, { runPartnerSave } from './PartnerSettingsPage';
 import { fetchWithAuth } from '../../stores/auth';
 import { useOrgStore } from '../../stores/orgStore';
 import { showToast } from '../shared/Toast';
 import { getJwtClaims } from '../../lib/authScope';
+import { i18n, loadLocale } from '../../lib/i18n';
 
 vi.mock('../../stores/auth', () => ({
   fetchWithAuth: vi.fn()
@@ -44,6 +45,10 @@ const fetchWithAuthMock = vi.mocked(fetchWithAuth);
 const useOrgStoreMock = vi.mocked(useOrgStore);
 const showToastMock = vi.mocked(showToast);
 const getJwtClaimsMock = vi.mocked(getJwtClaims);
+
+afterEach(async () => {
+  await act(async () => { await i18n.changeLanguage('en'); });
+});
 
 const makeJsonResponse = (payload: unknown, ok = true, status = ok ? 200 : 500): Response =>
   ({
@@ -83,9 +88,10 @@ describe('runPartnerSave', () => {
   // Regression for #1976: a partner-settings save that fails server-side Zod
   // validation must surface the specific field message — not collapse into the
   // generic "Failed to save settings" fallback. The save flows through runAction,
-  // which (via extractApiError) recovers issues from @hono/zod-validator's default
-  // 400 body. Under zod v4 the ZodError's `issues` are non-enumerable, so they are
-  // JSON-stringified into `error.message`; this mirrors that exact wire shape.
+  // which (via extractApiError) recovers issues from the legacy pre-#2201
+  // @hono/zod-validator default 400 body (kept for older deployed APIs). Under
+  // zod v4 the ZodError's `issues` are non-enumerable, so they are
+  // JSON-stringified into `error.message`; this mirrors that legacy wire shape.
   it('surfaces the specific Zod validation message (not the generic fallback) on a 400', async () => {
     const zodValidatorBody = {
       success: false,
@@ -143,14 +149,7 @@ describe('runPartnerSave', () => {
 });
 
 describe('PartnerSettingsPage language control', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    window.location.hash = '';
-    useOrgStoreMock.mockReturnValue({ currentPartnerId: 'partner-1', isLoading: false } as never);
-  });
-
-  it('removes coming-soon language selector and shows default language copy', async () => {
-    // Default response for child component fetches (e.g., KnownGuestsSettings)
+  const renderPartner = async (language = 'en') => {
     fetchWithAuthMock.mockResolvedValue(makeJsonResponse({ data: [] }));
     fetchWithAuthMock.mockResolvedValueOnce(
       makeJsonResponse({
@@ -164,7 +163,7 @@ describe('PartnerSettingsPage language control', () => {
           timezone: 'UTC',
           dateFormat: 'MM/DD/YYYY',
           timeFormat: '12h',
-          language: 'en',
+          language,
           businessHours: { preset: 'business' },
           contact: {}
         }
@@ -172,15 +171,85 @@ describe('PartnerSettingsPage language control', () => {
     );
 
     render(<PartnerSettingsPage />);
-
-    await screen.findByText('Partner Settings');
-    // Company is the default tab now; switch to Regional to check the language copy.
-    const regionalTab = screen.getByRole('link', { name: /^regional$/i });
+    await screen.findByRole('heading', { name: /Partner Settings|Configurações do parceiro/i });
     const user = userEvent.setup();
-    await user.click(regionalTab);
+    await user.click(screen.getByRole('link', { name: /^regional$/i }));
+    return user;
+  };
 
-    expect(screen.queryByText('More languages coming soon')).toBeNull();
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    window.location.hash = '';
+    await act(async () => { await i18n.changeLanguage('en'); });
+    useOrgStoreMock.mockReturnValue({ currentPartnerId: 'partner-1', isLoading: false } as never);
+  });
+
+  it('renders an active selector with exactly the supported locales', async () => {
+    await renderPartner();
+
+    const languageSelect = screen.getByLabelText('Language') as HTMLSelectElement;
+    expect(languageSelect.value).toBe('en');
+    expect(Array.from(languageSelect.options).map(option => option.value)).toEqual([
+      'en', 'pt-BR', 'es-419', 'fr-FR', 'fr-CA', 'de-DE', 'it-IT',
+    ]);
     expect(screen.getByText('Default language for partner settings.')).not.toBeNull();
+  });
+
+  it('loads pt-BR and includes a language edit in dirty tracking and the save payload', async () => {
+    const user = await renderPartner('pt-BR');
+    const languageSelect = screen.getByLabelText('Language') as HTMLSelectElement;
+    expect(languageSelect.value).toBe('pt-BR');
+
+    const saveButton = screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    await user.selectOptions(languageSelect, 'en');
+    expect(saveButton.disabled).toBe(false);
+
+    await user.click(saveButton);
+    const patchCall = fetchWithAuthMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'
+    );
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+    expect(body.settings.language).toBe('en');
+  });
+
+  it.each(['es-419', 'fr-FR', 'fr-CA', 'de-DE', 'it-IT'] as const)(
+    'hydrates %s and preserves it when an unrelated partner setting is saved',
+    async (persistedLocale) => {
+      const user = await renderPartner(persistedLocale);
+      const languageSelect = screen.getByLabelText('Language') as HTMLSelectElement;
+      expect(languageSelect.value).toBe(persistedLocale);
+
+      await user.selectOptions(screen.getByLabelText('Timezone'), 'Europe/London');
+      await user.click(screen.getByRole('button', { name: /save settings/i }));
+
+      const patchCall = fetchWithAuthMock.mock.calls.find(
+        ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'
+      );
+      expect(patchCall).toBeDefined();
+      const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+      expect(body.settings.language).toBe(persistedLocale);
+    }
+  );
+
+  it('falls back to English when the persisted locale is unsupported', async () => {
+    await renderPartner('unsupported-locale');
+
+    expect((screen.getByLabelText('Language') as HTMLSelectElement).value).toBe('en');
+  });
+
+  it('renders the Regional Settings surface in pt-BR', async () => {
+    await act(async () => {
+      await loadLocale('pt-BR');
+      await i18n.changeLanguage('pt-BR');
+    });
+    await renderPartner('pt-BR');
+
+    expect(screen.getByText('Configurações regionais')).not.toBeNull();
+    expect(screen.getByLabelText('Fuso horário')).not.toBeNull();
+    expect(screen.getAllByText('Horário comercial')).toHaveLength(2);
+    expect(screen.getByText('Idioma padrão das configurações do parceiro.')).not.toBeNull();
   });
 });
 
@@ -270,6 +339,81 @@ describe('PartnerSettingsPage Company tab', () => {
     const body = JSON.parse((patchCall![1] as RequestInit).body as string);
     expect(body.name).toBe('Acme MSP Inc.');
     expect(body.settings.address.city).toBe('Denver');
+  });
+
+  const partnerWithSignature = (emailSignature: string | null) => ({
+    id: 'partner-1',
+    name: 'Acme MSP',
+    slug: 'acme',
+    type: 'partner',
+    plan: 'pro',
+    emailSignature,
+    createdAt: '2026-02-09T00:00:00.000Z',
+    settings: {
+      timezone: 'UTC',
+      dateFormat: 'MM/DD/YYYY',
+      timeFormat: '12h',
+      language: 'en',
+      businessHours: { preset: 'business' },
+      contact: {},
+      address: {},
+    },
+  });
+
+  it('shows the saved email signature and sends an edited value at the payload top level', async () => {
+    fetchWithAuthMock.mockResolvedValue(makeJsonResponse({ data: [] }));
+    fetchWithAuthMock.mockResolvedValueOnce(
+      makeJsonResponse(partnerWithSignature('Best regards,\nAcme MSP'))
+    );
+    // Response to the PATCH — shape doesn't matter for the assertion.
+    fetchWithAuthMock.mockResolvedValueOnce(
+      makeJsonResponse({ id: 'partner-1', name: 'Acme MSP', settings: {} })
+    );
+
+    render(<PartnerSettingsPage />);
+
+    const textarea = await screen.findByTestId('partner-email-signature') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('Best regards,\nAcme MSP');
+
+    const saveBtn = screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true);
+
+    const user = userEvent.setup();
+    await user.clear(textarea);
+    await user.type(textarea, 'Cheers, The Acme Team');
+    expect(saveBtn.disabled).toBe(false);
+    await user.click(saveBtn);
+
+    const patchCall = fetchWithAuthMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'
+    );
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+    expect(body.emailSignature).toBe('Cheers, The Acme Team');
+  });
+
+  it('sends emailSignature: null when the field is cleared', async () => {
+    fetchWithAuthMock.mockResolvedValue(makeJsonResponse({ data: [] }));
+    fetchWithAuthMock.mockResolvedValueOnce(
+      makeJsonResponse(partnerWithSignature('Old signature'))
+    );
+    fetchWithAuthMock.mockResolvedValueOnce(
+      makeJsonResponse({ id: 'partner-1', name: 'Acme MSP', settings: {} })
+    );
+
+    render(<PartnerSettingsPage />);
+
+    const textarea = await screen.findByTestId('partner-email-signature') as HTMLTextAreaElement;
+    const user = userEvent.setup();
+    await user.clear(textarea);
+    await user.click(screen.getByRole('button', { name: /save settings/i }));
+
+    const patchCall = fetchWithAuthMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'
+    );
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+    expect(body.emailSignature).toBeNull();
   });
 });
 
@@ -459,6 +603,7 @@ describe('PartnerSettingsPage access gate (no flash-of-access-denied)', () => {
       currentPartnerId: null,
       isLoading: true,
       setPartner: vi.fn(),
+      adoptPartnerId: vi.fn(),
     } as never);
     fetchWithAuthMock.mockResolvedValue(makeJsonResponse({ data: [] }));
 
@@ -478,6 +623,7 @@ describe('PartnerSettingsPage access gate (no flash-of-access-denied)', () => {
       currentPartnerId: 'partner-1',
       isLoading: false,
       setPartner: vi.fn(),
+      adoptPartnerId: vi.fn(),
     } as never);
     fetchWithAuthMock.mockResolvedValue(makeJsonResponse({ data: [] }));
     fetchWithAuthMock.mockResolvedValueOnce(makeJsonResponse(partnerResponse));
@@ -488,6 +634,27 @@ describe('PartnerSettingsPage access gate (no flash-of-access-denied)', () => {
     expect(screen.queryByText('Partner Access Required')).toBeNull();
   });
 
+  it('seeds a missing partner id from the JWT via adoptPartnerId — never the context-resetting setPartner', async () => {
+    // Regression: visiting /settings/partner with currentPartnerId unset used
+    // to call setPartner, whose reset + auto-select silently snapped the org
+    // scope to the first org (context hijack).
+    const setPartner = vi.fn();
+    const adoptPartnerId = vi.fn();
+    useOrgStoreMock.mockReturnValue({
+      currentPartnerId: null,
+      isLoading: false,
+      setPartner,
+      adoptPartnerId,
+    } as never);
+    getJwtClaimsMock.mockReturnValue({ scope: 'partner', orgId: null, partnerId: 'partner-1' });
+    fetchWithAuthMock.mockResolvedValue(makeJsonResponse({ data: [] }));
+
+    render(<PartnerSettingsPage />);
+
+    await waitFor(() => expect(adoptPartnerId).toHaveBeenCalledWith('partner-1'));
+    expect(setPartner).not.toHaveBeenCalled();
+  });
+
   it('shows access-denied once resolution confirms a genuine non-partner user', async () => {
     // Context finished resolving (isLoading false) with no partner, and the JWT
     // confirms a non-partner scope — the genuine denied case.
@@ -495,6 +662,7 @@ describe('PartnerSettingsPage access gate (no flash-of-access-denied)', () => {
       currentPartnerId: null,
       isLoading: false,
       setPartner: vi.fn(),
+      adoptPartnerId: vi.fn(),
     } as never);
     getJwtClaimsMock.mockReturnValue({ scope: 'organization', orgId: 'org-1', partnerId: null });
 

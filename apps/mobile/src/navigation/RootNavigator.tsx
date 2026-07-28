@@ -3,8 +3,14 @@ import { NavigationContainer, DefaultTheme as NavDefaultTheme } from '@react-nav
 import { Alert, Pressable, Text, View } from 'react-native';
 import * as Sentry from '@sentry/react-native';
 
-import { useAppSelector, useAppDispatch } from '../store';
-import { setCredentials, logout, logoutAsync } from '../store/authSlice';
+import { useAppSelector, useAppDispatch, store } from '../store';
+import {
+  setCredentials,
+  logout,
+  logoutAsync,
+  setApproverRegistration,
+  clearAuthenticatorRegisterGrant,
+} from '../store/authSlice';
 import { getStoredToken, getStoredUser, clearAuthData, SecureWipeError } from '../services/auth';
 import { getCurrentUser, onDeviceBlocked } from '../services/api';
 import { spacing, type } from '../theme';
@@ -83,11 +89,48 @@ export function RootNavigator() {
   // this phone an approver. Idempotent + fails open — never blocks the UI and
   // never prompts for biometrics here (the first real approval is the first
   // Face ID, which also activates the key server-side).
+  //
+  // "Fails open" must not mean "fails invisibly": we record the outcome so
+  // ApprovalGate can warn when registration failed, otherwise every approval
+  // from this phone is silently capped at L1.
+  // `active` is not an optimisation: checkAuth dispatches setCredentials twice
+  // on a cold start (cached user, then the fresh one from /auth/me), so this
+  // effect re-runs with a new `user` identity while the first registration call
+  // is still in flight. Without the guard the slower call wins, and worse — a
+  // call started for user A can resolve after A signed out and B signed in,
+  // writing A's outcome into B's session.
   useEffect(() => {
-    if (token && user) {
-      void ensureApproverDevice();
-    }
-  }, [token, user]);
+    if (!token || !user) return;
+    let active = true;
+    // #2707 read-and-clear: take the login-minted grant OUT of Redux before the
+    // async attempt. The grant is deliberately NOT in this effect's deps — the
+    // effect re-fires on every `user` identity change (checkAuth double-fires on
+    // cold start), and a replayed single-use grant would 403 and overwrite a
+    // successful registration with `failed`.
+    const registerGrant = store.getState().auth.authenticatorRegisterGrantId;
+    if (registerGrant) dispatch(clearAuthenticatorRegisterGrant());
+    void ensureApproverDevice(undefined, registerGrant ?? undefined).then((outcome) => {
+      if (!active) return;
+      if (outcome.status === 'failed') {
+        // Telemetry only, so a silent registration failure is at least visible
+        // in Sentry — this is otherwise invisible until the user reports it.
+        // NEVER include the grant value here; it's a single-use credential.
+        Sentry.captureMessage('approver-device registration failed', {
+          level: 'warning',
+          tags: { area: 'approver-device-registration', reason: outcome.reason },
+        });
+      }
+      dispatch(
+        setApproverRegistration({
+          status: outcome.status === 'already_registered' ? 'registered' : outcome.status,
+          reason: 'reason' in outcome ? outcome.reason : null,
+        })
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [token, user, dispatch]);
 
   useEffect(() => {
     async function checkAuth() {

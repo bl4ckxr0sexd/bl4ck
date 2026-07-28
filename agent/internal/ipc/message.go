@@ -22,9 +22,11 @@ const (
 	TypeTrayUpdate   = "tray_update"
 	TypeTrayAction   = "tray_action"
 
-	// PAM approval dialog
-	TypePamRequestDialog = "pam_request_dialog"
-	TypePamDialogResult  = "pam_dialog_result"
+	// PAM approval and consent dismissal
+	TypePamRequestDialog        = "pam_request_dialog"
+	TypePamDialogResult         = "pam_dialog_result"
+	TypePamDismissConsent       = "pam_dismiss_consent"
+	TypePamDismissConsentResult = "pam_dismiss_consent_result"
 
 	// Phase 4: Desktop + Clipboard
 	TypeDesktopStart  = "desktop_start"
@@ -118,18 +120,26 @@ type Envelope struct {
 	HMAC    string          `json:"hmac"`
 }
 
+// HelperRole identifies a connecting helper process and gates its scopes. It is
+// a named string so signatures and struct fields can state intent and so
+// conversions are forced at the wire/CLI boundary; it still marshals as a plain
+// JSON string. Note that a named string type does NOT give exhaustiveness —
+// HelperRole("sytem") still compiles — so the spawnable allow-list, the
+// fail-closed switch defaults, and scopesForRole remain the real safety gates.
+type HelperRole string
+
 // Helper role constants identify connecting helper processes and gate their scopes.
 const (
-	HelperRoleSystem   = "system"
-	HelperRoleUser     = "user"
-	HelperRoleWatchdog = "watchdog"
-	HelperRoleAssist   = "assist" // BL4CK Assist Tauri helper; receives helper token only
+	HelperRoleSystem   HelperRole = "system"
+	HelperRoleUser     HelperRole = "user"
+	HelperRoleWatchdog HelperRole = "watchdog"
+	HelperRoleAssist   HelperRole = "assist" // Breeze Assist Tauri helper; receives helper token only
 )
 
 // Scope constants identify the capabilities granted to a helper session.
 const (
 	ScopeAssist    = "assist"     // IPC scope granted to the assist helper
-	ScopePam       = "pam"        // IPC scope granted to the user helper for PAM dialogs
+	ScopePam       = "pam"        // IPC scope granted to the SYSTEM helper for PAM dialogs
 	ScopeConsentUI = "consent_ui" // narrow IPC scope: lets the assist helper receive remote-session consent prompt + active-session banner messages (UI only; NOT desktop/clipboard/notify)
 
 	// ScopeConsentUIFallback lets a user-role helper that advertised native
@@ -159,18 +169,18 @@ type ConsoleUserChangedPayload struct {
 
 // AuthRequest is sent by the user helper to the root daemon after connecting.
 type AuthRequest struct {
-	ProtocolVersion int    `json:"protocolVersion"`
-	UID             uint32 `json:"uid"`
-	SID             string `json:"sid,omitempty"` // Windows Security Identifier
-	Username        string `json:"username"`
-	SessionID       string `json:"sessionId"`
-	DisplayEnv      string `json:"displayEnv"`
-	PID             int    `json:"pid"`
-	BinaryHash      string `json:"binaryHash"`
-	WinSessionID    uint32 `json:"winSessionId,omitempty"` // Windows session ID (1, 2, etc.)
-	HelperRole      string `json:"helperRole,omitempty"`   // "system" | "user" | "watchdog" | "assist" (default: "system")
-	BinaryKind      string `json:"binaryKind,omitempty"`   // "user_helper", "desktop_helper", or "assist_helper"
-	DesktopContext  string `json:"desktopContext,omitempty"`
+	ProtocolVersion int        `json:"protocolVersion"`
+	UID             uint32     `json:"uid"`
+	SID             string     `json:"sid,omitempty"` // Windows Security Identifier
+	Username        string     `json:"username"`
+	SessionID       string     `json:"sessionId"`
+	DisplayEnv      string     `json:"displayEnv"`
+	PID             int        `json:"pid"`
+	BinaryHash      string     `json:"binaryHash"`
+	WinSessionID    uint32     `json:"winSessionId,omitempty"` // Windows session ID (1, 2, etc.)
+	HelperRole      HelperRole `json:"helperRole,omitempty"`   // "system" | "user" | "watchdog" | "assist" (default: "system")
+	BinaryKind      string     `json:"binaryKind,omitempty"`   // "user_helper", "desktop_helper", or "assist_helper"
+	DesktopContext  string     `json:"desktopContext,omitempty"`
 
 	// SupportsConsentUI advertises that this helper can natively render the
 	// remote-session consent dialog (consent_request). The granted
@@ -252,6 +262,20 @@ type PamDialogResult struct {
 	Approved        bool   `json:"approved"`
 	Reason          string `json:"reason,omitempty"`
 	DismissedByUser bool   `json:"dismissedByUser"`
+}
+
+// PamDismissConsentRequest asks the SYSTEM helper to dismiss consent.exe.
+// DeadlineUnixMs bounds input injection inside the target session and leaves
+// the broker time to receive the helper's correlated response.
+type PamDismissConsentRequest struct {
+	DeadlineUnixMs int64 `json:"deadlineUnixMs"`
+}
+
+// PamDismissConsentResult reports whether the helper dismissed consent.exe.
+type PamDismissConsentResult struct {
+	Success       bool   `json:"success"`
+	Reason        string `json:"reason"`
+	DetailMessage string `json:"detailMessage,omitempty"`
 }
 
 // TrayUpdate tells the user helper to update the system tray icon/menu.

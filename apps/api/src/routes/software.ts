@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../lib/validation';
 import { z } from 'zod';
 import { and, eq, sql, desc, like, or, inArray, isNotNull, type SQL } from 'drizzle-orm';
 import { db } from '../db';
@@ -559,9 +559,16 @@ softwareRoutes.get(
     const { orgId } = orgResult;
 
     const { id } = c.req.valid('param');
+    // Look up by id alone, then authorize in JS. RLS restricts visibility to the
+    // caller's org rows + their partner's built-ins; the org guard below rejects a
+    // (visible) org-scoped row belonging to a different org. Built-in integration
+    // packages (Huntress/SentinelOne) are partner-scoped with org_id NULL, so an
+    // `eq(orgId)` filter would exclude them — matching the /deploy route (#1957).
     const [item] = await db.select().from(softwareCatalog)
-      .where(and(eq(softwareCatalog.id, id), eq(softwareCatalog.orgId, orgId)));
-    if (!item) return c.json({ error: 'Catalog item not found' }, 404);
+      .where(eq(softwareCatalog.id, id));
+    if (!item || (item.orgId !== null && item.orgId !== orgId)) {
+      return c.json({ error: 'Catalog item not found' }, 404);
+    }
 
     const [versionCount] = await db.select({ count: sql<number>`count(*)` })
       .from(softwareVersions).where(eq(softwareVersions.catalogId, id));
@@ -680,9 +687,17 @@ softwareRoutes.get(
     const { orgId } = orgResult;
 
     const { id } = c.req.valid('param');
+    // Built-in integration packages (Huntress/SentinelOne) are partner-scoped with
+    // org_id NULL, so an `eq(orgId)` filter excludes the catalog row entirely and
+    // the endpoint 404s — which the deploy wizard renders as "No versions" with a
+    // grayed-out deploy. Look up by id and authorize in JS, mirroring the /deploy
+    // route: for an org/partner-scoped caller RLS binds a visible built-in to their
+    // own partner, so a NULL-org row here is the caller's own (system scope sees all).
     const [catalogItem] = await db.select().from(softwareCatalog)
-      .where(and(eq(softwareCatalog.id, id), eq(softwareCatalog.orgId, orgId)));
-    if (!catalogItem) return c.json({ error: 'Catalog item not found' }, 404);
+      .where(eq(softwareCatalog.id, id));
+    if (!catalogItem || (catalogItem.orgId !== null && catalogItem.orgId !== orgId)) {
+      return c.json({ error: 'Catalog item not found' }, 404);
+    }
 
     const versions = await db.select().from(softwareVersions)
       .where(eq(softwareVersions.catalogId, id))

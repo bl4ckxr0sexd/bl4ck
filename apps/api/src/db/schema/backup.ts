@@ -13,10 +13,11 @@ import {
   uniqueIndex,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
-import { organizations } from './orgs';
+import { sql } from 'drizzle-orm';
+import { organizations, partners } from './orgs';
 import { devices, deviceCommands } from './devices';
 import { users } from './users';
-import { configPolicyFeatureLinks } from './configurationPolicies';
+import { configPolicyFeatureLinks, backupModeEnum } from './configurationPolicies';
 import { storageEncryptionKeys } from './storageEncryption';
 
 export const backupProviderEnum = pgEnum('backup_provider', [
@@ -42,6 +43,29 @@ export const backupStatusEnum = pgEnum('backup_status', [
   'cancelled',
   'partial',
 ]);
+
+/**
+ * The two non-terminal `backup_status` values. A job in one of these is still
+ * in-flight and may legitimately accept a progress update or a terminal result;
+ * the other four (completed / failed / cancelled / partial) are terminal.
+ *
+ * Single source of truth for the "terminal vs in-flight" invariant over
+ * backupStatusEnum — imported by both services/backupProgress.ts and
+ * services/backupResultPersistence.ts so the invariant is defined exactly once,
+ * co-located with the enum it partitions.
+ */
+export const IN_FLIGHT_BACKUP_JOB_STATUSES = ['pending', 'running'] as const;
+
+/**
+ * Marker the stale-backup-job reaper (jobs/staleCommandReaper.ts) stamps into a
+ * reaped job's `error_log`. The result-persistence path reads it to distinguish
+ * a "failed-because-reaped" job from a user `cancelled` job or a genuine
+ * agent-reported failure, so a late-but-genuine `completed` result can still be
+ * recorded (flipping failed→completed) instead of stranding its already-uploaded
+ * snapshot in the bucket with no backup_snapshots row. Contains no LIKE
+ * metacharacters (`%` / `_`) so it is safe to match with a plain `LIKE`.
+ */
+export const STALE_BACKUP_REAP_MARKER = '[stale-backup-reaper]';
 
 export const backupJobTypeEnum = pgEnum('backup_job_type', [
   'scheduled',
@@ -74,6 +98,11 @@ export const backupConfigs = pgTable(
     encryption: boolean('encryption').notNull().default(false),
     encryptionKey: text('encryption_key'),
     isActive: boolean('is_active').notNull().default(true),
+    // The org's default destination. Partner-wide config policies cannot pin
+    // one org's credentials, so their backup links resolve to the device
+    // org's default config at job-creation time. At most one per org
+    // (partial unique index).
+    isDefault: boolean('is_default').notNull().default(false),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -82,6 +111,37 @@ export const backupConfigs = pgTable(
     typeIdx: index('backup_configs_type_idx').on(table.type),
     providerIdx: index('backup_configs_provider_idx').on(table.provider),
     activeIdx: index('backup_configs_active_idx').on(table.isActive),
+    orgDefaultUq: uniqueIndex('backup_configs_org_default_uq')
+      .on(table.orgId)
+      .where(sql`is_default`),
+  })
+);
+
+// Backup selection profiles ("what to protect" for a device class) — the
+// Cove-style entity from docs/superpowers/specs/backup/2026-07-13-backup-profiles-design.md.
+// Dual-ownership per epic #2135: org_id XOR partner_id (CHECK + dual-axis RLS
+// live in 2026-07-13-backup-profiles.sql). `selections` enables any subset of
+// source types — keys match backup_mode_enum (file / system_image / mssql /
+// hyperv), each with per-source options; shape validated by
+// backupProfileSelectionsSchema in @breeze/shared.
+export const backupProfiles = pgTable(
+  'backup_profiles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id),
+    partnerId: uuid('partner_id').references(() => partners.id),
+    name: varchar('name', { length: 200 }).notNull(),
+    description: text('description'),
+    selections: jsonb('selections').notNull().default({}),
+    isActive: boolean('is_active').notNull().default(true),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdIdx: index('backup_profiles_org_id_idx').on(table.orgId),
+    partnerIdIdx: index('backup_profiles_partner_id_idx').on(table.partnerId),
+    activeIdx: index('backup_profiles_active_idx').on(table.isActive),
   })
 );
 
@@ -128,14 +188,30 @@ export const backupJobs = pgTable(
       .notNull()
       .references(() => backupConfigs.id),
     policyId: uuid('policy_id').references(() => backupPolicies.id),
-    featureLinkId: uuid('feature_link_id').references(() => configPolicyFeatureLinks.id),
+    // SET NULL (not cascade): feature_link_id is nullable and backup_jobs are
+    // execution/audit history with a lifecycle independent of the policy link —
+    // removing the Backup feature must not destroy backup history (or the only
+    // rows tracking objects already in storage). Unlinking just detaches. The
+    // job's own children (snapshots/verifications) DO cascade from the job below.
+    featureLinkId: uuid('feature_link_id').references(() => configPolicyFeatureLinks.id, {
+      onDelete: 'set null',
+    }),
     deviceId: uuid('device_id')
       .notNull()
       .references(() => devices.id),
     status: backupStatusEnum('status').notNull().default('pending'),
     type: backupJobTypeEnum('type').notNull().default('scheduled'),
-    startedAt: timestamp('started_at'),
-    completedAt: timestamp('completed_at'),
+    // Profile fan-out (spec 2026-07-13): a profile with N enabled selections
+    // creates N jobs per occurrence, each carrying its own mode + targets so
+    // dispatch doesn't depend on the (mutable) settings row. NULL = legacy
+    // job; dispatch falls back to reading the feature link's settings.
+    backupMode: backupModeEnum('backup_mode'),
+    modeTargets: jsonb('mode_targets'),
+    // timestamptz to match last_progress_at below: the stale reaper COALESCEs
+    // started_at with last_progress_at, which is only correct when both carry
+    // timezone. Aligned by migration 2026-08-02-align-backup-jobs-timestamptz.sql.
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
     totalSize: bigint('total_size', { mode: 'number' }),
     transferredSize: bigint('transferred_size', { mode: 'number' }),
     fileCount: integer('file_count'),
@@ -144,6 +220,16 @@ export const backupJobs = pgTable(
     snapshotId: varchar('snapshot_id', { length: 200 }),
     vssMetadata: jsonb('vss_metadata'),
     backupType: backupTypeEnum('backup_type').default('file'),
+    // Live-progress columns (stall detection + UI progress/speed). Set on
+    // every backup_progress WS message and on the async started-ack; NULL
+    // means the agent never reported progress (legacy agent).
+    lastProgressAt: timestamp('last_progress_at', { withTimezone: true }),
+    totalFiles: integer('total_files'),
+    // Incremental-backup dedup stats: files/bytes referenced from a prior
+    // snapshot instead of re-transferred this run. NULL = agent didn't report
+    // dedup (legacy agent, or nothing was referenced).
+    referencedSize: bigint('referenced_size', { mode: 'number' }),
+    referencedFiles: integer('referenced_files'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -167,7 +253,7 @@ export const backupSnapshots = pgTable(
       .references(() => organizations.id),
     jobId: uuid('job_id')
       .notNull()
-      .references(() => backupJobs.id),
+      .references(() => backupJobs.id, { onDelete: 'cascade' }),
     deviceId: uuid('device_id')
       .notNull()
       .references(() => devices.id),

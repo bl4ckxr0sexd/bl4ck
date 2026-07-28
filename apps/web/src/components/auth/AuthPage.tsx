@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import LoginPage from './LoginPage';
 import PartnerRegisterPage from './PartnerRegisterPage';
 import { useRegistrationGate } from '../../stores/featuresStore';
+import { useHashState } from '@/lib/useHashState';
+// Initializes the shared i18next singleton. This page's layout has no Sidebar
+// (which is what pulls i18n in elsewhere), so without this every t() call here
+// renders its raw key.
+import '../../lib/i18n';
 
 interface AuthPageProps {
   next?: string;
@@ -9,13 +14,11 @@ interface AuthPageProps {
 
 type Tab = 'signin' | 'signup';
 
-function getInitialTab(): Tab {
-  if (typeof window === 'undefined') return 'signin';
-  return window.location.hash === '#signup' ? 'signup' : 'signin';
-}
-
 export default function AuthPage({ next }: AuthPageProps) {
-  const [tab, setTab] = useState<Tab>(getInitialTab);
+  const { t } = useTranslation('auth');
+  // SSR-safe hash tab (#2421): starts at signin, adopts the hash post-mount.
+  // Any hash other than #signup (including #signin) falls back to signin.
+  const [tab, setTab] = useHashState<Tab>('signin', (h) => (h === 'signup' ? 'signup' : undefined));
 
   // Runtime registration gate (#1308 / #1979). The server enforces
   // ENABLE_REGISTRATION on /auth/register-partner; mirror it client-side so the
@@ -23,14 +26,6 @@ export default function AuthPage({ next }: AuthPageProps) {
   // disabled. The gate is read from runtime /config, the same source of truth
   // PartnerRegisterPage and LoginForm consult — not a build-time PUBLIC_ flag.
   const { enabled: registrationEnabled, loaded: gateLoaded } = useRegistrationGate();
-
-  useEffect(() => {
-    const onHashChange = () => {
-      setTab(window.location.hash === '#signup' ? 'signup' : 'signin');
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
 
   const handleTabChange = (newTab: Tab) => {
     window.location.hash = newTab;
@@ -56,7 +51,7 @@ export default function AuthPage({ next }: AuthPageProps) {
               tab === 'signin' ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            Sign in
+            {t('authPage.tabs.signIn', { defaultValue: 'Sign in' })}
           </button>
           <button
             type="button"
@@ -68,7 +63,7 @@ export default function AuthPage({ next }: AuthPageProps) {
               tab === 'signup' ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            Create account
+            {t('authPage.tabs.createAccount', { defaultValue: 'Create account' })}
           </button>
         </div>
       )}
@@ -83,12 +78,14 @@ export default function AuthPage({ next }: AuthPageProps) {
         // off-page) so a directly-shared /auth#signup link isn't a dead end.
         <div data-testid="registration-disabled-notice" role="status" aria-live="polite">
           <div className="mb-8">
-            <p className="text-sm font-medium text-muted-foreground">Registration closed</p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight">Sign-ups are disabled</h1>
+            <p className="text-sm font-medium text-muted-foreground">{t('authPage.registrationClosed.eyebrow', { defaultValue: 'Registration closed' })}</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight">{t('authPage.registrationClosed.title', { defaultValue: 'Sign-ups are disabled' })}</h1>
           </div>
           <div className="mb-6 rounded-md border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800 dark:border-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-200">
-            New registrations are currently disabled. Please contact your administrator for an
-            invitation.
+            {t('authPage.registrationClosed.description', {
+              defaultValue:
+                'New registrations are currently disabled. Please contact your administrator for an invitation.',
+            })}
           </div>
           <button
             type="button"
@@ -96,7 +93,7 @@ export default function AuthPage({ next }: AuthPageProps) {
             onClick={() => handleTabChange('signin')}
             className="font-medium text-primary hover:underline"
           >
-            Back to sign in
+            {t('common.backToSignIn', { defaultValue: 'Back to sign in' })}
           </button>
         </div>
       ) : (

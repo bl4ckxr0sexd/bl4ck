@@ -65,7 +65,7 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
     { name: 'Automations', description: 'Automation workflows and runs' },
     { name: 'Policies', description: 'Compliance policy definitions and evaluations' },
     { name: 'Reports', description: 'Reporting and data exports' },
-    { name: 'Remote', description: 'Remote access sessions and file transfers' },
+    { name: 'Remote', description: 'Remote access sessions' },
     { name: 'Agents', description: 'Agent enrollment and communication' },
     { name: 'Audit', description: 'Audit logging and activity tracking' }
   ],
@@ -124,7 +124,12 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
           user: { $ref: '#/components/schemas/User' },
           tokens: { $ref: '#/components/schemas/Tokens' },
           mfaRequired: { type: 'boolean' },
-          tempToken: { type: 'string', description: 'Temporary token for MFA verification' }
+          tempToken: { type: 'string', description: 'Temporary token for MFA verification' },
+          authenticatorRegisterGrantId: {
+            type: 'string',
+            description:
+              'Single-use 300s grant for registering this device as an approver. Only returned on POST /auth/login and /auth/mfa/verify to clients sending X-Breeze-Mobile-Device-Id; never on /auth/register or /auth/refresh.',
+          },
         }
       },
       RegisterRequest: {
@@ -215,7 +220,7 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
           name: { type: 'string' },
           slug: { type: 'string' },
           type: { type: 'string', enum: ['customer', 'internal'] },
-          status: { type: 'string', enum: ['active', 'suspended', 'trial', 'churned'] },
+          status: { type: 'string', enum: ['active', 'suspended', 'trial', 'churned', 'offboarding'] },
           maxDevices: { type: 'integer', nullable: true },
           contractStart: { type: 'string', format: 'date-time', nullable: true },
           contractEnd: { type: 'string', format: 'date-time', nullable: true },
@@ -568,25 +573,6 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
           createdAt: { type: 'string', format: 'date-time' }
         }
       },
-      FileTransfer: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', format: 'uuid' },
-          sessionId: { type: 'string', format: 'uuid', nullable: true },
-          deviceId: { type: 'string', format: 'uuid' },
-          userId: { type: 'string', format: 'uuid' },
-          direction: { type: 'string', enum: ['upload', 'download'] },
-          remotePath: { type: 'string' },
-          localFilename: { type: 'string' },
-          sizeBytes: { type: 'integer' },
-          status: { type: 'string', enum: ['pending', 'transferring', 'completed', 'failed'] },
-          progressPercent: { type: 'integer' },
-          errorMessage: { type: 'string', nullable: true },
-          createdAt: { type: 'string', format: 'date-time' },
-          completedAt: { type: 'string', format: 'date-time', nullable: true }
-        }
-      },
-
       // Agent schemas
       EnrollmentRequest: {
         type: 'object',
@@ -1142,7 +1128,8 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
         operationId: 'registerPartner',
         tags: ['Auth'],
         summary: 'Register a new partner (MSP)',
-        description: 'Self-service MSP/company signup. Creates a partner, admin role, user, and associates them. Rate limited to 3 per hour per IP.',
+        description:
+          'Self-service MSP/company signup (email-first, SR2-21). This endpoint creates NOTHING: it parks a pending registration and sends a confirmation email. The partner, admin role, user, and auto-login session are created only when the confirmation link is opened (POST /auth/verify-email). The response is a uniform { success, message } — identical whether or not the address already has an account (anti-enumeration). Rate limited to 3 per hour per IP.',
         security: [],
         requestBody: {
           required: true,
@@ -1164,17 +1151,17 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
         },
         responses: {
           '200': {
-            description: 'Partner registration successful',
+            description:
+              'Confirmation email dispatched (or would have been). Uniform body — no account is created here and no session is returned; the same response is sent whether or not the address already exists.',
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
                   properties: {
-                    user: { $ref: '#/components/schemas/User' },
-                    partner: { $ref: '#/components/schemas/Partner' },
-                    tokens: { $ref: '#/components/schemas/Tokens' },
-                    mfaRequired: { type: 'boolean' }
-                  }
+                    success: { type: 'boolean', enum: [true] },
+                    message: { type: 'string' }
+                  },
+                  required: ['success', 'message']
                 }
               }
             }
@@ -1863,7 +1850,7 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
                   name: { type: 'string', minLength: 1 },
                   slug: { type: 'string', minLength: 1, maxLength: 100 },
                   type: { type: 'string', enum: ['customer', 'internal'] },
-                  status: { type: 'string', enum: ['active', 'suspended', 'trial', 'churned'] },
+                  status: { type: 'string', enum: ['active', 'suspended', 'trial', 'churned', 'offboarding'] },
                   maxDevices: { type: 'integer', nullable: true },
                   contractStart: { type: 'string', format: 'date-time', nullable: true },
                   contractEnd: { type: 'string', format: 'date-time', nullable: true }
@@ -1951,7 +1938,15 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
         parameters: [
           { $ref: '#/components/parameters/pageParam' },
           { $ref: '#/components/parameters/limitParam' },
-          { name: 'orgId', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } }
+          { name: 'orgId', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } },
+          {
+            name: 'includeEnrollmentDefaults',
+            in: 'query',
+            required: false,
+            description:
+              "Set to '1' to also resolve the org's enrollment link defaults into the response. Off by default: it costs an extra settings read that holds a second pooled connection.",
+            schema: { type: 'string', enum: ['1', 'true'] }
+          }
         ],
         responses: {
           '200': {
@@ -1962,7 +1957,18 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
                   type: 'object',
                   properties: {
                     data: { type: 'array', items: { $ref: '#/components/schemas/Site' } },
-                    pagination: { $ref: '#/components/schemas/Pagination' }
+                    pagination: { $ref: '#/components/schemas/Pagination' },
+                    enrollmentDefaults: {
+                      type: 'object',
+                      description:
+                        "The org's resolved enrollment link defaults. Present only when includeEnrollmentDefaults is set AND a single org is in scope. Rides along on this response so the Add Device modal can seed its pickers without a second round trip; omitted if the settings read fails.",
+                      properties: {
+                        ttlMinutes: { type: 'integer' },
+                        deviceCount: { type: 'integer' },
+                        maxTtlMinutes: { type: 'integer' }
+                      },
+                      required: ['ttlMinutes', 'deviceCount', 'maxTtlMinutes']
+                    }
                   }
                 }
               }
@@ -2457,7 +2463,7 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
                   language: { type: 'string', enum: ['powershell', 'bash', 'python', 'cmd'] },
                   content: { type: 'string', minLength: 1 },
                   parameters: { type: 'object' },
-                  timeoutSeconds: { type: 'integer', minimum: 1, maximum: 86400, default: 300 },
+                  timeoutSeconds: { type: 'integer', minimum: 1, maximum: 3600, default: 300 },
                   runAs: { type: 'string', enum: ['system', 'user', 'elevated'], default: 'system' }
                 },
                 required: ['name', 'osTypes', 'language', 'content']
@@ -3824,70 +3830,6 @@ API requests are rate-limited to ensure fair usage. Rate limit headers are inclu
         }
       }
     },
-    '/remote/transfers': {
-      get: {
-        operationId: 'listFileTransfers',
-        tags: ['Remote'],
-        summary: 'List file transfers',
-        parameters: [
-          { $ref: '#/components/parameters/pageParam' },
-          { $ref: '#/components/parameters/limitParam' },
-          { name: 'deviceId', in: 'query', schema: { type: 'string', format: 'uuid' } },
-          { name: 'status', in: 'query', schema: { type: 'string', enum: ['pending', 'transferring', 'completed', 'failed'] } },
-          { name: 'direction', in: 'query', schema: { type: 'string', enum: ['upload', 'download'] } }
-        ],
-        responses: {
-          '200': {
-            description: 'List of transfers',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    data: { type: 'array', items: { $ref: '#/components/schemas/FileTransfer' } },
-                    pagination: { $ref: '#/components/schemas/Pagination' }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      post: {
-        operationId: 'initiateFileTransfer',
-        tags: ['Remote'],
-        summary: 'Initiate file transfer',
-        responses: {
-          '201': {
-            description: 'Transfer initiated',
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/FileTransfer' }
-              }
-            }
-          }
-        }
-      }
-    },
-    '/remote/transfers/{id}/cancel': {
-      post: {
-        operationId: 'cancelFileTransfer',
-        tags: ['Remote'],
-        summary: 'Cancel file transfer',
-        parameters: [{ $ref: '#/components/parameters/idParam' }],
-        responses: {
-          '200': {
-            description: 'Transfer cancelled',
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/FileTransfer' }
-              }
-            }
-          }
-        }
-      }
-    },
-
     // ============================================
     // AGENT ENDPOINTS
     // ============================================

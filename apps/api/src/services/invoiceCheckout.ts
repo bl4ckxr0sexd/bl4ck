@@ -5,7 +5,8 @@ import { invoices, invoiceStripePayments } from '../db/schema';
 import { getPartnerStripeClient, PartnerStripeError } from './partnerStripe';
 import { toMinorUnits } from './stripeMoney';
 import { InvoiceServiceError, type InvoiceActor } from './invoiceTypes';
-import { requireOrgAccess } from './invoiceService';
+import { requireOrgAccess, requireSiteAccess } from './invoiceService';
+import { portalBase } from './portalUrl';
 
 // Statuses whose balance can be collected online. Mirrors the customer-portal
 // PAYABLE set (routes/portal/invoices.ts) — drafts/paid/void are excluded.
@@ -37,6 +38,9 @@ export async function createInvoicePayLink(invoiceId: string, actor: InvoiceActo
   );
   if (!inv) throw new InvoiceServiceError('Invoice not found', 404, 'INVOICE_NOT_FOUND');
   requireOrgAccess(actor, inv.orgId);
+  // Site-axis guard: a site-restricted caller must not mint a pay link for an
+  // out-of-site invoice. No-op for unrestricted (partner/system/portal) actors.
+  requireSiteAccess(actor, inv.siteId);
   if (!PAYABLE.has(inv.status)) throw new InvoiceServiceError('Invoice is not payable', 409, 'NOT_PAYABLE');
 
   // Deposit-first: charge the deposit remaining while unmet, else the full
@@ -72,7 +76,10 @@ export async function createInvoicePayLink(invoiceId: string, actor: InvoiceActo
     throw new InvoiceServiceError('Could not initialize payment — please contact support', 500, 'STRIPE_INIT_FAILED');
   }
 
-  const portalBase = (process.env.PUBLIC_APP_URL || process.env.DASHBOARD_URL || 'http://localhost:4321').replace(/\/$/, '');
+  // Shared portal-URL resolution (honors PUBLIC_PORTAL_URL and appends the
+  // portal base path to app-origin fallbacks — the /portal segment is no
+  // longer hand-appended below).
+  const portalBaseUrl = portalBase();
 
   // Truly outside any DB context/transaction — no pooled connection is held
   // across this ~hundreds-of-ms round trip.
@@ -94,8 +101,8 @@ export async function createInvoicePayLink(invoiceId: string, actor: InvoiceActo
     // {CHECKOUT_SESSION_ID} is substituted by Stripe on redirect — the portal
     // verify-on-return handler reads it to settle server-side (the API-key model
     // has no inbound webhook).
-    success_url: `${portalBase}/portal/invoices/${inv.id}?paid=1&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${portalBase}/portal/invoices/${inv.id}`,
+    success_url: `${portalBaseUrl}/invoices/${inv.id}?paid=1&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${portalBaseUrl}/invoices/${inv.id}`,
     metadata: {
       invoice_id: inv.id,
       org_id: inv.orgId,

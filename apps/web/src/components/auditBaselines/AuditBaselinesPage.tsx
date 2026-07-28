@@ -1,35 +1,26 @@
-import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import '@/lib/i18n';
 import { BarChart3, ListChecks, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useHashTab } from '@/lib/useHashState';
 import ComplianceDashboard from './ComplianceDashboard';
 import BaselineList from './BaselineList';
 import BaselineApplyTab from './BaselineApplyTab';
 
 const tabs = [
-  { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-  { id: 'baselines', label: 'Baselines', icon: ListChecks },
-  { id: 'approvals', label: 'Approvals', icon: ShieldCheck },
+  { id: 'dashboard', labelKey: 'dashboard', icon: BarChart3 },
+  { id: 'baselines', labelKey: 'baselines', icon: ListChecks },
+  { id: 'approvals', labelKey: 'approvals', icon: ShieldCheck },
 ] as const;
 
 type TabId = (typeof tabs)[number]['id'];
 
-export default function AuditBaselinesPage() {
-  const [activeTab, setActiveTab] = useState<TabId>(() => {
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash.replace('#', '') as TabId;
-      if (tabs.some((t) => t.id === hash)) return hash;
-    }
-    return 'dashboard';
-  });
+const TAB_IDS = tabs.map((tab) => tab.id);
 
-  useEffect(() => {
-    const onHashChange = () => {
-      const hash = window.location.hash.replace('#', '') as TabId;
-      if (tabs.some((t) => t.id === hash)) setActiveTab(hash);
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+export default function AuditBaselinesPage() {
+  const { t } = useTranslation('security');
+  // SSR-safe hash tab (#2421): starts at the default, adopts the hash post-mount.
+  const [activeTab, setActiveTab] = useHashTab<TabId>(TAB_IDS, 'dashboard');
 
   const handleTabChange = (id: TabId) => {
     setActiveTab(id);
@@ -39,9 +30,9 @@ export default function AuditBaselinesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Audit Baselines</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{t('auditBaselinesAuditBaselinesPage.title')}</h1>
         <p className="text-muted-foreground">
-          Define compliance baselines, evaluate device drift, and remediate with approval-gated workflows.
+          {t('auditBaselinesAuditBaselinesPage.description')}
         </p>
       </div>
 
@@ -62,7 +53,7 @@ export default function AuditBaselinesPage() {
               )}
             >
               <Icon className="h-4 w-4" />
-              {tab.label}
+              {t(/* i18n-dynamic */ `auditBaselinesAuditBaselinesPage.tabs.${tab.labelKey}`)}
             </button>
           );
         })}

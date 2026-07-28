@@ -7,6 +7,8 @@ import { Hono } from 'hono';
 const granted = new Set<string>();
 // Mutable permissions object set by requirePermission (mirrors authMiddleware production behaviour).
 const permissionsState: { allowedSiteIds?: string[] } = {};
+// Rows returned by the db mock's `.orderBy(...)` terminal (GET /sync/status).
+const vulnSourceRows: Array<Record<string, unknown>> = [];
 
 vi.mock('../middleware/auth', () => ({
   authMiddleware: (c: any, next: any) => {
@@ -17,7 +19,9 @@ vi.mock('../middleware/auth', () => ({
       user: { id: 'u1', email: 't@example.test' },
       orgCondition: () => undefined,
       canAccessSite: () => true,
-      canAccessOrg: (id: string) => id !== 'org-denied',
+      // Denies both the legacy 'org-denied' marker (bulk-route row orgIds) and
+      // the uuid-shaped DENIED_ORG used by the ?orgId= query-narrowing tests.
+      canAccessOrg: (id: string) => id !== 'org-denied' && id !== 'de000000-0000-4000-8000-00000000dead',
     });
     return next();
   },
@@ -40,6 +44,7 @@ vi.mock('../db', () => ({
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({ limit: vi.fn(() => Promise.resolve([])) })),
+        orderBy: vi.fn(() => Promise.resolve(vulnSourceRows)),
       })),
     })),
     update: vi.fn(() => ({ set: vi.fn(() => ({ where: vi.fn(() => Promise.resolve()) })) })),
@@ -52,6 +57,15 @@ vi.mock('../db/schema', () => ({
   deviceVulnerabilities: { id: 'dv.id', orgId: 'dv.orgId', deviceId: 'dv.deviceId', status: 'dv.status', acceptedUntil: 'dv.acceptedUntil' },
   devices: { id: 'd.id', orgId: 'd.orgId', siteId: 'd.siteId' },
   vulnerabilities: {},
+  vulnerabilitySources: {
+    source: 'vs.source',
+    lastSuccessfulSyncAt: 'vs.lastSuccessfulSyncAt',
+    lastSyncStatus: 'vs.lastSyncStatus',
+    lastSyncError: 'vs.lastSyncError',
+    lastSyncSkippedCount: 'vs.lastSyncSkippedCount',
+    cursor: 'vs.cursor',
+    updatedAt: 'vs.updatedAt',
+  },
 }));
 
 vi.mock('../services/vulnerabilityRemediation', () => ({
@@ -124,6 +138,11 @@ function fleetRow(overrides: Partial<FleetFindingRow> = {}): FleetFindingRow {
 }
 
 const future = new Date(Date.now() + 7 * 864e5).toISOString();
+
+// Org-selector narrowing (?orgId= auto-injected by the web client): one org the
+// mocked auth can access, one it denies (must match the canAccessOrg mock above).
+const ORG_OK = '11111111-2222-3333-8444-555555555555';
+const ORG_DENIED = 'de000000-0000-4000-8000-00000000dead';
 
 beforeEach(() => {
   granted.clear();
@@ -271,6 +290,21 @@ describe('GET /vulnerabilities — kevOnly/patchAvailable params', () => {
     expect((await app().request('/vulnerabilities?expiringWithinDays=0')).status).toBe(400);
     expect((await app().request('/vulnerabilities?expiringWithinDays=366')).status).toBe(400);
   });
+
+  it('accepts an accessible orgId (org-selector narrowing) and 403s a denied one', async () => {
+    const where = vi.fn().mockResolvedValue([]);
+    vi.mocked(db.select).mockReturnValue({
+      from: vi.fn().mockReturnValue({ where }),
+    } as never);
+    const ok = await app().request(`/vulnerabilities?orgId=${ORG_OK}`);
+    expect(ok.status).toBe(200);
+    // The orgId must reach the WHERE clause — a bare 200 stays green even with
+    // the eq(org_id) narrowing deleted (this route forwards via {...query}
+    // spread, so nothing else pins the wiring).
+    expect(JSON.stringify(where.mock.calls[0]?.[0])).toContain(ORG_OK);
+    expect((await app().request(`/vulnerabilities?orgId=${ORG_DENIED}`)).status).toBe(403);
+    expect((await app().request('/vulnerabilities?orgId=acme')).status).toBe(400);
+  });
 });
 
 import { enqueueVulnCorrelation } from '../jobs/vulnerabilityJobs';
@@ -304,6 +338,88 @@ describe('POST /vulnerabilities/sync/correlate (admin manual trigger)', () => {
       expect.anything(),
       expect.objectContaining({ action: 'vulnerability.manual_correlate', resourceType: 'vulnerability_source' }),
     );
+  });
+});
+
+describe('GET /vulnerabilities/sync/status (admin sync health, #2427)', () => {
+  function syncApp() {
+    const a = new Hono();
+    a.route('/vulnerabilities/sync', vulnerabilitySyncRoutes);
+    return a;
+  }
+
+  // Columns the handler asked for, captured from the real `.select({...})` call.
+  let projection: string[] = [];
+
+  beforeEach(() => {
+    vulnSourceRows.length = 0;
+    projection = [];
+    // Earlier describes mockReset/mockReturnValue the shared db.select — install
+    // our own chain (with the orderBy terminal this route uses).
+    //
+    // Crucially this mock HONORS the projection: it returns only the columns the
+    // route actually selected. A mock that ignores `.select({...})` and echoes a
+    // canned row would pass even if the route never selected the new column at
+    // all — i.e. it would test the mock, not the code (that vacuous version of
+    // this test survived deleting lastSyncSkippedCount from the route).
+    vi.mocked(db.select).mockReset();
+    vi.mocked(db.select).mockImplementation(((cols: Record<string, unknown>) => {
+      projection = Object.keys(cols ?? {});
+      return {
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(() => Promise.resolve([])) })),
+          orderBy: vi.fn(() =>
+            Promise.resolve(
+              vulnSourceRows.map((row) =>
+                Object.fromEntries(projection.map((key) => [key, row[key]])),
+              ),
+            ),
+          ),
+        })),
+      };
+    }) as any);
+  });
+
+  it('selects lastSyncSkippedCount from vulnerability_sources', async () => {
+    await syncApp().request('/vulnerabilities/sync/status');
+    // Pins the projection itself: without this, dropping the column from the
+    // route's select() still returns 200 and the shape assertions below pass.
+    expect(projection).toContain('lastSyncSkippedCount');
+  });
+
+  it('returns per-source sync health including lastSyncSkippedCount', async () => {
+    vulnSourceRows.push({
+      source: 'msrc',
+      lastSuccessfulSyncAt: '2026-07-13T09:00:00.000Z',
+      lastSyncStatus: 'ok',
+      lastSyncError: null,
+      lastSyncSkippedCount: 3,
+      cursor: '2026-Jul',
+      updatedAt: '2026-07-13T09:00:00.000Z',
+    });
+
+    const res = await syncApp().request('/vulnerabilities/sync/status');
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sources).toHaveLength(1);
+    expect(body.sources[0]).toMatchObject({
+      source: 'msrc',
+      lastSyncStatus: 'ok',
+      lastSyncSkippedCount: 3,
+    });
+  });
+
+  it('reads vulnerability_sources under a system db context (forced RLS, no tenant policies)', async () => {
+    const { runOutsideDbContext, withSystemDbAccessContext } = await import('../db');
+    vi.mocked(runOutsideDbContext).mockClear();
+    vi.mocked(withSystemDbAccessContext).mockClear();
+
+    const res = await syncApp().request('/vulnerabilities/sync/status');
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(runOutsideDbContext)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(withSystemDbAccessContext)).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -380,6 +496,25 @@ describe('GET /vulnerabilities/software (fleet work queue)', () => {
     const res = await app().request('/vulnerabilities/software?expiringWithinDays=soon');
     expect(res.status).toBe(400);
   });
+
+  it('forwards orgId (web org selector) into the fleet query', async () => {
+    const res = await app().request(`/vulnerabilities/software?orgId=${ORG_OK}`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(fetchFleetFindingRows)).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG_OK }),
+    );
+  });
+
+  it('403s an orgId outside the caller accessible set', async () => {
+    const res = await app().request(`/vulnerabilities/software?orgId=${ORG_DENIED}`);
+    expect(res.status).toBe(403);
+    expect(vi.mocked(fetchFleetFindingRows)).not.toHaveBeenCalled();
+  });
+
+  it('400s a non-uuid orgId', async () => {
+    const res = await app().request('/vulnerabilities/software?orgId=acme');
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('GET /vulnerabilities/software/:groupKey (drawer payload)', () => {
@@ -412,6 +547,16 @@ describe('GET /vulnerabilities/software/:groupKey (drawer payload)', () => {
     expect(body.cves).toHaveLength(2);
     expect(body.findings).toHaveLength(2);
     expect(body.findings[0]).toMatchObject({ deviceVulnerabilityId: expect.any(String), deviceName: expect.any(String) });
+  });
+
+  it('forwards orgId and 403s a denied org', async () => {
+    const key = encodeURIComponent('sw:google chrome|google llc');
+    await app().request(`/vulnerabilities/software/${key}?orgId=${ORG_OK}`);
+    expect(vi.mocked(fetchFleetFindingRows)).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'all', orgId: ORG_OK }),
+    );
+    const denied = await app().request(`/vulnerabilities/software/${key}?orgId=${ORG_DENIED}`);
+    expect(denied.status).toBe(403);
   });
 });
 
@@ -464,6 +609,52 @@ describe('GET /vulnerabilities/devices/:deviceId/software', () => {
     const res = await app().request(`/vulnerabilities/devices/${ID}/software`);
     expect(res.status).toBe(404);
   });
+
+  it('ignores the auto-injected ?orgId= (a stale org selector must not blank a cross-org device tab)', async () => {
+    vi.mocked(db.select).mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ siteId: 'site-1' }]) }),
+      }),
+    } as never);
+    const res = await app().request(`/vulnerabilities/devices/${ID}/software?orgId=${ORG_OK}`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(fetchFleetFindingRows)).toHaveBeenCalledWith(
+      expect.not.objectContaining({ orgId: expect.anything() }),
+    );
+  });
+});
+
+describe('GET /vulnerabilities/devices/:deviceId', () => {
+  beforeEach(() => {
+    granted.clear();
+    granted.add('devices:read');
+    delete permissionsState.allowedSiteIds;
+    vi.mocked(db.select).mockReset();
+  });
+
+  // This route spreads the validated query straight into listVulnerabilities
+  // ({...query, deviceId}), so it is the one place an orgId added to the shared
+  // listQuerySchema would silently narrow a per-device lookup. Pins that zod
+  // strips the auto-injected param before the spread — see the schema comment
+  // at orgIdQuerySchema.
+  it('strips the auto-injected ?orgId= before the {...query} spread', async () => {
+    const listWhere = vi.fn().mockResolvedValue([]);
+    vi.mocked(db.select)
+      // assertDeviceSiteAccess: device lookup (site accessible).
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ siteId: 'site-1' }]) }),
+        }),
+      } as never)
+      // listVulnerabilities: the findings query whose WHERE we inspect.
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({ where: listWhere }),
+      } as never);
+    const res = await app().request(`/vulnerabilities/devices/${ID}?orgId=${ORG_OK}`);
+    expect(res.status).toBe(200);
+    expect(listWhere).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(listWhere.mock.calls[0]?.[0])).not.toContain(ORG_OK);
+  });
 });
 
 describe('GET /vulnerabilities/:cveId/devices (CVE drawer payload)', () => {
@@ -507,6 +698,32 @@ describe('GET /vulnerabilities/:cveId/devices (CVE drawer payload)', () => {
     expect(body.cve.cveId).toBe('CVE-2026-0001');
     expect(body.findings).toHaveLength(1);
     expect(body.findings[0].deviceVulnerabilityId).toBe('dv-1');
+  });
+
+  it('forwards orgId into the fleet query and 403s a denied org (before the catalog lookup)', async () => {
+    vi.mocked(fetchCveCatalogRecord).mockResolvedValueOnce({
+      cveId: 'CVE-2026-0001',
+      description: 'Bad bug',
+      references: [],
+      cvssVersion: '3.1',
+      cvssVector: 'CVSS:3.1/AV:N',
+      cvssScore: 9.1,
+      epssScore: 0.4,
+      knownExploited: true,
+      patchAvailable: true,
+      severity: 'critical',
+      publishedAt: '2026-01-01T00:00:00.000Z',
+      modifiedAt: null,
+    });
+    const ok = await app().request(`/vulnerabilities/CVE-2026-0001/devices?orgId=${ORG_OK}`);
+    expect(ok.status).toBe(200);
+    expect(vi.mocked(fetchFleetFindingRows)).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'all', orgId: ORG_OK }),
+    );
+    const denied = await app().request(`/vulnerabilities/CVE-2026-0001/devices?orgId=${ORG_DENIED}`);
+    expect(denied.status).toBe(403);
+    // The gate runs BEFORE the catalog lookup: only the allowed request reached it.
+    expect(vi.mocked(fetchCveCatalogRecord)).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -705,6 +922,19 @@ describe('GET /vulnerabilities/stats', () => {
       totalFindings: 2,
       lastDetectedAt: '2026-06-01T00:00:00.000Z',
     });
+  });
+
+  it('forwards orgId so the stat cards scope to the selected org', async () => {
+    const res = await app().request(`/vulnerabilities/stats?orgId=${ORG_OK}`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(fetchFleetFindingRows)).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'all', orgId: ORG_OK }),
+    );
+  });
+
+  it('403s an orgId outside the caller accessible set', async () => {
+    const res = await app().request(`/vulnerabilities/stats?orgId=${ORG_DENIED}`);
+    expect(res.status).toBe(403);
   });
 });
 

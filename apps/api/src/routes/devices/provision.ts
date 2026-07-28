@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { db } from '../../db';
@@ -12,6 +12,7 @@ import {
 } from '../../middleware/auth';
 import { PERMISSIONS, canAccessSite, type UserPermissions } from '../../services/permissions';
 import { writeRouteAudit } from '../../services/auditEvents';
+import { getTrustedClientIpOrUndefined } from '../../services/clientIp';
 import { provisionDeviceSchema } from './schemas';
 import { generateAgentId, generateApiKey, issueMtlsCertForDevice } from '../agents/helpers';
 import { getActiveTrustKeyset } from '../../services/manifestSigning';
@@ -351,7 +352,7 @@ provisionRoutes.get('/provision/fetch/:token', async (c) => {
     return c.json({ error: 'invalid token' }, 400);
   }
 
-  const ip = c.req.header('cf-connecting-ip') ?? null;
+  const ip = getTrustedClientIpOrUndefined(c) ?? null;
 
   // ── 1. Look up the handle ───────────────────────────────────────────────
   const [row] = await db

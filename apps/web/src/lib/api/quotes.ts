@@ -69,6 +69,33 @@ export function createQuote(body: CreateQuoteInput): Promise<Response> {
   });
 }
 
+/** Schedule the delayed (undo-able) send: the server enqueues the real send
+ *  ~30s out and stamps sendScheduledAt on the quote. Body mirrors the API's
+ *  `.strict()` schedule schema (SendQuoteOptions + delaySeconds), so a
+ *  mis-keyed field is a compile error here instead of a runtime 400. */
+export function scheduleQuoteSend(
+  id: string,
+  body: SendQuoteOptions & { delaySeconds?: number },
+): Promise<Response> {
+  return fetchWithAuth(`/quotes/${id}/schedule-send`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Undo a scheduled send. `canceled:false` in the response means the window
+ *  had already elapsed. */
+export function cancelScheduledSend(id: string): Promise<Response> {
+  return fetchWithAuth(`/quotes/${id}/schedule-send`, { method: 'DELETE' });
+}
+
+/** Clone a quote into a new draft. Optional body retargets it to another
+ *  organization (same partner) and/or renames it — omitted fields fall back to
+ *  the source quote (matches `cloneQuoteSchema` in shared). */
+export function cloneQuote(id: string, body?: { orgId?: string; title?: string }): Promise<Response> {
+  return fetchWithAuth(`/quotes/${id}/clone`, {
+    method: 'POST',
+    ...(body ? { headers: JSON_HEADERS, body: JSON.stringify(body) } : {}),
+  });
+}
+
 export function updateQuote(id: string, body: UpdateQuoteInput): Promise<Response> {
   return fetchWithAuth(`/quotes/${id}`, {
     method: 'PATCH',
@@ -99,9 +126,11 @@ export function updateBlock(id: string, blockId: string, body: QuoteBlockInput):
   });
 }
 
-/** Delete a block and its lines (DELETE /quotes/:id/blocks/:blockId). */
+/** Delete a block and its lines (DELETE /quotes/:id/blocks/:blockId).
+ *  keepalive: the editor defers deletions for an undo grace window and flushes
+ *  them on pagehide — the request must survive the page teardown. */
 export function deleteBlock(id: string, blockId: string): Promise<Response> {
-  return fetchWithAuth(`/quotes/${id}/blocks/${blockId}`, { method: 'DELETE' });
+  return fetchWithAuth(`/quotes/${id}/blocks/${blockId}`, { method: 'DELETE', keepalive: true });
 }
 
 export function addManualLine(
@@ -139,8 +168,9 @@ export function updateLine(
   });
 }
 
+/** keepalive: undo-grace deletions flush on pagehide (see deleteBlock). */
 export function removeLine(id: string, lineId: string): Promise<Response> {
-  return fetchWithAuth(`/quotes/${id}/lines/${lineId}`, { method: 'DELETE' });
+  return fetchWithAuth(`/quotes/${id}/lines/${lineId}`, { method: 'DELETE', keepalive: true });
 }
 
 /** Reorder a quote's blocks. Body is the full ordered id list; the server
@@ -183,10 +213,57 @@ export function quotePdfUrl(id: string): string {
 
 // ---- Phase 2 lifecycle / image upload -------------------------------------
 
+/** Composer fields for `POST /quotes/:id/send`. Everything is optional — the
+ *  server's `.strict()` schema treats an absent field as "use the default". */
+export interface SendQuoteOptions {
+  /** Explicit recipients (1-10) — override the org billing-contact fallback. */
+  to?: string[];
+  /** Extra recipients (0-10). */
+  cc?: string[];
+  /** Overrides the server default "Proposal <number> from <partner>". */
+  subject?: string;
+  /** Personal note shown in the customer email above the accept link. */
+  message?: string;
+  /** false skips the PDF attachment; the server defaults to attaching it. */
+  includePdf?: boolean;
+}
+
+/** Persisted send-outcome codes (mirrors `SendQuoteEmailReason` in
+ *  apps/api/src/db/schema/quotes.ts). Semantics depend on quote status:
+ *  on a SENT quote, why the best-effort email step did NOT deliver after the
+ *  send committed (`data.emailed === false`):
+ *  - `no_billing_contact` — the org has no billing-contact email to fall back to
+ *  - `no_email_service`   — email isn't configured on this server
+ *  - `pdf_render_failed`  — the PDF attachment couldn't be generated
+ *  - `send_failed`        — the transport itself rejected/failed the message
+ *  On a DRAFT, only:
+ *  - `schedule_failed`    — a scheduled send was rejected at fire time; nothing
+ *    was sent and the quote is still a draft. */
+export type QuoteSendEmailReason =
+  | 'no_billing_contact'
+  | 'no_email_service'
+  | 'pdf_render_failed'
+  | 'send_failed'
+  | 'schedule_failed';
+
 /** Issue + send a draft quote (POST /quotes/:id/send). Gated server-side on
- *  quotes:send. Responds with the updated quote in a `{ data }` envelope. */
-export function sendQuote(id: string): Promise<Response> {
-  return fetchWithAuth(`/quotes/${id}/send`, { method: 'POST' });
+ *  quotes:send. Only non-empty / non-default fields are POSTed, so a bare
+ *  `sendQuote(id)` reproduces the classic body-less send. Responds with
+ *  `{ data: { quote, emailed, emailReason?, acceptUrl } }` (emailReason is a
+ *  `QuoteSendEmailReason` when emailed is false). */
+export function sendQuote(id: string, opts: SendQuoteOptions = {}): Promise<Response> {
+  const body: Record<string, unknown> = {};
+  if (opts.to && opts.to.length > 0) body.to = opts.to;
+  if (opts.cc && opts.cc.length > 0) body.cc = opts.cc;
+  const subject = opts.subject?.trim();
+  if (subject) body.subject = subject;
+  const note = opts.message?.trim();
+  if (note) body.message = note;
+  if (opts.includePdf === false) body.includePdf = false;
+  return fetchWithAuth(`/quotes/${id}/send`, {
+    method: 'POST',
+    ...(Object.keys(body).length > 0 ? { headers: JSON_HEADERS, body: JSON.stringify(body) } : {}),
+  });
 }
 
 /** Upload an image for a quote (POST /quotes/:id/images). The body is multipart

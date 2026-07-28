@@ -2,7 +2,10 @@
  * AI Filesystem Tools
  *
  * Tools for file operations and disk usage analysis.
- * - file_operations (Tier 1 read/list, Tier 3 write/delete): Perform file operations on a device
+ * - file_operations (list Tier 2, other actions Tier 3): Perform file operations
+ *   on a device. Reads/writes run as root/LocalSystem on the endpoint, so read
+ *   is privileged (requires devices.execute + approval), same as write/delete
+ *   (SR5-01). list is recon-only and auto-executes with audit.
  * - analyze_disk_usage (Tier 1): Analyze filesystem usage for a device
  * - disk_cleanup (Tier 1 preview, Tier 3 execute): Preview or execute disk cleanup
  */
@@ -12,9 +15,11 @@ import { devices, deviceFilesystemCleanupRuns } from '../db/schema';
 import { eq, and, SQL } from 'drizzle-orm';
 import type { AuthContext } from '../middleware/auth';
 import type { AiTool } from './aiTools';
+import { AGENT_MAX_FILE_WRITE_BYTES } from '../routes/systemTools/schemas';
 import {
   buildCleanupPreview,
   getLatestFilesystemSnapshot,
+  getLatestFilesystemCleanupSnapshot,
   parseFilesystemAnalysisStdout,
   saveFilesystemSnapshot,
   safeCleanupCategories,
@@ -52,15 +57,15 @@ export function registerFilesystemTools(aiTools: Map<string, AiTool>): void {
   }
 
   // ============================================
-  // file_operations - Tier 1 (read/list), Tier 3 (write/delete)
+  // file_operations - list Tier 2, other actions Tier 3 (SR5-01)
   // ============================================
 
   registerTool({
-    tier: 1 as AiToolTier, // Runtime tier check for write/delete in guardrails
+    tier: 1 as AiToolTier, // Base tier; guardrails escalate read/write/delete/mkdir/rename to Tier 3 (list stays Tier 2)
     deviceArgs: ['deviceId'],
     definition: {
       name: 'file_operations',
-      description: 'Perform file operations on a device. List and read are safe; write, delete, mkdir, and rename require approval.',
+      description: 'Perform file operations on a device. list auto-executes with audit; read, write, delete, mkdir and rename require approval because the agent reads/writes as root/LocalSystem.',
       input_schema: {
         type: 'object' as const,
         properties: {
@@ -91,6 +96,20 @@ export function registerFilesystemTools(aiTools: Map<string, AiTool>): void {
 
       const fileCommandType = actionMap[input.action as string];
       if (!fileCommandType) return JSON.stringify({ error: `Unknown action: ${input.action}` });
+
+      // The agent rejects file_write payloads over 4MB decoded, and its WS
+      // read limit (16MB) is sized from that cap — an oversized frame kills
+      // the agent's connection instead of being rejected (issue #2399).
+      // Reject before dispatch, mirroring fileUploadBodySchema; this tool
+      // sends plain text, so measure UTF-8 bytes (what the agent writes).
+      if (fileCommandType === 'file_write') {
+        const contentBytes = Buffer.byteLength((input.content as string) ?? '', 'utf8');
+        if (contentBytes > AGENT_MAX_FILE_WRITE_BYTES) {
+          return JSON.stringify({
+            error: `File content too large (${contentBytes} bytes; max ${AGENT_MAX_FILE_WRITE_BYTES}).`,
+          });
+        }
+      }
 
       const result = await executeCommand(deviceId, fileCommandType, {
         path: input.path,
@@ -231,7 +250,7 @@ export function registerFilesystemTools(aiTools: Map<string, AiTool>): void {
       const access = await verifyDeviceAccess(deviceId, auth, action === 'execute');
       if ('error' in access) return JSON.stringify({ error: access.error });
 
-      const snapshot = await getLatestFilesystemSnapshot(deviceId);
+      const snapshot = await getLatestFilesystemCleanupSnapshot(deviceId);
       if (!snapshot) {
         return JSON.stringify({ message: 'No filesystem analysis snapshot available. Run analyze_disk_usage with refresh=true first.' });
       }

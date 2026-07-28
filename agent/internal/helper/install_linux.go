@@ -21,10 +21,13 @@ func packageExtension() string { return ".AppImage" }
 // uninstallPackage removes the installed AppImage. Idempotent.
 func uninstallPackage() error {
 	binaryPath := defaultBinaryPath()
-	if err := os.Remove(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	err := os.Remove(binaryPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove binary: %w", err)
 	}
-	log.Info("AppImage removed", "path", binaryPath)
+	if err == nil {
+		log.Info("AppImage removed", "path", binaryPath)
+	}
 	return nil
 }
 
@@ -99,6 +102,28 @@ func stopByPID(pid int) error {
 		return fmt.Errorf("kill pid %d: %w", pid, err)
 	}
 	return nil
+}
+
+// stopByPIDIfOurs terminates pid only if it is a Breeze helper process. It
+// verifies the image path (via /proc/<pid>/exe) and, if it matches, signals the
+// process. Returns (true, nil) when the helper was signalled, (false, nil) when
+// the pid is gone or is not a helper, and (false, err) when a confirmed helper
+// could not be signalled.
+//
+// Unlike Windows (#2531), POSIX has no persistent handle to pin the process
+// object across the check and the kill, so a two-syscall window technically
+// remains. It is not the reported vulnerability: POSIX allocates PIDs roughly
+// monotonically and wraps only after exhausting the whole pid_max range, so the
+// same number is not handed back to an unrelated process between two adjacent
+// syscalls the way Windows can recycle it immediately.
+func stopByPIDIfOurs(pid int, binaryPath string) (bool, error) {
+	if !isOurProcess(pid, binaryPath) {
+		return false, nil
+	}
+	if err := stopByPID(pid); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func spawnWithConfig(binaryPath, sessionKey, configPath string) (int, error) {

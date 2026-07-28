@@ -1,5 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getTrustedClientIp, getTrustedClientIpOrUndefined, isTrustedProxySource } from './clientIp';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  getTrustedClientIp,
+  getTrustedClientIpOrUndefined,
+  getImmediatePeerIpOrUndefined,
+  isTrustedProxySource,
+  setProxyTrustMetricsRecorder,
+  _resetProxyTrustWarnStateForTests,
+} from './clientIp';
 import type { RequestLike } from './auditEvents';
 
 function makeContext(headers: Record<string, string | undefined>, remoteAddress?: string): RequestLike {
@@ -23,11 +30,16 @@ describe('clientIp', () => {
   const originalTrust = process.env.TRUST_PROXY_HEADERS;
   const originalTrustedCidrs = process.env.TRUSTED_PROXY_CIDRS;
   const originalNodeEnv = process.env.NODE_ENV;
+  const originalTrustCf = process.env.TRUST_CF_CONNECTING_IP;
 
   beforeEach(() => {
     // Force trust on so tests don't depend on NODE_ENV defaults.
     process.env.TRUST_PROXY_HEADERS = 'true';
     delete process.env.TRUSTED_PROXY_CIDRS;
+    // The CF-Connecting-IP precedence tests below assume a deployment genuinely
+    // behind Cloudflare; opt in explicitly. The secure default (off) is covered
+    // in its own block.
+    process.env.TRUST_CF_CONNECTING_IP = 'true';
   });
 
   afterEach(() => {
@@ -37,6 +49,39 @@ describe('clientIp', () => {
     else process.env.TRUSTED_PROXY_CIDRS = originalTrustedCidrs;
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
+    if (originalTrustCf === undefined) delete process.env.TRUST_CF_CONNECTING_IP;
+    else process.env.TRUST_CF_CONNECTING_IP = originalTrustCf;
+  });
+
+  describe('CF-Connecting-IP trust is opt-in (secure default)', () => {
+    // A bundled Caddy does NOT strip CF-Connecting-IP, so a self-hoster not
+    // behind Cloudflare must not trust it — otherwise a client spoofs the
+    // header to choose its own rate-limit bucket / defeat an IP allowlist.
+    it('IGNORES cf-connecting-ip when TRUST_CF_CONNECTING_IP is unset, using XFF instead', () => {
+      delete process.env.TRUST_CF_CONNECTING_IP;
+      const ip = getTrustedClientIp(
+        makeContext({
+          'cf-connecting-ip': '203.0.113.10',
+          'x-forwarded-for': '198.51.100.1, 10.0.0.5',
+        }),
+      );
+      expect(ip).toBe('198.51.100.1');
+    });
+
+    it('does not let a spoofed cf-connecting-ip win when only that header is present (unset flag)', () => {
+      delete process.env.TRUST_CF_CONNECTING_IP;
+      const ip = getTrustedClientIp(
+        makeContext({ 'cf-connecting-ip': '203.0.113.10' }),
+        'sentinel',
+      );
+      expect(ip).toBe('sentinel');
+    });
+
+    it('trusts cf-connecting-ip when TRUST_CF_CONNECTING_IP is enabled', () => {
+      process.env.TRUST_CF_CONNECTING_IP = 'true';
+      const ip = getTrustedClientIp(makeContext({ 'cf-connecting-ip': '203.0.113.10' }));
+      expect(ip).toBe('203.0.113.10');
+    });
   });
 
   describe('getTrustedClientIp', () => {
@@ -213,6 +258,134 @@ describe('clientIp', () => {
     });
   });
 
+  describe('proxy-trust misconfiguration warning (#2364)', () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      _resetProxyTrustWarnStateForTests();
+      process.env.TRUSTED_PROXY_CIDRS = '172.30.0.11/32';
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+      _resetProxyTrustWarnStateForTests();
+      vi.useRealTimers();
+    });
+
+    it('warns loudly when forwarded headers arrive from an untrusted peer — and behavior is unchanged (socket fallback)', () => {
+      const ip = getTrustedClientIp(
+        makeContext({ 'x-forwarded-for': '198.51.100.1' }, '172.30.0.44'),
+        '172.30.0.44',
+      );
+
+      // Behavior identical to before: fail closed to the socket address.
+      expect(ip).toBe('172.30.0.44');
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = String(warnSpy.mock.calls[0]?.[0]);
+      expect(message).toContain('[proxy-trust]');
+      expect(message).toContain('172.30.0.44');
+      expect(message).toContain('TRUSTED_PROXY_CIDRS');
+    });
+
+    it('does not warn when the immediate peer is trusted — and headers are honored as before', () => {
+      const ip = getTrustedClientIp(
+        makeContext({ 'x-forwarded-for': '198.51.100.1' }, '172.30.0.11'),
+        '172.30.0.11',
+      );
+
+      expect(ip).toBe('198.51.100.1');
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for an untrusted peer WITHOUT forwarded headers (direct hit, not a misconfiguration)', () => {
+      const ip = getTrustedClientIp(makeContext({}, '203.0.113.99'), '203.0.113.99');
+
+      expect(ip).toBe('203.0.113.99');
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when proxy-header trust is disabled entirely', () => {
+      process.env.TRUST_PROXY_HEADERS = 'false';
+      const ip = getTrustedClientIp(
+        makeContext({ 'x-forwarded-for': '198.51.100.1' }, '172.30.0.44'),
+        '172.30.0.44',
+      );
+
+      expect(ip).toBe('172.30.0.44');
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('rate-limits repeat warnings per peer within the 15-minute window', () => {
+      const ctx = () => makeContext({ 'x-forwarded-for': '198.51.100.1' }, '172.30.0.44');
+
+      getTrustedClientIp(ctx(), '172.30.0.44');
+      getTrustedClientIp(ctx(), '172.30.0.44');
+      getTrustedClientIp(ctx(), '172.30.0.44');
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns separately for distinct untrusted peers', () => {
+      getTrustedClientIp(
+        makeContext({ 'x-forwarded-for': '198.51.100.1' }, '172.30.0.44'),
+        '172.30.0.44',
+      );
+      getTrustedClientIp(
+        makeContext({ 'x-forwarded-for': '198.51.100.1' }, '172.30.0.45'),
+        '172.30.0.45',
+      );
+
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('warns again for the same peer after the suppression window elapses', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-07-12T00:00:00Z'));
+        const ctx = () => makeContext({ 'x-forwarded-for': '198.51.100.1' }, '172.30.0.44');
+
+        getTrustedClientIp(ctx(), '172.30.0.44');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        vi.setSystemTime(new Date('2026-07-12T00:14:59Z'));
+        getTrustedClientIp(ctx(), '172.30.0.44');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        vi.setSystemTime(new Date('2026-07-12T00:15:01Z'));
+        getTrustedClientIp(ctx(), '172.30.0.44');
+        expect(warnSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('increments the metrics recorder on EVERY occurrence, even when the log line is suppressed', () => {
+      const onForwardedHeadersFromUntrustedPeer = vi.fn();
+      setProxyTrustMetricsRecorder({ onForwardedHeadersFromUntrustedPeer });
+      const ctx = () => makeContext({ 'cf-connecting-ip': '203.0.113.10' }, '172.30.0.44');
+
+      getTrustedClientIp(ctx(), '172.30.0.44');
+      getTrustedClientIp(ctx(), '172.30.0.44');
+      getTrustedClientIp(ctx(), '172.30.0.44');
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(onForwardedHeadersFromUntrustedPeer).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not invoke the metrics recorder for trusted peers', () => {
+      const onForwardedHeadersFromUntrustedPeer = vi.fn();
+      setProxyTrustMetricsRecorder({ onForwardedHeadersFromUntrustedPeer });
+
+      getTrustedClientIp(
+        makeContext({ 'cf-connecting-ip': '203.0.113.10' }, '172.30.0.11'),
+        '172.30.0.11',
+      );
+
+      expect(onForwardedHeadersFromUntrustedPeer).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getTrustedClientIpOrUndefined', () => {
     it('returns undefined when no headers are present', () => {
       expect(getTrustedClientIpOrUndefined(makeContext({}))).toBeUndefined();
@@ -231,6 +404,27 @@ describe('clientIp', () => {
         makeContext({ 'cf-connecting-ip': '203.0.113.10' }),
       );
       expect(ip).toBeUndefined();
+    });
+  });
+
+  describe('getImmediatePeerIpOrUndefined — socket-only peer, never consults headers (SR2-16)', () => {
+    it('returns the socket address regardless of TRUST_PROXY_HEADERS', () => {
+      process.env.TRUST_PROXY_HEADERS = 'false';
+      expect(getImmediatePeerIpOrUndefined(makeContext({}, '198.51.100.77'))).toBe('198.51.100.77');
+
+      process.env.TRUST_PROXY_HEADERS = 'true';
+      expect(getImmediatePeerIpOrUndefined(makeContext({}, '198.51.100.77'))).toBe('198.51.100.77');
+    });
+
+    it('never honors a forwarded header even when present alongside the socket address', () => {
+      const ip = getImmediatePeerIpOrUndefined(
+        makeContext({ 'cf-connecting-ip': '203.0.113.10', 'x-forwarded-for': '9.9.9.9' }, '198.51.100.77'),
+      );
+      expect(ip).toBe('198.51.100.77');
+    });
+
+    it('returns undefined when there is no socket (non-Node runtime / test shim)', () => {
+      expect(getImmediatePeerIpOrUndefined(makeContext({}))).toBeUndefined();
     });
   });
 });

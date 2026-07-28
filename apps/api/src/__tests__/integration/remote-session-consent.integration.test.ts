@@ -26,7 +26,7 @@ import {
 } from './db-utils';
 import { createAccessToken } from '../../services/jwt';
 
-// The offer route (exercised below to assert the technicianDisplay partner-name
+// The offer route (exercised below to assert the prompt partner-name
 // fix) sends the start_desktop command over a real agent WebSocket connection,
 // which no test agent is connected to accept. Mock only `sendCommandToAgent` so
 // we can capture the payload the route builds — everything else in this file
@@ -42,7 +42,7 @@ vi.mock('../../routes/agentWs', async (importOriginal) => {
 
 // The offer route also gates on the remote-access capability policy before
 // building the prompt. Mock it to an unconditional allow so this test stays
-// focused on the technicianDisplay partner-name fix, not policy resolution.
+// focused on the prompt partner-name fix, not policy resolution.
 vi.mock('../../services/remoteAccessPolicy', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/remoteAccessPolicy')>();
   return {
@@ -129,6 +129,11 @@ async function mintMfaToken(env: Awaited<ReturnType<typeof setupTestEnvironment>
     partnerId: env.partner.id,
     scope: 'organization' as const,
     mfa: true, // satisfies requireMfa() on the remote route group
+    // Epoch claims (core-auth PR 1): authMiddleware rejects access tokens
+    // missing aep/mep/sid or stale vs users.auth_epoch/mfa_epoch (DB default 1).
+    aep: 1,
+    mep: 1,
+    sid: 'it-session',
   });
 }
 
@@ -304,7 +309,7 @@ describe('POST /remote/sessions/:id/deny — consent teardown + audit', () => {
   });
 });
 
-describe('POST /remote/sessions/:id/offer — technicianDisplay uses the PARTNER (MSP) name', () => {
+describe('POST /remote/sessions/:id/offer — prompt identity uses the PARTNER (MSP) name', () => {
   let app: Hono;
 
   beforeEach(() => {
@@ -312,7 +317,7 @@ describe('POST /remote/sessions/:id/offer — technicianDisplay uses the PARTNER
     sendCommandToAgentMock.mockClear();
   });
 
-  it('ships prompt.technicianDisplay.orgName as the seeded partner name, not the client org name', async () => {
+  it('ships prompt.orgName as the seeded partner name, not the client org name', async () => {
     const env = await setupTestEnvironment({
       scope: 'organization',
       partnerOptions: { name: 'Olive Technology' },
@@ -340,10 +345,12 @@ describe('POST /remote/sessions/:id/offer — technicianDisplay uses the PARTNER
     expect(sendCommandToAgentMock).toHaveBeenCalledTimes(1);
 
     const [, command] = sendCommandToAgentMock.mock.calls[0]!;
-    const prompt = (command as { payload: { prompt?: { technicianDisplay?: { orgName: string | null } } } })
+    // Identity fields are flat on the prompt block — the shape the agent's
+    // ipc.DesktopPrompt and the assist app actually deserialize.
+    const prompt = (command as { payload: { prompt?: { orgName: string | null } } })
       .payload.prompt;
     expect(prompt).toBeDefined();
-    expect(prompt?.technicianDisplay?.orgName).toBe('Olive Technology');
-    expect(prompt?.technicianDisplay?.orgName).not.toBe(env.organization.name);
+    expect(prompt?.orgName).toBe('Olive Technology');
+    expect(prompt?.orgName).not.toBe(env.organization.name);
   });
 });

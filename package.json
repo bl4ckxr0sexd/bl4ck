@@ -4,10 +4,16 @@
   "private": true,
   "description": "Fast, modern Remote Monitoring and Management platform",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:load-static": "pnpm --dir load-tests test:static",
+    "test:community-readme": "node --test .github/scripts/update-community-readme.test.mjs",
+    "test:docs-automation": "node --test .github/scripts/docs-automation-retirement.test.mjs",
+    "test:workflow-security": "node --test .github/scripts/check-workflow-security.test.mjs scripts/security/pin-github-actions.test.mjs && node .github/scripts/check-workflow-security.mjs",
+    "pin:github-actions": "node scripts/security/pin-github-actions.mjs",
     "db:migrate": "turbo run db:migrate --filter=@breeze/api",
     "db:check-drift": "turbo run db:check-drift --filter=@breeze/api",
     "db:seed": "turbo run db:seed --filter=@breeze/api",
@@ -17,26 +23,32 @@
     "wt-stack": "tsx scripts/dev/wt-stack/cli.ts"
   },
   "devDependencies": {
-    "@typescript-eslint/parser": "^8.57.1",
-    "eslint": "^10.6.0",
-    "tsx": "^4.23.0",
-    "turbo": "^2.9.17",
+    "@typescript-eslint/parser": "^8.64.0",
+    "eslint": "^10.7.0",
+    "tsx": "^4.23.1",
+    "turbo": "^2.10.5",
     "typescript": "^5.7.2"
   },
-  "packageManager": "pnpm@10.33.4",
+  "packageManager": "pnpm@10.34.5",
   "engines": {
     "node": ">=22.19.0",
-    "pnpm": ">=10.33.4"
+    "pnpm": ">=10.34.5"
   },
   "pnpm": {
     "overrides": {
+      "adm-zip@<0.6.0": ">=0.6.0",
       "axios@>=1.0.0 <1.15.2": ">=1.15.2",
+      "websocket-driver@<0.7.5": ">=0.7.5",
       "fast-xml-parser@<5.5.7": ">=5.5.7",
       "fast-xml-parser@<5.7.0": ">=5.7.0",
-      "brace-expansion@<1.1.13": ">=1.1.13",
-      "brace-expansion@>=2.0.0 <2.0.3": ">=2.0.3",
-      "brace-expansion@>=4.0.0 <5.0.6": ">=5.0.6",
-      "brace-expansion@5.0.5": "5.0.6",
+      "fast-xml-parser@<5.10.1": ">=5.10.1",
+      "fast-uri@>=3.0.0 <3.1.4": "3.1.4",
+      "brace-expansion@<1.1.16": ">=1.1.16",
+      "brace-expansion@>=2.0.0 <2.1.2": ">=5.0.8",
+      "brace-expansion@>=4.0.0 <5.0.8": ">=5.0.8",
+      "brace-expansion@5.0.5": "5.0.8",
+      "brace-expansion@5.0.6": "5.0.8",
+      "brace-expansion@5.0.7": "5.0.8",
       "devalue@<5.6.4": ">=5.6.4",
       "devalue@>=5.6.4 <=5.8.0": ">=5.8.1",
       "dompurify@<3.4.11": ">=3.4.11",
@@ -67,7 +79,7 @@
       "is-generator-function@>=1.1.0": "1.0.10",
       "js-cookie@<3.0.7": ">=3.0.7",
       "ip@<=2.0.1": "npm:neoip@^3.1.0",
-      "@xmldom/xmldom@<0.8.13": ">=0.8.13",
+      "@xmldom/xmldom@<0.8.13": ">=0.8.13 <0.9.0",
       "postcss@<8.5.10": ">=8.5.10",
       "vite@<6.4.2": ">=6.4.2",
       "rollup@>=4.0.0 <4.59.0": ">=4.59.0",
@@ -76,7 +88,7 @@
       "follow-redirects@<=1.15.11": ">=1.16.0",
       "uuid@<14.0.0": ">=14.0.0",
       "@astrojs/node@<10.0.5": ">=10.0.5",
-      "shell-quote@<1.8.4": ">=1.8.4",
+      "shell-quote@<1.9.0": ">=1.9.0",
       "@grpc/grpc-js@<1.14.4": ">=1.14.4"
     }
   }

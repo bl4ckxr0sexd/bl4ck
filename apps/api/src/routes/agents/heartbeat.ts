@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { and, desc, eq, notInArray } from 'drizzle-orm';
 import { db, withDbAccessContext, withSystemDbAccessContext } from '../../db';
 import {
@@ -11,6 +11,7 @@ import {
   onedriveDeviceState,
 } from '../../db/schema';
 import type { BatteryStatus } from '@breeze/shared';
+import { promotePendingAgentCredentials } from '../../services/agentTokenPromotion';
 import { writeAuditEvent } from '../../services/auditEvents';
 import { heartbeatSchema } from './schemas';
 import type { PolicyProbeConfigUpdate } from './schemas';
@@ -39,7 +40,8 @@ import type { AgentAuthContext } from '../../middleware/agentAuth';
 import { captureException } from '../../services/sentry';
 import { resolveRemoteAccessForDevice } from '../../services/remoteAccessPolicy';
 import { getActiveTrustKeyset, type ManifestTrustKey } from '../../services/manifestSigning';
-import { decryptCommandsForDelivery } from '../../services/sensitiveCommandPayload';
+import { decryptClaimedCommandsForDelivery } from '../../services/commandDelivery';
+import { redactSecretsDeep } from '../../services/secretRedaction';
 
 /**
  * #1121 — pure collapse detector for the watchdogState tolerance gap.
@@ -61,6 +63,67 @@ export function detectWatchdogStateCollapse(
       ? rawState.slice(0, 100)
       : JSON.stringify(rawState)?.slice(0, 100);
   return { field: 'watchdogState', rawValue };
+}
+
+const WATCHDOG_RESTART_LOG_INTERVAL_MS = 60 * 60 * 1000;
+const WATCHDOG_RESTART_LOG_CACHE_MAX = 10_000;
+const watchdogRestartLogCache = new Map<string, { signature: string; loggedAt: number }>();
+
+/**
+ * #799 flap-log dedupe. Watchdog failover heartbeats arrive every ~30s and
+ * carry the same restart counters for hours, and each one wrote an
+ * agent_logs row — thousands of identical rows per device per day during the
+ * 2026-07-22 restart-storm incident. A row is written only when the restart
+ * signature changes, or hourly as a keep-alive trail while the condition
+ * persists. The cache is in-memory per API instance, so scaling out (or a
+ * process restart) degrades gracefully to at most one extra row per
+ * signature-hour per device per instance.
+ *
+ * Read-only check; call markWatchdogRestartActivityLogged AFTER the insert
+ * succeeds. Marking on the check would let one failed insert suppress the
+ * trail's first-occurrence row for a stable signature for up to an hour —
+ * and a flap episode that resolves within that hour would leave no trace at
+ * all. Exported for unit tests.
+ */
+export function shouldLogWatchdogRestartActivity(
+  deviceId: string,
+  signature: string,
+  nowMs: number,
+): boolean {
+  const prev = watchdogRestartLogCache.get(deviceId);
+  return !(
+    prev &&
+    prev.signature === signature &&
+    nowMs - prev.loggedAt < WATCHDOG_RESTART_LOG_INTERVAL_MS
+  );
+}
+
+export function markWatchdogRestartActivityLogged(
+  deviceId: string,
+  signature: string,
+  nowMs: number,
+): void {
+  if (watchdogRestartLogCache.size >= WATCHDOG_RESTART_LOG_CACHE_MAX) {
+    const cutoff = nowMs - 24 * 60 * 60 * 1000;
+    for (const [key, entry] of watchdogRestartLogCache) {
+      if (entry.loggedAt < cutoff) watchdogRestartLogCache.delete(key);
+    }
+    // Pathological case: cache full of fresh entries — drop oldest-inserted
+    // rather than grow unbounded.
+    if (watchdogRestartLogCache.size >= WATCHDOG_RESTART_LOG_CACHE_MAX) {
+      const oldest = watchdogRestartLogCache.keys().next().value;
+      if (oldest !== undefined) watchdogRestartLogCache.delete(oldest);
+    }
+  }
+  watchdogRestartLogCache.set(deviceId, { signature, loggedAt: nowMs });
+}
+
+export function resetWatchdogRestartLogCacheForTests(): void {
+  watchdogRestartLogCache.clear();
+}
+
+export function watchdogRestartLogCacheSizeForTests(): number {
+  return watchdogRestartLogCache.size;
 }
 
 export const heartbeatRoutes = new Hono();
@@ -173,7 +236,7 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
 
   const scoped = await withDbAccessContext(
     dbContext,
-    async (): Promise<Response | { deviceOrgId: string; mainResponse: Record<string, unknown> }> => {
+    async (): Promise<Response | { deviceOrgId: string; deviceId: string; mainResponse: Record<string, unknown> }> => {
 
   const [device] = await db
     .select()
@@ -266,7 +329,13 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
     // agent_logs so on-call has a queryable trail of flap-loop scenarios.
     // Do not block the heartbeat path on logging failure.
     const restartCount = data.mainAgentRestartCount24h ?? 0;
-    if (restartCount > 0 || data.flapDetected === true) {
+    // watchdogState is part of the signature so a RECOVERING→FAILOVER
+    // transition with unchanged counters still lands a trail row.
+    const restartSignature = `${restartCount}|${data.flapDetected === true}|${data.mainAgentLastRestartAt ?? ''}|${data.watchdogState ?? ''}`;
+    if (
+      (restartCount > 0 || data.flapDetected === true) &&
+      shouldLogWatchdogRestartActivity(device.id, restartSignature, now.getTime())
+    ) {
       try {
         await db.insert(agentLogs).values({
           deviceId: device.id,
@@ -285,13 +354,23 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
           },
           agentVersion: data.agentVersion,
         });
+        // Commit to the dedupe cache only after the row landed — a failed
+        // insert must stay retryable on the next heartbeat.
+        markWatchdogRestartActivityLogged(device.id, restartSignature, now.getTime());
       } catch (err) {
         console.error('Failed to write watchdog restart-activity log:', err);
       }
     }
 
-    // Claim watchdog-targeted commands (marks as sent to prevent duplicate delivery)
-    const watchdogCommands = await claimPendingCommandsForDevice(device.id, 10, 'watchdog');
+    // Claim watchdog-targeted commands (marks as sent to prevent duplicate delivery).
+    // #2774 — during an offboarding drain the claim narrows to self_uninstall
+    // (targetRole 'agent' only carries it, so the watchdog claims nothing).
+    const watchdogCommands = await claimPendingCommandsForDevice(
+      device.id,
+      10,
+      'watchdog',
+      agent?.tenantDraining ? ['self_uninstall'] : undefined
+    );
 
     // Check for watchdog upgrade. Honors the tenant's watchdog pin (issue
     // #2124) via the same resolver as the main path; fail-closed to no upgrade
@@ -361,12 +440,11 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
       }
     }
 
+    // #2414 — decrypt just-in-time; a command whose payload fails decryption is
+    // released back to `pending` (not stranded as `sent`) while its siblings
+    // still deliver.
     return c.json({
-      commands: decryptCommandsForDelivery(watchdogCommands.map(cmd => ({
-        id: cmd.id,
-        type: cmd.type,
-        payload: cmd.payload,
-      }))),
+      commands: await decryptClaimedCommandsForDelivery(watchdogCommands),
       watchdogUpgradeTo,
       upgradeTo: agentUpgradeTo,
     });
@@ -406,6 +484,25 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
   // — leave the stored value untouched in that case.
   if (data.watchdogVersion) {
     deviceUpdates.watchdogVersion = data.watchdogVersion;
+  }
+
+  // #2288 — active control-plane URL. Absent (old agent) leaves the stored
+  // value untouched; a malformed value is dropped, never a heartbeat failure.
+  // http(s) only: this is agent-reported telemetry that gets echoed into the
+  // web UI, so exotic-but-parseable schemes (javascript:, file:, data:) are
+  // rejected too. The drop is logged — a real agent only ever reports the
+  // URL it just POSTed to, so garbage here means an agent-side bug.
+  if (data.serverUrl) {
+    try {
+      const parsed = new URL(data.serverUrl);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        deviceUpdates.agentServerUrl = data.serverUrl;
+      } else {
+        console.warn(`[heartbeat] dropping non-http(s) serverUrl from device ${agent.deviceId}`);
+      }
+    } catch {
+      console.warn(`[heartbeat] dropping malformed serverUrl from device ${agent.deviceId}`);
+    }
   }
 
   // Orthogonal virtualization attribute (issue #1387). Old agents omit
@@ -471,13 +568,91 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
   // a decommission landing mid-request (between the auth fetch and this
   // write) would be silently flipped back to 'online' (#2230). Mirrors
   // TERMINAL_DEVICE_STATUSES in routes/agentWs.ts.
-  await db
+  //
+  // `.returning` reports whether the guarded write actually took effect: a
+  // terminal-status device matches 0 rows, so `updatedRows` is empty and the
+  // state-transition audit below is skipped (finding #10 — never audit a write
+  // that the guard rejected).
+  const updatedRows = await db
     .update(devices)
     .set(deviceUpdates)
     .where(and(
       eq(devices.id, device.id),
       notInArray(devices.status, ['decommissioned', 'quarantined'])
-    ));
+    ))
+    .returning({ id: devices.id });
+
+  // Durable audit of security-relevant device state transitions (finding #10).
+  // The heartbeat mutates several security-relevant fields but previously left
+  // no persisted trail — only transient Redis pub/sub. This is a high-volume
+  // endpoint, so we emit at most ONE `agent.heartbeat.state_change` event per
+  // beat, carrying only fields that GENUINELY changed. Routine/noisy fields
+  // (lastSeenAt, metrics, uptime, agentVersion, pendingReboot, lastUser) are
+  // deliberately excluded so a steady-state heartbeat produces NO audit. Gated
+  // on `updatedRows.length` so a guard-rejected (terminal-status) write never
+  // records a phantom transition.
+  if (updatedRows.length > 0) {
+    const changes: Array<{ field: string; before: unknown; after: unknown }> = [];
+
+    // offline→online (status is always written as 'online' here; audit only the
+    // transition FROM a non-online value).
+    if (device.status !== 'online') {
+      changes.push({ field: 'status', before: device.status ?? null, after: 'online' });
+    }
+    // hostname — deviceUpdates.hostname is set only when it differs (see above),
+    // so its presence already means a genuine change.
+    if (deviceUpdates.hostname !== undefined) {
+      changes.push({ field: 'hostname', before: device.hostname ?? null, after: deviceUpdates.hostname });
+    }
+    // agentServerUrl / tccPermissions / desktopAccess are written unconditionally
+    // when reported, so compare against the pre-update snapshot to avoid auditing
+    // an unchanged re-report.
+    if (deviceUpdates.agentServerUrl !== undefined && deviceUpdates.agentServerUrl !== device.agentServerUrl) {
+      changes.push({ field: 'agentServerUrl', before: device.agentServerUrl ?? null, after: deviceUpdates.agentServerUrl });
+    }
+    if (
+      deviceUpdates.tccPermissions !== undefined &&
+      JSON.stringify(deviceUpdates.tccPermissions) !== JSON.stringify(device.tccPermissions ?? null)
+    ) {
+      changes.push({ field: 'tccPermissions', before: device.tccPermissions ?? null, after: deviceUpdates.tccPermissions });
+    }
+    if (
+      deviceUpdates.desktopAccess !== undefined &&
+      JSON.stringify(deviceUpdates.desktopAccess) !== JSON.stringify(device.desktopAccess ?? null)
+    ) {
+      changes.push({ field: 'desktopAccess', before: device.desktopAccess ?? null, after: deviceUpdates.desktopAccess });
+    }
+    // mainAgentSilentSince null↔non-null transition. The main-agent branch only
+    // ever CLEARS it (recovery); the watchdog branch owns the SET side. Audit
+    // only the actual flip, reported as a boolean `mainAgentSilent`.
+    //
+    // NB: in practice this only ever records the CLEAR (silent→recovered) side.
+    // The SET side (main agent going silent) happens in the watchdog branch,
+    // which RETURNS EARLY above — before this audit block — so it never reaches
+    // here. That transition is intentionally NOT in audit_logs: it is durably
+    // covered by `publishEvent('device.main_agent_silent')` + an agent_logs row
+    // written in the watchdog branch. So the absence of a SET-side state_change
+    // audit is deliberate, not a coverage gap.
+    if ('mainAgentSilentSince' in deviceUpdates) {
+      const wasSet = (device.mainAgentSilentSince ?? null) !== null;
+      const nowSet = (deviceUpdates.mainAgentSilentSince ?? null) !== null;
+      if (wasSet !== nowSet) {
+        changes.push({ field: 'mainAgentSilent', before: wasSet, after: nowSet });
+      }
+    }
+
+    if (changes.length > 0) {
+      writeAuditEvent(c, {
+        orgId: device.orgId,
+        actorType: 'agent',
+        actorId: agentId,
+        action: 'agent.heartbeat.state_change',
+        resourceType: 'device',
+        resourceId: device.id,
+        details: { changes },
+      });
+    }
+  }
 
   // Publish event when agent version changes (for real-time UI updates)
   if (data.agentVersion && data.agentVersion !== device.agentVersion) {
@@ -515,8 +690,22 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
         bandwidthInBps: data.metrics.bandwidthInBps != null ? BigInt(data.metrics.bandwidthInBps) : null,
         bandwidthOutBps: data.metrics.bandwidthOutBps != null ? BigInt(data.metrics.bandwidthOutBps) : null,
         interfaceStats: data.metrics.interfaceStats ?? null,
-        processCount: data.metrics.processCount
+        processCount: data.metrics.processCount,
+        // Agent's own Go runtime memory gauges (#2389) — jsonb sidecar, so no
+        // migration; null (not {}) when an old agent doesn't send them.
+        customMetrics: data.agentRuntime ? { agentRuntime: data.agentRuntime } : null
       });
+  } else if (data.agentRuntime) {
+    // #2389 — the gauges ride the device_metrics insert, and that table's OS
+    // columns are NOT NULL, so a heartbeat whose OS metrics collection failed
+    // (metricsAvailable=false) has no row to attach them to. That is exactly
+    // the state a memory-sick agent is likely to be in, so the drop must be
+    // loud rather than indistinguishable from "old agent never sent gauges".
+    console.warn('[heartbeat] agentRuntime received without metrics — runtime gauges dropped', {
+      deviceId: device.id,
+      goroutines: data.agentRuntime.goroutines,
+      heapInuseBytes: data.agentRuntime.heapInuseBytes,
+    });
   }
 
   if (data.ipHistoryUpdate) {
@@ -575,6 +764,7 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
         kfmFolderStates: s.kfmFolderStates,
         mountedLibraries: s.mountedLibraries,
         entitledLibraries: s.entitledLibraries,
+        signedInUpns: s.signedInUpns,
         driftEntries: s.driftEntries,
         lastReportedAt: new Date(),
         updatedAt: new Date(),
@@ -587,18 +777,33 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
           kfmFolderStates: s.kfmFolderStates,
           mountedLibraries: s.mountedLibraries,
           entitledLibraries: s.entitledLibraries,
+          signedInUpns: s.signedInUpns,
           driftEntries: s.driftEntries,
           lastReportedAt: new Date(),
           updatedAt: new Date(),
         },
       });
     } catch (err) {
-      console.error(`[agents] failed to upsert onedrive device state for ${agentId}:`, err);
-      captureException(err);
+      // Drizzle query errors serialize the bound params — including the
+      // signedInUpns jsonb (end-user PII) — into their message. Log/report
+      // only the underlying driver message, never the wrapped query error.
+      const cause = (err as { cause?: { message?: unknown } })?.cause;
+      const safeMsg = typeof cause?.message === 'string'
+        ? cause.message
+        : (err instanceof Error ? err.constructor.name : 'unknown error');
+      console.error(`[agents] failed to upsert onedrive device state for ${agentId}: ${safeMsg}`);
+      captureException(new Error(`onedrive device state upsert failed: ${safeMsg}`));
     }
   }
 
-  const commands = await claimPendingCommandsForDevice(device.id, 10);
+  // #2774 — during an offboarding drain, the heartbeat (the primary command
+  // carrier) only delivers self_uninstall; everything else stays unclaimed.
+  const commands = await claimPendingCommandsForDevice(
+    device.id,
+    10,
+    'agent',
+    agent?.tenantDraining ? ['self_uninstall'] : undefined
+  );
 
   // Policy probe config (buildPolicyProbeConfigUpdate) is deliberately NOT
   // built here: partner-wide compliance policies (org_id NULL, #2129) are
@@ -778,13 +983,11 @@ if (latestHelper) {
     captureException(err);
   }
 
-  let onedriveSettings: OnedriveConfigUpdate | null = null;
-  try {
-    onedriveSettings = await buildOnedriveHelperConfigUpdate(device.id);
-  } catch (err) {
-    console.error(`[agents] failed to build onedrive_helper config update for ${agentId}:`, err);
-    captureException(err);
-  }
+  // #1105 — onedrive_helper config is built AFTER this org transaction closes
+  // (see the post-scoped section below), because Phase 4 per-UPN Graph
+  // resolution can make uncached external HTTP round-trips. Building it here
+  // would hold a pooled connection in the open org transaction across those
+  // calls. Mirrors buildPolicyProbeConfigUpdate's placement.
 
   // #1872: sole-patch-source enforcement. Omit the block on a resolver error so
   // a transient failure never reverts an endpoint already under enforcement;
@@ -797,26 +1000,71 @@ if (latestHelper) {
     captureException(err);
   }
 
-  let mergedConfigUpdate: Record<string, unknown> | null = null;
-  if (eventLogSettings || monitoringSettings || onedriveSettings || patchSourceSettings) {
-    mergedConfigUpdate = {};
-    if (eventLogSettings) {
-      mergedConfigUpdate.event_log_settings = eventLogSettings;
-    }
-    if (monitoringSettings) {
-      mergedConfigUpdate.monitoring_settings = monitoringSettings;
-    }
-    if (onedriveSettings) {
-      mergedConfigUpdate.onedrive_helper_settings = onedriveSettings;
-    }
-    if (patchSourceSettings) {
-      mergedConfigUpdate.patch_source_settings = patchSourceSettings;
-    }
+  // #2288 — backup control-plane URL. ALWAYS present: the configured value,
+  // or '' so agents clear a previously-pushed backup (absent = old API =
+  // no change; '' = authoritative clear). Always non-null, so the final
+  // configUpdate assembly below always carries the key.
+  // onedrive_helper_settings is NOT merged here — it is built post-scoped and
+  // merged into the final configUpdate below (#1105 hoist).
+  const mergedConfigUpdate: Record<string, unknown> = {
+    backup_server_url: (process.env.AGENT_BACKUP_SERVER_URL ?? '').trim(),
+  };
+  if (eventLogSettings) {
+    mergedConfigUpdate.event_log_settings = eventLogSettings;
+  }
+  if (monitoringSettings) {
+    mergedConfigUpdate.monitoring_settings = monitoringSettings;
+  }
+  if (patchSourceSettings) {
+    mergedConfigUpdate.patch_source_settings = patchSourceSettings;
   }
 
   const authenticatedWithPreviousToken = c.get('agentTokenRotationRequired') === true;
+
+  // Issue #2621 — a staged rotation is still outstanding. Don't ask for another
+  // one (that would churn the staged set and re-open the divergence window);
+  // ask the agent to finish the one it has. This is also the recovery path for
+  // an agent that persisted the new credentials and then crashed before
+  // confirming: it reconnects on the staged token and gets told to confirm.
+  let pendingRotationLive =
+    !!device.pendingTokenHash &&
+    !!device.pendingTokenExpiresAt &&
+    device.pendingTokenExpiresAt > new Date();
+
+  // Issue #2621 — IMPLICIT PROMOTION. The agent is authenticating with the
+  // staged credential, which is the same proof of durable possession that
+  // /rotate-token/confirm requires, so promote it here too.
+  //
+  // This is what keeps PRE-#2621 agents alive. An old agent overwrites its own
+  // token file on rotation and never calls confirm; without this it would run on
+  // the pending hash until the staging window closed and then be locked out
+  // permanently, with no way to self-heal (rotateToken is suppressed while a
+  // rotation is staged, and after expiry it can no longer authenticate at all).
+  // It also backstops a current agent whose confirm response was lost in flight.
+  if (pendingRotationLive && c.get('agentPendingTokenPresented') === true && device.agentTokenHash) {
+    try {
+      const promoted = await promotePendingAgentCredentials({
+        deviceId: device.id,
+        pendingTokenHash: device.pendingTokenHash!,
+        expectedAgentTokenHash: device.agentTokenHash,
+        pendingWatchdogTokenHash: device.pendingWatchdogTokenHash,
+        pendingHelperTokenHash: device.pendingHelperTokenHash,
+        watchdogTokenHash: device.watchdogTokenHash,
+        helperTokenHash: device.helperTokenHash,
+      });
+      if (promoted) {
+        pendingRotationLive = false;
+      }
+    } catch (err) {
+      // Best-effort: the staged credential still authenticates for the rest of
+      // its window, and confirm/the next heartbeat will retry the promotion.
+      console.error('[heartbeat] implicit pending-rotation promotion failed:', err);
+    }
+  }
+
   const rotateToken =
     !authenticatedWithPreviousToken &&
+    !pendingRotationLive &&
     (!device.watchdogTokenHash || isAgentTokenRotationDue(device.tokenIssuedAt));
 
   let manageRemoteManagement = false;
@@ -827,23 +1075,30 @@ if (latestHelper) {
     console.error('[heartbeat] Failed to resolve remote access policy:', err);
   }
 
+  // #2414 — decrypt just-in-time; a command whose payload fails decryption is
+  // released back to `pending` (not stranded as `sent`) while its siblings
+  // still deliver.
+  const deliverableCommands = await decryptClaimedCommandsForDelivery(commands);
+
   // Main-branch response payload — built inside the org context, but the
   // manifest-trust-keyset and policy probe config are fetched AFTER this
   // context closes (see below).
   return {
     deviceOrgId: device.orgId,
+    deviceId: device.id,
     mainResponse: {
-      commands: decryptCommandsForDelivery(commands.map(cmd => ({
-        id: cmd.id,
-        type: cmd.type,
-        payload: cmd.payload
-      }))),
+      commands: deliverableCommands,
       configUpdate: mergedConfigUpdate,
       upgradeTo,
       helperUpgradeTo: helperUpgradeTo ?? undefined,
       watchdogUpgradeTo: watchdogUpgradeTo ?? undefined,
       renewCert: renewCert || undefined,
       rotateToken: rotateToken || undefined,
+      // Issue #2621 — set when the caller authenticated with the STAGED
+      // credential, i.e. it demonstrably holds the new token but never
+      // confirmed. Tells the agent to call /rotate-token/confirm and finish.
+      confirmTokenRotation:
+        (pendingRotationLive && c.get('agentPendingTokenPresented') === true) || undefined,
       helperEnabled: helperSettings?.enabled ?? false,
       helperSettings: helperSettings ?? undefined,
       // Opt-in default: a null pamSettings (resolver error, logged above) sends
@@ -887,9 +1142,33 @@ if (latestHelper) {
     console.error(`[agents] failed to build policy probe config update for ${agentId}:`, err);
   }
 
+  // #1105 — onedrive_helper config is built OUTSIDE the org transaction too.
+  // Phase 4 added per-UPN Graph resolution inside resolveDeviceOnedriveSettings,
+  // where an uncached miss makes sequential external HTTP round-trips (token +
+  // Graph, each bounded by AbortSignal.timeout), per UPN — exactly the
+  // conn-hold class #1105 warns about. resolveDeviceOnedriveSettings filters
+  // every query explicitly (eq(configurationPolicies.orgId, device.orgId),
+  // deviceId-keyed state read, and the org-keyed m365_connections read inside
+  // the Graph token helper), so the system context here is org-safe and cannot
+  // pivot tenants (same guarantee as the policy-probe pattern above). The
+  // onedrive_device_state upsert happened inside scoped (ingest), and this
+  // build runs later, so the ingest-before-delivery ordering is preserved.
+  let onedriveSettings: OnedriveConfigUpdate | null = null;
+  try {
+    onedriveSettings = await withSystemDbAccessContext(() =>
+      buildOnedriveHelperConfigUpdate(scoped.deviceId)
+    );
+  } catch (err) {
+    console.error(`[agents] failed to build onedrive_helper config update for ${agentId}:`, err);
+    captureException(err);
+  }
+  const onedriveConfigUpdate = onedriveSettings
+    ? { onedrive_helper_settings: onedriveSettings }
+    : null;
+
   const scopedConfigUpdate = scoped.mainResponse.configUpdate as Record<string, unknown> | null;
-  const configUpdate = policyProbeConfig || scopedConfigUpdate
-    ? { ...(policyProbeConfig ?? {}), ...(scopedConfigUpdate ?? {}) }
+  const configUpdate = policyProbeConfig || scopedConfigUpdate || onedriveConfigUpdate
+    ? { ...(policyProbeConfig ?? {}), ...(scopedConfigUpdate ?? {}), ...(onedriveConfigUpdate ?? {}) }
     : null;
 
   return c.json({ ...scoped.mainResponse, configUpdate, manifestTrustKeys });
@@ -933,7 +1212,9 @@ heartbeatRoutes.put('/:id/monitoring-results', bodyLimit({ maxSize: 1024 * 1024,
     cpuPercent: typeof r.cpuPercent === 'number' ? r.cpuPercent : null,
     memoryMb: typeof r.memoryMb === 'number' ? r.memoryMb : null,
     pid: typeof r.pid === 'number' ? r.pid : null,
-    details: (r.details && typeof r.details === 'object') ? r.details : null,
+    // #2434: details is an agent-supplied free-form blob surfaced in the
+    // service-monitoring UI — redact secret-shaped strings before persistence.
+    details: (r.details && typeof r.details === 'object') ? redactSecretsDeep(r.details) : null,
     autoRestartAttempted: r.autoRestartAttempted === true,
     autoRestartSucceeded: typeof r.autoRestartSucceeded === 'boolean' ? r.autoRestartSucceeded : null,
   }));

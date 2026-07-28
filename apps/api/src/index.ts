@@ -9,12 +9,12 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
-import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
 import { secureHeaders } from 'hono/secure-headers';
 import { bodyLimit } from 'hono/body-limit';
 
 import { securityMiddleware } from './middleware/security';
+import { requestPathLogger } from './middleware/requestPathLogger';
 import { bodyLimitForPath } from './middleware/bodyLimit';
 import { globalRateLimit } from './middleware/globalRateLimit';
 import { authRoutes } from './routes/auth';
@@ -45,6 +45,7 @@ import { timeEntriesRoutes } from './routes/timeEntries';
 import { ticketCategoriesRoutes } from './routes/ticketCategories';
 import { ticketConfigRoutes } from './routes/ticketConfig';
 import { ticketResponseTemplateRoutes } from './routes/tickets/ticketResponseTemplates';
+import { ticketFormRoutes } from './routes/tickets/forms';
 import { orgRoutes } from './routes/orgs';
 import { oauthRoutes } from './routes/oauth';
 import { wellKnownRoutes } from './routes/oauthWellKnown';
@@ -61,6 +62,9 @@ import { searchRoutes } from './routes/search';
 import { logsRoutes } from './routes/logs';
 import { remoteRoutes } from './routes/remote';
 import { apiKeyRoutes } from './routes/apiKeys';
+import { servicePrincipalRoutes } from './routes/servicePrincipals';
+import { partnerServicePrincipalRoutes } from './routes/partnerServicePrincipals';
+import { partnerApiRoutes } from './routes/partnerApi';
 import { enrollmentKeyRoutes, publicEnrollmentRoutes, publicShortLinkRoutes } from './routes/enrollmentKeys';
 import { installerRoutes } from './routes/installer';
 import { ssoRoutes } from './routes/sso';
@@ -77,6 +81,7 @@ import { patchPolicyRoutes } from './routes/patchPolicies';
 import { updateRingRoutes } from './routes/updateRings';
 import { mobileRoutes } from './routes/mobile';
 import { approvalRoutes } from './routes/approvals';
+import { actionIntentsRoutes } from './routes/actionIntents';
 import { authenticatorRoutes, approverDevicesRoutes } from './routes/authenticator';
 import { lifecycleRoutes, lifecycleAdminRoutes } from './routes/lifecycle';
 import { mobileDeviceBlockedMiddleware } from './middleware/mobileDeviceBlocked';
@@ -136,6 +141,7 @@ import { sentinelOneRoutes } from './routes/sentinelOne';
 import { softwareInventoryRoutes } from './routes/softwareInventory';
 import { huntressRoutes } from './routes/huntress';
 import { pax8Routes } from './routes/pax8';
+import { pax8OrderRoutes } from './routes/pax8Orders';
 import { unifiRoutes } from './routes/unifi';
 import { accountingRoutes } from './routes/accounting';
 import { sensitiveDataRoutes } from './routes/sensitiveData';
@@ -143,9 +149,14 @@ import { peripheralControlRoutes } from './routes/peripheralControl';
 import { browserSecurityRoutes } from './routes/browserSecurity';
 import { c2cRoutes, m365CallbackRoute } from './routes/c2c';
 import { googleRoutes } from './routes/google';
+import { m365ConsentCallbackRoutes } from './routes/m365ConsentCallback';
+import { m365CustomerGraphReadRoutes } from './routes/m365CustomerGraphRead';
 import { m365Routes } from './routes/m365';
+import { onedriveRoutes } from './routes/onedrive';
 import { drRoutes } from './routes/dr';
 import { adminRoutes } from './routes/admin';
+import { extensionsAdminRoutes } from './routes/extensionsAdmin';
+import { extensionsWebRoutes } from './routes/extensionsWeb';
 import { internalSyntheticRoutes } from './routes/internal/synthetic';
 import { bootstrapPlatformAdmins } from './services/platformAdminBootstrap';
 import { captureException, flushSentry, initSentry } from './services/sentry';
@@ -173,6 +184,8 @@ import { initializeMlOutputRetention, shutdownMlOutputRetention } from './jobs/m
 import { initializeIPHistoryRetention, shutdownIPHistoryRetention } from './jobs/ipHistoryRetention';
 import { initializeChangeLogRetention, shutdownChangeLogRetention } from './jobs/changeLogRetention';
 import { initializeOauthCleanupWorker, shutdownOauthCleanupWorker } from './jobs/oauthCleanup';
+import { initializeAuthEmailWorker, shutdownAuthEmailWorker } from './jobs/authEmailWorker';
+import { initializeQuoteSendWorker, shutdownQuoteSendWorker } from './jobs/quoteSendQueue';
 import {
   initializeEnrollmentKeyCleanupWorker,
   shutdownEnrollmentKeyCleanupWorker,
@@ -203,6 +216,7 @@ import { initializeScriptConnectTrigger, shutdownScriptConnectTrigger } from './
 import { initializeSecurityPostureWorker, shutdownSecurityPostureWorker } from './jobs/securityPostureWorker';
 import { initializeReliabilityWorker, shutdownReliabilityWorker } from './jobs/reliabilityWorker';
 import { initializeUserRiskJobs, shutdownUserRiskJobs } from './jobs/userRiskJobs';
+import { initializeAbuseSignalsWorker, shutdownAbuseSignalsWorker } from './jobs/abuseSignalsSweep';
 import { initializeUserRiskRetention, shutdownUserRiskRetention } from './jobs/userRiskRetention';
 import { initializePatchComplianceReportWorker, shutdownPatchComplianceReportWorker } from './jobs/patchComplianceReportWorker';
 import { initializeReportScheduleWorker, shutdownReportScheduleWorker } from './jobs/reportScheduleWorker';
@@ -223,6 +237,7 @@ import { initializeBackupWorker, shutdownBackupWorker } from './jobs/backupWorke
 import { initializeCisJobs, shutdownCisJobs } from './jobs/cisJobs';
 import { initializeHuntressSyncJob, shutdownHuntressSyncJob } from './jobs/huntressSync';
 import { initializePax8SyncWorkers, shutdownPax8SyncWorkers } from './jobs/pax8SyncWorker';
+import { initializeTdSynnexSftpWorkers, shutdownTdSynnexSftpWorkers } from './jobs/tdSynnexSftpSyncWorker';
 import { initializeSensitiveDataWorkers, shutdownSensitiveDataWorkers } from './jobs/sensitiveDataJobs';
 import { initializePeripheralJobs, shutdownPeripheralJobs } from './jobs/peripheralJobs';
 import { initializeBrowserSecurityJobs, shutdownBrowserSecurityJobs } from './jobs/browserSecurityJobs';
@@ -245,6 +260,10 @@ import {
 import { initializeStaleCommandReaper, shutdownStaleCommandReaper } from './jobs/staleCommandReaper';
 import { initializePamJobs, shutdownPamJobs } from './jobs/pamJobs';
 import { initializeApprovalExpiryReaper, shutdownApprovalExpiryReaper } from './jobs/approvalExpiryReaper';
+import { initializeOffboardingDrainReaper, shutdownOffboardingDrainReaper } from './jobs/offboardingDrainReaper';
+import { initializeIntentOutboxPublisher, shutdownIntentOutboxPublisher } from './jobs/intentOutboxPublisher';
+import { initializeIntentExpiryReaper, shutdownIntentExpiryReaper } from './jobs/intentExpiryReaper';
+import { initializeIntentReleaseWorker, shutdownIntentReleaseWorker } from './jobs/intentReleaseWorker';
 import { initializeStripeReconcileSweep, shutdownStripeReconcileSweep } from './jobs/stripeReconcileSweep';
 import { initializeQuoteExpiryReaper, shutdownQuoteExpiryReaper } from './jobs/quoteExpiryReaper';
 import { initializeSuppressionExpiryReaper, shutdownSuppressionExpiryReaper } from './jobs/suppressionExpiryReaper';
@@ -256,7 +275,6 @@ import { initializePolicyAlertBridge } from './services/policyAlertBridge';
 import { getWebhookWorker, initializeWebhookDelivery } from './workers/webhookDelivery';
 import { decryptForColumn } from './services/secretCrypto';
 import { decryptWebhookHeaders } from './services/notificationChannelSecrets';
-import { initializeTransferCleanup, stopTransferCleanup } from './workers/transferCleanup';
 import { closeRedis, getRedis, isRedisAvailable } from './services/redis';
 import { shutdownEventDispatcher } from './services/eventDispatcher';
 import { getEventBus } from './services/eventBus';
@@ -264,7 +282,24 @@ import { writeAuditEvent } from './services/auditEvents';
 import { drainAuditRetryQueue } from './services/auditService';
 import { createCorsOriginResolver } from './services/corsOrigins';
 import { validateConfig } from './config/validate';
-import { autoMigrate } from './db/autoMigrate';
+import { initializeDatabaseForStartup } from './db/databaseStartup';
+import { loadSourceExtensions } from './extensions/loader';
+import { extensionContributionRegistry } from './extensions/contributionRegistry';
+import { mountExtensionGateway } from './extensions/gateway';
+import { join as joinPath } from 'node:path';
+import { reconcileExtensions } from './extensions/reconciler';
+import { resolveExtensionsRoot } from './extensions/discovery';
+import { resolveArtifactStoreRoot } from './extensions/artifactStore';
+import { createExtensionStateStore } from './extensions/stateStore';
+import { createEnabledGate } from './extensions/enabledGate';
+import {
+  initializeExtensionJobHost,
+  shutdownExtensionJobHost,
+} from './extensions/jobHost';
+import {
+  attributeExtensionError,
+  extensionRootsSnapshot,
+} from './extensions/faultAttribution';
 import { syncBinaries } from './services/binarySync';
 import * as dbModule from './db';
 import { deviceGroups, devices, securityThreats, webhookDeliveries, webhooks as webhooksTable } from './db/schema';
@@ -317,7 +352,7 @@ const resolveCorsOrigin = createCorsOriginResolver({
 });
 
 // Global middleware
-app.use('*', logger());
+app.use('*', requestPathLogger());
 app.use(
   '*',
   secureHeaders({
@@ -805,6 +840,7 @@ api.route('/time-entries', timeEntriesRoutes);
 api.route('/ticket-categories', ticketCategoriesRoutes);
 api.route('/ticket-config', ticketConfigRoutes);
 api.route('/', ticketResponseTemplateRoutes);
+api.route('/', ticketFormRoutes);
 api.route('/orgs', orgRoutes);
 api.route('/users', userRoutes);
 api.route('/roles', roleRoutes);
@@ -825,6 +861,9 @@ api.route('/vnc-exchange', vncExchangeRoutes); // No auth — one-time code is t
 api.route('/vnc-viewer', vncViewerRoutes); // Viewer-token auth (purpose='viewer', scoped to a tunnel sessionId)
 api.route('/remote', remoteRoutes);
 api.route('/api-keys', apiKeyRoutes);
+api.route('/service-principals', servicePrincipalRoutes);
+api.route('/partner-service-principals', partnerServicePrincipalRoutes);
+api.route('/partner-api', partnerApiRoutes);
 api.route('/enrollment-keys', publicEnrollmentRoutes); // Public download (no auth) — must precede auth-protected routes
 api.route('/enrollment-keys', enrollmentKeyRoutes);
 api.route('/installer', installerRoutes);
@@ -858,6 +897,7 @@ api.route('/update-rings', updateRingRoutes);
 api.use('/mobile/*', mobileDeviceBlockedMiddleware);
 api.route('/mobile', mobileRoutes);
 api.route('/mobile/approvals', approvalRoutes);
+api.route('/action-intents', actionIntentsRoutes);
 api.route('/authenticator', authenticatorRoutes);
 api.route('/me/approver-devices', approverDevicesRoutes);
 api.route('/', lifecycleRoutes);
@@ -914,6 +954,7 @@ api.route('/dns-security', dnsSecurityRoutes);
 api.route('/s1', sentinelOneRoutes);
 api.route('/huntress', huntressRoutes);
 api.route('/pax8', pax8Routes);
+api.route('/pax8', pax8OrderRoutes);
 api.route('/unifi', unifiRoutes);
 api.route('/accounting', accountingRoutes);
 api.route('/software-inventory', softwareInventoryRoutes);
@@ -923,10 +964,29 @@ api.route('/browser-security', browserSecurityRoutes);
 api.route('/', m365CallbackRoute); // Public callback (no auth) — must precede c2c group
 api.route('/c2c', c2cRoutes);
 api.route('/google', googleRoutes);
+api.route('/m365', m365ConsentCallbackRoutes); // Public two-phase consent callback; mount before authenticated M365 routes
+api.route('/m365', m365CustomerGraphReadRoutes);
 api.route('/m365', m365Routes);
+api.route('/onedrive', onedriveRoutes);
 api.route('/dr', drRoutes);
+// Runtime-extension operations. Mounted BEFORE `/admin` on purpose: it carries
+// its own platformAdminMiddleware, and registering the more specific path first
+// means adminRoutes' `use('*')` gate never also fires for these requests (which
+// would authenticate and audit-log the same request twice).
+api.route('/admin/extensions', extensionsAdminRoutes);
 api.route('/admin', adminRoutes);
 api.route('/admin', accountDeletionAdminRoutes);
+// Authenticated (any user) runtime-extension web registry + digest-addressed
+// asset serving. Distinct from `/admin/extensions` above (platform-admin
+// operations) — this is the tenant-facing surface a browser reads.
+api.route('/extensions', extensionsWebRoutes);
+
+// One system-scoped state store, shared by the per-request enabled gate, the
+// startup reconciler, and the BullMQ job host. The gate checks
+// installed_extensions.enabled on EVERY dispatched extension request (no cache)
+// so an admin disabling an extension takes effect fleet-wide on the next request.
+const extensionStateStore = createExtensionStateStore();
+mountExtensionGateway(app, extensionContributionRegistry, createEnabledGate(extensionStateStore));
 
 app.route('/api/v1', api);
 
@@ -1150,6 +1210,7 @@ async function initializeWorkers(): Promise<void> {
     ['securityPostureWorker', initializeSecurityPostureWorker],
     ['reliabilityWorker', initializeReliabilityWorker],
     ['userRiskWorker', initializeUserRiskJobs],
+    ['abuseSignalsWorker', initializeAbuseSignalsWorker],
     ['userRiskRetention', initializeUserRiskRetention],
     ['backupVerificationJobs', initializeBackupVerificationJobs],
     ['policyAlertBridge', initializePolicyAlertBridge],
@@ -1161,8 +1222,14 @@ async function initializeWorkers(): Promise<void> {
     ['processSampleRetention', initializeProcessSampleRetention],
     ['changeLogRetention', initializeChangeLogRetention],
     ['oauthCleanup', initializeOauthCleanupWorker],
+    // SR2-22: out-of-band auth-email worker (forgot-password issuance/send).
+    // initializeAuthEmailWorker is synchronous (returns void), so wrap it.
+    ['authEmailWorker', async () => { initializeAuthEmailWorker(); }],
+    // Undo-send window: fires the delayed quote dispatch (jobs/quoteSendQueue).
+    ['quoteSendWorker', async () => { initializeQuoteSendWorker(); }],
     ['enrollmentKeyCleanup', initializeEnrollmentKeyCleanupWorker],
     ['auditRetention', initializeAuditRetentionWorker],
+    ['extensionJobHost', () => initializeExtensionJobHost(extensionContributionRegistry, extensionStateStore)],
     ['auditChainVerify', initializeAuditChainVerifyWorker],
     ['auditChainAnchor', initializeAuditChainAnchorWorker],
     ['tenantErasure', initializeTenantErasureWorker],
@@ -1183,6 +1250,7 @@ async function initializeWorkers(): Promise<void> {
     ['s1SyncWorker', initializeS1SyncJob],
     ['huntressSyncWorker', initializeHuntressSyncJob],
     ['pax8SyncWorker', initializePax8SyncWorkers],
+    ['tdSynnexSftpSyncWorker', initializeTdSynnexSftpWorkers],
     ['logForwardingWorker', initializeLogForwardingWorker],
     ['patchJobWorker', initializePatchJobWorkers],
     ['patchSchedulerWorker', initializePatchSchedulerWorker],
@@ -1204,6 +1272,10 @@ async function initializeWorkers(): Promise<void> {
     ['staleCommandReaper', initializeStaleCommandReaper],
     ['pamJobs', initializePamJobs],
     ['approvalExpiryReaper', initializeApprovalExpiryReaper],
+    ['offboardingDrainReaper', initializeOffboardingDrainReaper],
+    ['intentOutboxPublisher', initializeIntentOutboxPublisher],
+    ['intentExpiryReaper', initializeIntentExpiryReaper],
+    ['intentReleaseWorker', initializeIntentReleaseWorker],
     ['stripeReconcileSweep', initializeStripeReconcileSweep],
     ['quoteExpiryReaper', initializeQuoteExpiryReaper],
     ['suppressionExpiryReaper', initializeSuppressionExpiryReaper],
@@ -1296,7 +1368,6 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
   shutdownInProgress = true;
   console.log(`[shutdown] Received ${signal}, shutting down gracefully...`);
 
-  stopTransferCleanup();
   getWebhookWorker().stop();
   if (auditRetryInterval) {
     clearInterval(auditRetryInterval);
@@ -1338,6 +1409,7 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownS1SyncJob,
     shutdownHuntressSyncJob,
     shutdownPax8SyncWorkers,
+    shutdownTdSynnexSftpWorkers,
     shutdownBackupVerificationJobs,
     shutdownSnmpRetention,
     shutdownMonitorWorker,
@@ -1353,8 +1425,11 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownProcessSampleRetention,
     shutdownChangeLogRetention,
     shutdownOauthCleanupWorker,
+    shutdownAuthEmailWorker,
+    shutdownQuoteSendWorker,
     shutdownEnrollmentKeyCleanupWorker,
     shutdownAuditRetentionWorker,
+    shutdownExtensionJobHost,
     shutdownAuditChainVerifyWorker,
     shutdownAuditChainAnchorWorker,
     shutdownTenantErasureWorker,
@@ -1362,6 +1437,7 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownSecurityPostureWorker,
     shutdownReliabilityWorker,
     shutdownUserRiskJobs,
+    shutdownAbuseSignalsWorker,
     shutdownUserRiskRetention,
     shutdownAutomationWorker,
     shutdownScriptConnectTrigger,
@@ -1380,6 +1456,10 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownStaleCommandReaper,
     shutdownPamJobs,
     shutdownApprovalExpiryReaper,
+    shutdownOffboardingDrainReaper,
+    shutdownIntentOutboxPublisher,
+    shutdownIntentExpiryReaper,
+    shutdownIntentReleaseWorker,
     shutdownStripeReconcileSweep,
     shutdownQuoteExpiryReaper,
     shutdownSuppressionExpiryReaper,
@@ -1464,8 +1544,21 @@ function installSignalHandlers(): void {
       captureException(reason instanceof Error ? reason : new Error(String(reason)));
       return;
     }
-    console.error('[FATAL] Unhandled rejection:', reason);
-    captureException(reason instanceof Error ? reason : new Error(String(reason)));
+    // Attribution ADDS a culprit name to the log + Sentry tag ONLY. It does not
+    // suppress or resolve the fault — the existing capture/telemetry behavior is
+    // unchanged; we simply name the likely extension when its loaded code is in
+    // the stack.
+    const attributed = attributeExtensionError(reason, extensionRootsSnapshot());
+    if (attributed) {
+      console.error(`[FATAL] Unhandled rejection attributed to extension "${attributed}":`, reason);
+    } else {
+      console.error('[FATAL] Unhandled rejection:', reason);
+    }
+    captureException(
+      reason instanceof Error ? reason : new Error(String(reason)),
+      undefined,
+      attributed ? { extension: attributed } : undefined,
+    );
   });
 
   // #1379 B4 — a synchronous uncaughtException otherwise tears the process
@@ -1485,8 +1578,15 @@ function installSignalHandlers(): void {
       captureException(err);
       return;
     }
-    console.error('[FATAL] Uncaught exception:', err);
-    captureException(err);
+    // Attribution ADDS a culprit name/tag ONLY — the crash path below (flush +
+    // exit(1)) is preserved exactly so the supervisor still restarts us.
+    const attributed = attributeExtensionError(err, extensionRootsSnapshot());
+    if (attributed) {
+      console.error(`[FATAL] Uncaught exception attributed to extension "${attributed}":`, err);
+    } else {
+      console.error('[FATAL] Uncaught exception:', err);
+    }
+    captureException(err, undefined, attributed ? { extension: attributed } : undefined);
     // Best-effort drain, then exit non-zero so the supervisor restarts us.
     void flushSentry().finally(() => process.exit(1));
   });
@@ -1503,17 +1603,29 @@ async function bootstrap(): Promise<void> {
   // Validate configuration before anything else — fail fast on missing/insecure secrets.
   // The validated config is stored as a singleton; retrieve later via getConfig().
   const config = validateConfig();
+  await initializeDatabaseForStartup({
+    autoMigrateEnabled: process.env.AUTO_MIGRATE !== 'false',
+    production: config.NODE_ENV === 'production',
+  });
   console.log(`[config] Validated: NODE_ENV=${config.NODE_ENV}, port=${config.API_PORT}`);
-
-  // Auto-migrate schema and seed on first boot (set AUTO_MIGRATE=false to
-  // disable). Runs BEFORE runStartupChecks because ensureAppRole() — called
-  // from autoMigrate — is what creates the unprivileged breeze_app role that
-  // DATABASE_URL_APP points at. On a fresh database the role doesn't exist
-  // until this runs, and the connectivity check (which uses the proxied
-  // `db`) would fail first.
-  if (process.env.AUTO_MIGRATE !== 'false') {
-    await autoMigrate();
+  if ((process.env.AGENT_BACKUP_SERVER_URL ?? '').trim()) {
+    console.log(`[config] AGENT_BACKUP_SERVER_URL active: ${process.env.AGENT_BACKUP_SERVER_URL!.trim()}`);
   }
+
+  await loadSourceExtensions(extensionContributionRegistry);
+
+  // Reconcile SIGNED runtime-extension bundles declared in extensions.yaml. Core
+  // + legacy-extension migrations already ran (initializeDatabaseForStartup
+  // above). A MISSING extensions.yaml — the common case — is a clean no-op and
+  // must never break startup; a REQUIRED extension that fails any phase throws
+  // and aborts boot on purpose (see reconcileExtensions).
+  await reconcileExtensions({
+    app,
+    configPath: joinPath(resolveExtensionsRoot(), 'extensions.yaml'),
+    storeRoot: resolveArtifactStoreRoot(),
+    registry: extensionContributionRegistry,
+    stateStore: extensionStateStore,
+  });
 
   try {
     await bootstrapPlatformAdmins();
@@ -1605,7 +1717,6 @@ async function bootstrap(): Promise<void> {
   console.log(`WebSocket endpoint available at ws://localhost:${port}/api/v1/agent-ws/:id/ws`);
 
   await initializeWorkers();
-  initializeTransferCleanup();
 
   // Periodically retry failed audit writes. The in-process queue is bounded
   // (10k entries) and per-entry attempts are capped (3) with exponential

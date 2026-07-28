@@ -18,12 +18,22 @@ const insertMock = vi.fn(() => chainMock([]));
 const updateMock = vi.fn(() => chainMock([]));
 const checkBackupProviderCapabilitiesMock = vi.fn();
 const s3SendMock = vi.fn();
+const s3ClientCtorMock = vi.fn();
 
 vi.mock('../../db', () => ({
   db: {
     select: (...args: unknown[]) => selectMock(...(args as [])),
     insert: (...args: unknown[]) => insertMock(...(args as [])),
     update: (...args: unknown[]) => updateMock(...(args as [])),
+    // Default-destination demote + promote run in one transaction so a failed
+    // write can't leave the org with no default. The tx routes through the same
+    // insert/update mocks, so assertions below see every statement.
+    transaction: (fn: (tx: unknown) => unknown) =>
+      fn({
+        select: (...args: unknown[]) => selectMock(...(args as [])),
+        insert: (...args: unknown[]) => insertMock(...(args as [])),
+        update: (...args: unknown[]) => updateMock(...(args as [])),
+      }),
   },
   runOutsideDbContext: vi.fn(async (fn: () => Promise<unknown>) => fn()),
   withDbAccessContext: vi.fn(async (_ctx: unknown, fn: () => Promise<unknown>) => fn()),
@@ -66,6 +76,9 @@ vi.mock('../../middleware/auth', () => ({
 
 vi.mock('@aws-sdk/client-s3', () => ({
   S3Client: class S3Client {
+    constructor(config: unknown) {
+      s3ClientCtorMock(config);
+    }
     send = s3SendMock;
   },
   PutObjectCommand: class PutObjectCommand {
@@ -110,6 +123,7 @@ describe('backup config routes', () => {
     updateMock.mockReset();
     checkBackupProviderCapabilitiesMock.mockReset();
     s3SendMock.mockReset();
+    s3ClientCtorMock.mockReset();
     selectMock.mockImplementation(() => chainMock([]));
     insertMock.mockImplementation(() => chainMock([]));
     updateMock.mockImplementation(() => chainMock([]));
@@ -349,14 +363,14 @@ describe('backup config routes', () => {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
       body: JSON.stringify({
-        details: { bucket: 'archive' },
+        details: { bucket: 'archive', region: 'us-east-1' },
       }),
     });
 
     expect(res.status).toBe(200);
     const updateSet = updateMock.mock.results[0]?.value?.set;
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({
-      providerConfig: { bucket: 'archive', accessKey: 'key', secretKey: 'secret' },
+      providerConfig: { bucket: 'archive', region: 'us-east-1', accessKey: 'key', secretKey: 'secret' },
       providerCapabilities: null,
       providerCapabilitiesCheckedAt: null,
     }));
@@ -393,6 +407,7 @@ describe('backup config routes', () => {
       body: JSON.stringify({
         details: {
           bucket: 'archive',
+          region: 'us-east-1',
           secretKey: { redacted: true, hasSecret: true, masked: '********' },
           credentials: {
             token: '********',
@@ -406,6 +421,7 @@ describe('backup config routes', () => {
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({
       providerConfig: {
         bucket: 'archive',
+        region: 'us-east-1',
         secretKey: 'existing-secret-key',
         credentials: {
           token: 'existing-nested-token',
@@ -416,5 +432,385 @@ describe('backup config routes', () => {
     const body = await res.json();
     expect(JSON.stringify(body)).not.toContain('existing-secret-key');
     expect(JSON.stringify(body)).not.toContain('existing-nested-token');
+  });
+
+  it('rejects S3 config creation without a region or region-bearing endpoint', async () => {
+    const res = await app.request('/backup/configs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+      body: JSON.stringify({
+        name: 'MinIO backups',
+        provider: 's3',
+        details: {
+          bucket: 'backups',
+          region: '',
+          accessKey: 'key',
+          secretKey: 'secret',
+          endpoint: 'minio.internal.example.com',
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it('derives and persists the region from an S3-compatible endpoint on create', async () => {
+    insertMock.mockReturnValueOnce(chainMock([makeConfig({
+      providerConfig: {
+        bucket: 'backups',
+        region: 'us-west-004',
+        accessKey: 'key',
+        secretKey: 'secret',
+        endpoint: 's3.us-west-004.backblazeb2.com',
+      },
+    })]));
+
+    const res = await app.request('/backup/configs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+      body: JSON.stringify({
+        name: 'B2 backups',
+        provider: 's3',
+        details: {
+          bucket: 'backups',
+          region: '',
+          accessKey: 'key',
+          secretKey: 'secret',
+          endpoint: 's3.us-west-004.backblazeb2.com',
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const insertValues = insertMock.mock.results[0]?.value?.values;
+    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      providerConfig: expect.objectContaining({ region: 'us-west-004' }),
+    }));
+  });
+
+  it('rejects S3 config updates that drop the region without a derivable endpoint', async () => {
+    selectMock.mockReturnValueOnce(chainMock([makeConfig()]));
+
+    const res = await app.request(`/backup/configs/${CONFIG_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+      body: JSON.stringify({
+        details: { bucket: 'archive', region: '', accessKey: 'key', secretKey: 'secret' },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('region');
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('derives the probe region from the endpoint when a stored region is empty', async () => {
+    selectMock.mockReturnValueOnce(chainMock([makeConfig({
+      providerConfig: {
+        bucket: 'backups',
+        region: '',
+        accessKey: 'key',
+        secretKey: 'secret',
+        endpoint: 's3.us-west-004.backblazeb2.com',
+      },
+    })]));
+    updateMock.mockReturnValueOnce(chainMock([makeConfig()]));
+    s3SendMock.mockResolvedValue({});
+    checkBackupProviderCapabilitiesMock.mockResolvedValue({
+      objectLock: { supported: true, error: null },
+    });
+
+    const res = await app.request(`/backup/configs/${CONFIG_ID}/test`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token' },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe('success');
+    expect(s3ClientCtorMock).toHaveBeenCalledWith(
+      expect.objectContaining({ region: 'us-west-004' }),
+    );
+  });
+
+  // Sentry BREEZE-P: a scheme-less or otherwise unparseable endpoint used to
+  // reach the AWS SDK unmodified and throw a bare `TypeError: Invalid URL`
+  // deep inside @smithy/core's endpoint resolver. These tests cover the two
+  // places that guard against it: rejecting a bad endpoint at save time
+  // (validateS3Details), and normalizing/erroring gracefully at probe time
+  // for configs saved before that validation existed.
+  describe('S3 endpoint validation (Sentry BREEZE-P)', () => {
+    it('rejects S3 config creation with a genuinely malformed endpoint, with a clear message', async () => {
+      const res = await app.request('/backup/configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          name: 'Broken endpoint',
+          provider: 's3',
+          details: {
+            bucket: 'backups',
+            region: 'us-east-1',
+            accessKey: 'key',
+            secretKey: 'secret',
+            endpoint: 'not a valid url with spaces',
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(JSON.stringify(body)).toContain('not a valid URL');
+      // Deliberately case-insensitive: the raw SDK failure is the string
+      // "Invalid URL", and our message is "...is not a valid URL...". A
+      // case-SENSITIVE `not.toContain('Invalid URL')` can never fire against
+      // our own message, so it would assert nothing.
+      expect(JSON.stringify(body)).not.toMatch(/TypeError|\bInvalid URL\b/i);
+      expect(insertMock).not.toHaveBeenCalled();
+    });
+
+    it('accepts a scheme-less endpoint on create (still just a host:port)', async () => {
+      insertMock.mockReturnValueOnce(chainMock([makeConfig({
+        providerConfig: {
+          bucket: 'backups',
+          region: 'us-east-1',
+          accessKey: 'key',
+          secretKey: 'secret',
+          endpoint: 'minio.internal.example.com:9000',
+        },
+      })]));
+
+      const res = await app.request('/backup/configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          name: 'MinIO backups',
+          provider: 's3',
+          details: {
+            bucket: 'backups',
+            region: 'us-east-1',
+            accessKey: 'key',
+            secretKey: 'secret',
+            endpoint: 'minio.internal.example.com:9000',
+          },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(insertMock).toHaveBeenCalled();
+
+      // The NORMALIZED endpoint must be what lands in the database, not the
+      // raw scheme-less string. providerConfig.endpoint is shipped verbatim to
+      // the Go agent (jobs/backupWorker.ts -> agent/internal/backup/providers/
+      // s3.go), which does no coercion of its own — so persisting the raw value
+      // would let this config pass its own connectivity test while every real
+      // backup run kept failing on the device.
+      const insertValues = insertMock.mock.results[0]?.value?.values;
+      expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
+        providerConfig: expect.objectContaining({
+          endpoint: 'https://minio.internal.example.com:9000/',
+        }),
+      }));
+    });
+
+    it('persists the normalized endpoint on update (PATCH), not the raw value', async () => {
+      selectMock.mockReturnValueOnce(chainMock([makeConfig()]));
+      updateMock.mockReturnValueOnce(chainMock([makeConfig({
+        providerConfig: {
+          bucket: 'backups',
+          region: 'us-east-1',
+          accessKey: 'key',
+          secretKey: 'secret',
+          endpoint: 'https://minio.internal.example.com:9000/',
+        },
+      })]));
+
+      const res = await app.request(`/backup/configs/${CONFIG_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          details: {
+            bucket: 'backups',
+            region: 'us-east-1',
+            accessKey: 'key',
+            secretKey: 'secret',
+            endpoint: 'minio.internal.example.com:9000',
+          },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const updateValues = updateMock.mock.results[0]?.value?.set;
+      expect(updateValues).toHaveBeenCalledWith(expect.objectContaining({
+        providerConfig: expect.objectContaining({
+          endpoint: 'https://minio.internal.example.com:9000/',
+        }),
+      }));
+    });
+
+    it('rejects a malformed endpoint on update (PATCH) — configUpdateSchema has no superRefine', async () => {
+      // The ONLY guard on this path is the hand-rolled validateS3Details call
+      // in the PATCH handler: configUpdateSchema cannot carry a superRefine
+      // because `provider` is not part of an update payload. If that call is
+      // ever removed, this test is what catches it.
+      selectMock.mockReturnValueOnce(chainMock([makeConfig()]));
+
+      const res = await app.request(`/backup/configs/${CONFIG_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          details: {
+            bucket: 'backups',
+            region: 'us-east-1',
+            accessKey: 'key',
+            secretKey: 'secret',
+            endpoint: 'not a valid url with spaces',
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(JSON.stringify(body)).toContain('not a valid URL');
+      expect(updateMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-http(s) scheme on create (e.g. a pasted s3:// bucket URI)', async () => {
+      const res = await app.request('/backup/configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          name: 'Pasted s3 URI',
+          provider: 's3',
+          details: {
+            bucket: 'backups',
+            region: 'us-east-1',
+            accessKey: 'key',
+            secretKey: 'secret',
+            endpoint: 's3://my-bucket',
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(insertMock).not.toHaveBeenCalled();
+    });
+
+    it('normalizes a stored scheme-less endpoint to https:// before probing', async () => {
+      selectMock.mockReturnValueOnce(chainMock([makeConfig({
+        providerConfig: {
+          bucket: 'backups',
+          region: 'us-east-1',
+          accessKey: 'key',
+          secretKey: 'secret',
+          endpoint: 'minio.internal.example.com:9000',
+        },
+      })]));
+      updateMock.mockReturnValueOnce(chainMock([makeConfig()]));
+      s3SendMock.mockResolvedValue({});
+      checkBackupProviderCapabilitiesMock.mockResolvedValue({
+        objectLock: { supported: true, error: null },
+      });
+
+      const res = await app.request(`/backup/configs/${CONFIG_ID}/test`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe('success');
+      expect(s3ClientCtorMock).toHaveBeenCalledWith(
+        expect.objectContaining({ endpoint: 'https://minio.internal.example.com:9000/' }),
+      );
+    });
+
+    it('surfaces a clear error (not "Invalid URL") when testing a config with a pre-existing malformed endpoint', async () => {
+      // Simulates a row saved before endpoint validation existed at the
+      // config-save boundary.
+      selectMock.mockReturnValueOnce(chainMock([makeConfig({
+        providerConfig: {
+          bucket: 'backups',
+          region: 'us-east-1',
+          accessKey: 'key',
+          secretKey: 'secret',
+          endpoint: 'not a valid url with spaces',
+        },
+      })]));
+      updateMock.mockReturnValueOnce(chainMock([makeConfig()]));
+      checkBackupProviderCapabilitiesMock.mockResolvedValue({
+        objectLock: { supported: false, error: null },
+      });
+
+      const res = await app.request(`/backup/configs/${CONFIG_ID}/test`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.status).toBe('failed');
+      expect(body.error).toContain('not a valid URL');
+      expect(body.error).not.toBe('Invalid URL');
+      expect(s3ClientCtorMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // The org DEFAULT destination is what every partner-wide and profile-linked
+  // backup resolves to at job time. Demoting the current default and THEN
+  // bailing out on a validation/existence error would silently leave the org
+  // with no default at all — and their scheduled backups would start skipping
+  // with no obvious cause. Validate first; demote+promote atomically.
+  describe('default destination', () => {
+    it('does not demote the current default when the target config does not exist', async () => {
+      selectMock.mockReturnValue(chainMock([])); // no such config in this org
+
+      const res = await app.request(`/backup/configs/${CONFIG_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isDefault: true }),
+      });
+
+      expect(res.status).toBe(404);
+      // Nothing was written — the previous default is untouched.
+      expect(updateMock).not.toHaveBeenCalled();
+    });
+
+    it('does not demote the current default when the update fails validation', async () => {
+      // Existing local-provider config; enabling encryption on it is rejected.
+      selectMock.mockReturnValue(
+        chainMock([makeConfig({ provider: 'local', providerConfig: { path: '/backups' } })]),
+      );
+
+      const res = await app.request(`/backup/configs/${CONFIG_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isDefault: true, encryption: true }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(updateMock).not.toHaveBeenCalled();
+    });
+
+    it('demotes the previous default when promoting a config', async () => {
+      selectMock.mockReturnValue(chainMock([makeConfig()]));
+      updateMock.mockReturnValue(chainMock([makeConfig({ isDefault: true })]));
+
+      const res = await app.request(`/backup/configs/${CONFIG_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isDefault: true }),
+      });
+
+      expect(res.status).toBe(200);
+      // One UPDATE demotes the old default, one promotes this config.
+      expect(updateMock).toHaveBeenCalledTimes(2);
+      const sets = updateMock.mock.results.flatMap((r: any) =>
+        r.value.set.mock.calls.map((c: any[]) => c[0]),
+      );
+      expect(sets).toContainEqual(expect.objectContaining({ isDefault: false }));
+      expect(sets).toContainEqual(expect.objectContaining({ isDefault: true }));
+    });
   });
 });

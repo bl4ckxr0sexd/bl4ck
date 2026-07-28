@@ -39,6 +39,8 @@ git -C ~/breeze log --oneline $PREV..HEAD                  # everything that wil
 
 If migrations are listed, you're committing prod to those migrations the moment the new API boots. Read them; confirm there are no large-table rewrites/backfills before you proceed (call those out in the upgrade notes if present).
 
+**Smoke-test privileged migrations as a NON-SUPERUSER role (learned the hard way, v0.95.0→v0.95.1).** CI and the local docker-compose test DB both migrate as the Postgres **superuser** (`POSTGRES_USER=breeze`), which silently passes statements a least-privilege role would be *denied*. Prod is DO-managed **`doadmin` — NOT a superuser**, so a migration that only a superuser can run passes every test and then **crash-loops the API on deploy** (this is exactly what took EU down on v0.95.0: `ALTER FUNCTION ... OWNER TO <role>` requires the *new owner* to hold `CREATE` on the schema; a superuser bypasses that check, doadmin does not → `permission denied for schema public`). So: any migration in the range that does `CREATE ROLE`, `ALTER ... OWNER TO`, `GRANT`/`REVOKE` on a schema, `CREATE EXTENSION`, or a `SECURITY DEFINER` function — **run it against a non-superuser role before tagging.** Two ways: pipe the migration to a real managed DB (or a droplet's `doadmin`) inside `BEGIN; ...; ROLLBACK;` with `ON_ERROR_STOP=1`, or `SET ROLE <nosuperuser-createrole-role>` on a local DB that already has the full schema. If it only works as a superuser, fix it forward (grant the owning role the privilege for the one statement, then revoke) **before** it reaches prod.
+
 ## Step 0.5 — After tagging: WAIT for the build, confirm ALL artifacts exist
 
 Pushing the tag kicks off `release.yml`, which is a **long, multi-job build** (~20–40 min): api/web/portal GHCR images, agent binaries for every platform, the **signed** Windows MSI, the **notarized** macOS agent/viewer/helper, watchdog + user-helper, and the signed `release-artifact-manifest.json` (+ `.ed25519`/`.minisig`) and `checksums.txt`. The GitHub Release is created by the **final** job — you cannot `gh release edit` the body until then, and **you must not roll out until every artifact is present**.
@@ -110,7 +112,7 @@ Breeze RMM **vX.Y.Z** — one-line theme of the release.
 
 Self-hosters run their own droplets and read this section to decide whether an upgrade is safe and what they must touch. Always answer these four questions explicitly, even when the answer is "nothing required" — silence reads as "I don't know":
 
-1. **Upgrade command.** The standard line is: bump `BREEZE_VERSION`, then `docker compose pull api web && docker compose up -d` (and `pnpm install` if they build from source).
+1. **Upgrade command.** The standard line is: bump `BREEZE_VERSION`, then `docker compose pull api web portal && docker compose up -d` (and `pnpm install` if they build from source). Include `portal` — it is a separate container and was silently left behind for 11 days (stuck on 0.94.0 while api/web ran 0.98.1) back when the line pulled only `api web`.
 2. **Database / migrations.** State the count and that they're idempotent and auto-apply on boot via `autoMigrate` (unless `AUTO_MIGRATE=false`). **Explicitly flag any large-table rewrite or backfill** — that's the difference between a 2-second upgrade and a stalled boot. If nothing: "**Database — nothing required.**"
 3. **New required environment variables.** Anything the config validator now refuses to boot without (e.g. past examples: `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS`, `IS_HOSTED`). A new required env var must *also* be mapped in the `api`/`web` `environment:` block of their compose, not just `.env` — say so. If none: "**No new required environment variables.**"
 4. **Behavior changes & feature flags.** Anything whose default changed (call out grandfathering of existing orgs), and any feature gated behind a flag (e.g. `PUBLIC_ENABLE_EDR_INTEGRATIONS`) — name the flag and its default.
@@ -237,14 +239,40 @@ Per droplet:
 ssh root@<droplet> "cd /opt/breeze && \
   cp .env .env.bak-pre-$NEW && \
   sed -i 's/^BREEZE_VERSION=.*/BREEZE_VERSION=0.X.Y/' .env && \
-  docker compose pull api web && \
-  docker compose up -d binaries-init api web"
+  docker compose pull api web portal && \
+  docker compose up -d binaries-init api web portal"
 # then verify:
 curl -sf https://<region>.2breeze.app/health     # 200 = healthy; check "version" in the JSON
 # and confirm migrations applied cleanly:
 ssh root@<droplet> "docker logs breeze-api 2>&1 | grep -aE 'auto-migrate' | tail -5"
 # expect "[auto-migrate] Applied N migration(s)" and the unprivileged app-user line
 ```
+
+**Then assert version parity across EVERY first-party container — `/health` does NOT cover this.**
+
+`/health` is served by the API, so it reports the new version even when a sibling container was never rolled. Don't eyeball the service list; enumerate what is actually running and compare each tag to `BREEZE_VERSION`:
+
+```bash
+ssh root@<droplet> "cd /opt/breeze && set -a && . ./.env && set +a && \
+  docker ps -a --format '{{.Names}}\t{{.Image}}' | grep 'ghcr.io/lanternops/breeze/' | \
+  while IFS=\$'\t' read -r n i; do t=\${i##*:}; \
+    [ \"\$t\" = \"\$BREEZE_VERSION\" ] && echo \"OK    \$n \$t\" || echo \"SKEW  \$n \$t (expected \$BREEZE_VERSION)\"; done"
+# every line must be OK. Any SKEW = that service was not rolled — pull/up it and re-check.
+# Today that is api, web, portal, binaries-init. It self-updates as services are added,
+# which is the point: the hand-maintained list above is what failed before.
+```
+
+**Why this check exists.** The deploy line names services explicitly (rather than a bare `docker compose pull && up -d`) for two real reasons: `billing` is built from a local `breeze-billing:local` image that has no registry to pull from, and a bare `up -d` would bounce `caddy`/`redis`/`tunnel` unnecessarily. But that makes the service list a **hand-maintained list that goes stale the moment a new first-party service is added** — and nothing else catches it. `portal` was added in v0.94.0, never made it into the deploy line, and silently sat on `0.94.0` through five releases while `/health` cheerfully reported `0.98.1`; a portal fix shipped in v0.97.0 was invisible in production for 11 days until a customer-facing proposal link surfaced it. Watchtower is **not** a safety net here: it runs with `WATCHTOWER_LABEL_ENABLE=true` and no service carries the enable label, so it updates nothing. The parity check is the backstop that does not depend on anyone remembering to update a list.
+
+### Rolling back is NOT clean if a migration failed mid-set — the partial-migration trap
+
+`autoMigrate` applies each migration file in its own transaction and records success per file. If migration #7 of 10 fails, files #1–6 have **already committed**. Rolling `BREEZE_VERSION` back to `$PREV` restores the old *code* but the DB is now on a **newer-than-$PREV schema**, and the old code can choke on it. This bit us on v0.95.0: the auth-epochs migration committed a `NOT NULL`-no-default column (`refresh_token_families.absolute_expires_at`) before a *later* migration failed; after rolling back, the old version could not `INSERT` a refresh-token family (the column it doesn't know about is `NOT NULL`), so **new logins silently failed while `/health` stayed green**.
+
+So after any rollback that followed a mid-set failure:
+1. **`/health` is not proof of recovery.** Test the real write paths — especially minting a refresh-token family (login) — against the actual DB (`INSERT ... ` in a `BEGIN; ... ROLLBACK;`).
+2. **Scan for forward columns the old code can't satisfy:** `NOT NULL` columns with no default, or new CHECK constraints, added by the committed-but-newer migrations on tables the old version writes (`users`, `refresh_token_families`, `oauth_*`, `devices`, `audit_logs`).
+3. **Un-break minimally:** `ALTER COLUMN <col> SET DEFAULT <sane value>` (keeps `NOT NULL`, lets the old code insert) is the lightest fix; it's inert on the new version (which sets the value explicitly). Note the divergence and **drop the DEFAULT once you're forward again** so the schema matches a fresh install.
+4. **The clean alternative is to roll *forward*** to a fixed build rather than back — completing the migration set makes code and schema match. Prefer this when the fix is understood; the pre-deploy dump is the fallback if it isn't.
 
 ### Promote the agent fleet — via a DB row change
 

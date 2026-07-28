@@ -26,9 +26,9 @@ The AI Risk Engine categorises every AI tool into one of four tiers that control
 
 | Tier | Execution | Examples |
 |---|---|---|
-| **Tier 1** | Auto-execute (read-only, no approval) | `query_devices`, `analyze_metrics`, `get_security_posture`, `get_active_users`, `file_operations` (list/read), `disk_cleanup` (preview), `propose_action_plan`, `list_configuration_policies`, `get_effective_configuration`, `preview_configuration_change`, `get_configuration_policy`, `configuration_policy_compliance`, `manage_processes` (list), `get_service_monitoring_status`, `query_monitors`, `query_backups`, `get_backup_status`, `browse_snapshots`, `get_incident_timeline`, `generate_incident_report`, `list_playbooks`, `get_playbook_history`, `get_vulnerability_report`, `get_device_vulnerabilities`, `search_documentation` |
-| **Tier 2** | Auto-execute + audit logged | `manage_alerts` acknowledge/resolve actions, `manage_services` list action, `set_device_context`, `resolve_device_context`, `apply_configuration_policy`, `remove_configuration_policy_assignment`, `manage_configuration_policy` (activate/deactivate), `create_incident`, `collect_evidence` |
-| **Tier 3** | Requires human approval before execution | `execute_command`, `run_script`, `disk_cleanup` (execute), `network_discovery`, `security_scan` (quarantine/remove/restore), `file_operations` (write/delete/mkdir/rename), `manage_configuration_policy` (create/update/delete), `manage_processes` (kill), `manage_monitors` (create/update/delete), `trigger_backup`, `restore_snapshot`, `execute_containment`, `execute_playbook`, `remediate_vulnerability` |
+| **Tier 1** | Auto-execute (read-only, no approval) | `query_devices`, `analyze_metrics`, `get_security_posture`, `get_active_users`, `disk_cleanup` (preview), `propose_action_plan`, `list_configuration_policies`, `get_effective_configuration`, `preview_configuration_change`, `get_configuration_policy`, `configuration_policy_compliance`, `manage_processes` (list), `get_service_monitoring_status`, `query_monitors`, `query_backups`, `get_backup_status`, `browse_snapshots`, `get_incident_timeline`, `generate_incident_report`, `list_playbooks`, `get_playbook_history`, `get_vulnerability_report`, `get_device_vulnerabilities`, `search_documentation` |
+| **Tier 2** | Auto-execute + audit logged | `manage_alerts` (acknowledge/resolve), `manage_services` (list), `set_device_context`, `resolve_device_context`, `apply_configuration_policy`, `remove_configuration_policy_assignment`, `manage_configuration_policy` (activate/deactivate), `create_incident`, `collect_evidence`, `file_operations` (list) |
+| **Tier 3** | Requires human approval before execution | `execute_command`, `run_script`, `disk_cleanup` (execute), `network_discovery`, `security_scan` (quarantine/remove/restore), `file_operations` (read/write/delete/mkdir/rename), `manage_configuration_policy` (create/update/delete), `manage_processes` (kill), `manage_monitors` (create/update/delete), `trigger_backup`, `restore_snapshot`, `execute_containment`, `execute_playbook`, `remediate_vulnerability` |
 | **Tier 4** | Blocked — never executed | Cross-org operations |
 
 <Aside>
@@ -56,6 +56,30 @@ When the AI proposes a Tier 3 action, it enters a **pending** state and waits fo
 </Steps>
 
 Approved actions execute immediately. Rejected actions are logged and the AI is notified.
+
+#### Approving your own request when you are the only approver
+
+If the technician who asked for a Tier 3 action is also the **only** user eligible to approve it (a sole-operator setup), the chat's approval card offers **Verify & Approve** directly inline. Clicking it runs a **Touch ID / Windows Hello** (WebAuthn platform authenticator) verification in the browser, and that verification — not the click — is what satisfies the assurance requirement for approving your own request. Cancel the prompt and nothing is approved.
+
+When other users are eligible to approve, the inline button does not appear: someone else must approve from **Approval History** or the mobile app. That four-eyes separation is deliberate.
+
+#### Who can approve
+
+Approving or rejecting a Tier 3 action requires the **`approvals:decide`** permission. It is granted by default to **Org Admin** (and to Partner Admin through its full-access role) and is deliberately **not** granted to Org Technician or Org Viewer — reviewing a proposed action and authorising it are separate responsibilities.
+
+To let another role approve actions, add `approvals:decide` to it under **Settings → Users & Roles**. See [Users and Roles](/reference/users-and-roles/).
+
+<Aside type="note">
+  If an organization has no user whose role grants `approvals:decide`, a Tier 3 request has nobody who can act on it and is automatically cancelled rather than left pending indefinitely.
+</Aside>
+
+#### Pending approvals survive a restart
+
+Tier 3 requests raised from AI chat or the MCP server are stored durably, so a pending approval is no longer tied to the session that created it. If the server restarts — or you simply close the browser and come back later — the request is still waiting in **Approval History**, and approving it there executes the action.
+
+This also means an approved identity action against a connected Google Workspace or Microsoft 365 tenant (for example a password reset, sign-out, or user disable) runs against that organization's connection without needing the original chat session to still be open. Microsoft 365 write actions additionally require the Graph-actions executor to be enabled — see [Customer Microsoft 365 Graph-actions (write) executor](/deploy/environment/#customer-microsoft-365-graph-actions-write-executor-optional).
+
+When an approved Microsoft 365 **password reset** executes this way, the requesting technician retrieves the temporary password afterwards with a one-time **Reveal temporary password** action in **Approval History** — see [Identity Console → Retrieving a reset password](/features/identity-console/#retrieving-a-microsoft-365-reset-password).
 
 ### Rate limits
 
@@ -361,6 +385,7 @@ BL4CK also provides AI tools for the PSA side of the platform — tickets, invoi
 | `manage_tickets` | Full ticket lifecycle: create, comment, assign, update status and fields, link/unlink alerts, create a ticket from an alert, edit/delete comments, track time, and move a ticket between organizations |
 | `list_invoices` / `get_invoice` / `manage_invoices` | Browse invoices and manage the invoice lifecycle — drafts, lines, assembling a draft from an organization's billable period or a ticket, issuing, voiding, payments, and Stripe pay links |
 | `search_catalog` / `get_catalog_item` / `manage_catalog` | Search and maintain the partner product catalog, including per-organization price overrides and bundles |
+| `lookup_distributor_product` | Look up live TD SYNNEX price and availability for a distributor SKU that isn't in your catalog yet — handy when pricing a quote line for a product you don't stock. Reseller cost is hidden for organization-scoped callers |
 | `list_contracts` / `get_contract` / `manage_contracts` | Browse recurring contracts and manage drafts, lines, and lifecycle (activate, pause, resume, cancel) |
 | `manage_quotes` | Build and manage quotes/proposals — drafts, content blocks, lines, sending, declining, and pay links |
 

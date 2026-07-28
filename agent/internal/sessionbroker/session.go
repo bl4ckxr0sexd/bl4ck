@@ -31,8 +31,8 @@ type Session struct {
 	Capabilities   *ipc.Capabilities
 	TCCStatus      *ipc.TCCStatus
 	AllowedScopes  []string
-	WinSessionID   string // Windows session ID string (e.g., "1", "2") for targeting
-	HelperRole     string // "system" or "user" — determines scopes and capabilities
+	WinSessionID   string         // Windows session ID string (e.g., "1", "2") for targeting
+	HelperRole     ipc.HelperRole // "system" or "user" — determines scopes and capabilities
 	BinaryKind     string
 	DesktopContext string
 	ConnectedAt    time.Time
@@ -48,6 +48,9 @@ type Session struct {
 	// from the helper in response to a broker-initiated keepalive ping.
 	// Read/written atomically so the keepalive goroutine doesn't need s.mu.
 	lastPongAt atomic.Int64
+
+	broker      *Broker
+	peerProcess *ownedPeerProcessRef
 }
 
 // NewSession creates a new session for a verified user helper connection.
@@ -146,6 +149,107 @@ func (s *Session) SendCommand(id, cmdType string, payload any, timeout time.Dura
 		return nil, fmt.Errorf("session closed while waiting for response")
 	case <-time.After(timeout):
 		return nil, ErrCommandTimeout
+	}
+}
+
+// sendCommandWithQuiescence sends a command while retaining its response
+// registration after a timeout or transport error. The returned channel is
+// non-nil only when execution is uncertain.
+//
+// The channel carries the RESULT rather than a bare completion signal:
+//
+//   - a correlated helper response arrived -> the envelope is sent, then the
+//     channel closes. The command is proven finished, and the envelope says
+//     whether it actually SUCCEEDED.
+//   - the session died first -> the channel closes with nothing sent.
+//     Execution is unproven: the helper goroutine may still be running.
+//
+// Callers MUST distinguish those two cases. "The channel closed" alone does not
+// mean the command succeeded, and it does not mean the helper stopped. Closing
+// on session death exists so callers can run a bounded recovery instead of
+// blocking forever — never so they can assume success (issue #2610).
+//
+// CRITICAL: the channel is resolved ONLY by those two events. A helper that
+// hangs while its session stays CONNECTED never closes it, so callers must
+// bound their receive rather than assuming an outcome always arrives —
+// blocking forever here is what turns a fail-closed gate into a permanent
+// lockout.
+func (s *Session) sendCommandWithQuiescence(id, cmdType string, payload any, timeout time.Duration) (*ipc.Envelope, <-chan *ipc.Envelope, error) {
+	ch := make(chan *ipc.Envelope, 1)
+	quiesced := make(chan *ipc.Envelope, 1)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, fmt.Errorf("session closed")
+	}
+	if _, exists := s.pending[id]; exists {
+		s.mu.Unlock()
+		return nil, nil, fmt.Errorf("%w: %q (session %q)", ErrDuplicateCommand, id, s.SessionID)
+	}
+	s.pending[id] = pendingResponse{
+		ch:           ch,
+		expectedType: expectedResponseType(cmdType),
+		validate:     responseValidator(cmdType, payload),
+	}
+	done := s.done
+	s.mu.Unlock()
+
+	var finishOnce sync.Once
+	// finish always closes quiesced so no caller can block forever on a helper
+	// that died mid-command. A non-nil resp is published first: that envelope is
+	// the proof of completion AND the record of the outcome. A nil resp closes
+	// the channel empty, which the caller must read as "unproven", not "done".
+	finish := func(resp *ipc.Envelope) {
+		finishOnce.Do(func() {
+			s.mu.Lock()
+			if current, ok := s.pending[id]; ok && current.ch == ch {
+				delete(s.pending, id)
+			}
+			s.mu.Unlock()
+			if resp != nil {
+				quiesced <- resp
+			}
+			close(quiesced)
+		})
+	}
+	waitForLateResponse := func() {
+		go func() {
+			select {
+			case resp := <-ch:
+				finish(resp)
+			case <-done:
+				// Prefer a response already delivered concurrently with teardown.
+				select {
+				case resp := <-ch:
+					finish(resp)
+				default:
+					finish(nil)
+				}
+			}
+		}()
+	}
+
+	if err := s.conn.SendTyped(id, cmdType, payload); err != nil {
+		waitForLateResponse()
+		return nil, quiesced, err
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case resp, ok := <-ch:
+		if !ok || resp == nil {
+			finish(nil)
+			return nil, quiesced, fmt.Errorf("session closed while waiting for response")
+		}
+		finish(resp)
+		return resp, nil, nil
+	case <-done:
+		finish(nil)
+		return nil, quiesced, fmt.Errorf("session closed while waiting for response")
+	case <-timer.C:
+		waitForLateResponse()
+		return nil, quiesced, ErrCommandTimeout
 	}
 }
 
@@ -261,6 +365,22 @@ func (s *Session) HasScope(scope string) bool {
 
 // Close closes the underlying connection and cancels all pending commands.
 func (s *Session) Close() error {
+	if s.broker != nil {
+		return s.broker.closeSession(s)
+	}
+	return s.closeTransportAndPeer()
+}
+
+func (s *Session) closeTransportAndPeer() error {
+	transportErr := s.closeTransport()
+	peerErr := s.peerProcess.close()
+	if transportErr != nil {
+		return transportErr
+	}
+	return peerErr
+}
+
+func (s *Session) closeTransport() error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -277,6 +397,9 @@ func (s *Session) Close() error {
 		close(done)
 	}
 
+	if s.conn == nil {
+		return nil
+	}
 	return s.conn.Close()
 }
 
@@ -291,7 +414,7 @@ type SessionInfo struct {
 	ConnectedAt    time.Time         `json:"connectedAt"`
 	LastSeen       time.Time         `json:"lastSeen"`
 	WinSessionID   string            `json:"winSessionId,omitempty"`
-	HelperRole     string            `json:"helperRole,omitempty"`
+	HelperRole     ipc.HelperRole    `json:"helperRole,omitempty"`
 	BinaryKind     string            `json:"binaryKind,omitempty"`
 	DesktopContext string            `json:"desktopContext,omitempty"`
 }
@@ -355,6 +478,8 @@ func expectedResponseType(cmdType string) string {
 		return ipc.TypeNotifyResult
 	case ipc.TypePamRequestDialog:
 		return ipc.TypePamDialogResult
+	case ipc.TypePamDismissConsent:
+		return ipc.TypePamDismissConsentResult
 	case ipc.TypeClipboardGet:
 		return ipc.TypeClipboardData
 	case ipc.TypeClipboardSet:

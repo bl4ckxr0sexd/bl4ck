@@ -5,8 +5,8 @@
 <h1 align="center">BL4CK</h1>
 
 <p align="center">
-  <strong>The open source, AI-native RMM.</strong><br/>
-  Monitor, manage, and remediate — with an AI brain built in.
+  <strong>The open-source IT platform that comes with the workers.</strong><br/>
+  A full RMM + PSA with an AI team built in. It triages alerts, patches fleets, and resolves tickets. You hold the approvals.
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <a href="#security">Security</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#features">Features</a> •
-  <a href="#ai-brain">AI Brain</a> •
+  <a href="#ai-operator">AI Operator</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#roadmap">Roadmap</a> •
   <a href="#contributing">Contributing</a> •
@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/breeze-ai-demo.gif" alt="BL4CK AI Demo — Check a device's health" width="800" />
+  <img src="docs/assets/breeze-ai-demo.gif" alt="BL4CK AI Demo — Check a device's health" width="800" />
 </p>
 
 <p align="center">
@@ -39,9 +39,9 @@
 
 ## ⚡ About this fork
 
-This is a self-hosting fork of [LanternOps/breeze](https://github.com/lanternops/breeze) `v0.94.0` with two changes aimed at MSPs who hand out one installer to many machines:
+This is a Windows-only self-hosting fork of [LanternOps/breeze](https://github.com/lanternops/breeze) `v0.102.0` with two changes aimed at MSPs who hand out one installer to many machines:
 
-- **Reusable installers** — a single downloaded Windows/macOS installer can enroll **many devices** instead of dying after the first install.
+- **Reusable installers** — a single downloaded Windows installer can enroll **many devices** instead of dying after the first install.
 - **Long-lived installers** — installers stay valid for **~365 days** instead of the stock 1 hour, so you can save one file and reuse it.
 
 Everything else is stock BL4CK (AGPL-3.0). See [What changed](#what-changed-in-this-fork) for the exact diff and knobs.
@@ -148,7 +148,9 @@ BL4CK is free, open source (AGPL-3.0), and designed to be self-hosted or [cloud-
 
 ### Why BL4CK?
 
-- **AI-native, not AI-added.** Every page has an AI assistant that can see what you see and take action using built-in tools. Not a chatbot — an agent.
+- **AI-native, not AI-added.** Every page has an AI operator that can see what you see and take action using built-in tools. Not a chatbot, an agent.
+- **RMM + PSA in one system.** Resolved is nice. Invoiced is better. The ticket, the time entry, the quote, and the invoice live where the work happens. No separate PSA, no sync job.
+- **Never metered.** Self-host with unlimited devices, forever. Every module ships in every plan; nothing sits behind a paywall.
 - **Lightweight agent.** Single Go binary. Cross-platform. Minimal resource footprint. Your clients won't notice it's there.
 - **Actually open source.** AGPL-3.0. Read every line. Fork it. Contribute. No bait-and-switch.
 - **Multi-tenant from day one.** Built for MSPs managing multiple clients, not retrofitted from a single-tenant architecture.
@@ -163,68 +165,74 @@ BL4CK has privileged access to every device it manages. We take that seriously.
 | Layer | What We Do |
 |---|---|
 | **Authentication** | Argon2id passwords, JWT with 15-min expiry, TOTP MFA, SHA-256 hashed tokens, email verification on signup |
-| **Authorization** | RBAC with scope-based multi-tenancy, forced PostgreSQL row-level security on every tenant table — no app-layer-only fallback, even table owners can't bypass |
+| **Authorization** | RBAC with scope-based multi-tenancy, forced PostgreSQL row-level security on every tenant table; no app-layer-only fallback, even table owners can't bypass |
 | **Encryption** | AES-256-GCM at rest, TLS 1.2+ in transit, HSTS preload, no plaintext secrets stored anywhere |
 | **Agent hardening** | Bearer token auth (SHA-256 hashed), 0600 config file permissions, optional Cloudflare mTLS |
-| **Rate limiting** | Redis sliding window on all auth endpoints and agent APIs — fail-closed if Redis is unavailable |
-| **Input validation** | Zod schemas on every external input — API requests, WebSocket messages, query parameters |
-| **AI safety** | Risk-classified action engine — dangerous operations require human approval, critical operations blocked entirely |
+| **Rate limiting** | Redis sliding window on all auth endpoints and agent APIs; fail-closed if Redis is unavailable |
+| **Input validation** | Zod schemas on every external input: API requests, WebSocket messages, query parameters |
+| **AI safety** | Risk-classified action engine. Dangerous operations require human approval; critical operations are blocked entirely |
 | **Supply chain** | 5 automated scanners in CI: CodeQL SAST, Gitleaks, npm audit, govulncheck, Trivy CVE scanning |
 | **Audit trail** | Structured audit logging with actor tracking, org-scoped retention policies, S3 archival |
 | **Operational** | Secret rotation runbooks, disaster recovery procedures (RTO < 1 hour, RPO < 15 minutes) |
 | **Abuse controls** | Cross-tenant platform-admin suspend endpoint, email-verification gate on signup, fail-closed token revocation |
 
-For the full security whitepaper, including SOC 2 alignment mapping, see **[Security Practices](docs/SECURITY_PRACTICES.md)**.
+For the full security whitepaper, including SOC 2 alignment mapping, see **[Security Practices](docs/security/SECURITY_PRACTICES.md)**.
 
-To report a vulnerability: **[security@lanternops.io](mailto:security@lanternops.io)** — see [SECURITY.md](SECURITY.md) for our disclosure policy.
+To report a vulnerability: **[security@lanternops.io](mailto:security@lanternops.io)**. See [SECURITY.md](SECURITY.md) for our disclosure policy.
 
 ---
 
 ## Features
 
 ### Device Management
-- **Hardware & software inventory** — CPU, memory, storage, network, installed applications, versions
-- **Real-time device health** — Health checks with configurable thresholds and alerting
-- **Configuration policies** — Hierarchical policy management with feature links and per-assignment resolution
-- **Advanced filtering** — Query your fleet with powerful filters across any device attribute
-- **Network discovery** — ARP, ICMP, port, and SNMP scans to find unmanaged devices on each site
-- **Custom fields & tags** — Extend device records with your own metadata
-- **Configuration drift & change tracking** — Audit baselines, CIS hardening checks, software/peripheral policies
+- **Hardware & software inventory.** CPU, memory, storage, network, installed applications, versions
+- **Real-time device health.** Health checks with configurable thresholds and alerting
+- **Configuration policies.** Hierarchical policy management with feature links and per-assignment resolution
+- **Advanced filtering.** Query your fleet with powerful filters across any device attribute
+- **Network discovery.** ARP, ICMP, port, and SNMP scans to find unmanaged devices on each site
+- **Custom fields & tags.** Extend device records with your own metadata
+- **Configuration drift & change tracking.** Audit baselines, CIS hardening checks, software/peripheral policies
 
 ### Remote Access
-- **Remote terminal** — Full shell access to managed devices
-- **Remote file browser** — Browse, upload, and download files
-- **Remote desktop** — Visual remote control of devices, multi-display, clipboard sync, computer-control automation
-- **Native viewer & helper apps** — Tauri-based desktop apps for macOS and Windows
-- **Activity monitoring** — See what's happening on a device in real time
-- **TURN relay** — Built-in coturn for WebRTC traversal across NATs and firewalls
+- **Remote terminal.** Full shell access to managed devices
+- **Remote file browser.** Browse, upload, and download files
+- **Remote desktop.** Visual remote control of devices, multi-display, clipboard sync, computer-control automation
+- **Native viewer & helper apps.** Tauri-based desktop apps for macOS and Windows
+- **Activity monitoring.** See what's happening on a device in real time
+- **TURN relay.** Built-in coturn for WebRTC traversal across NATs and firewalls
 
 ### Automation
-- **Remote scripting** — Execute scripts (PowerShell, Bash, Python) across devices
-- **Patch management** — Inventory, approve, and deploy OS and application patches; maintenance windows + update rings
-- **Alerts & notifications** — Configurable alerts with severity classification, routing, webhook delivery
-- **Playbooks** — Reusable remediation workflows
-- **Deployments** — Push agents and software at scale
-- **Watchdog** — Self-healing agent supervisor that auto-restarts on failure
+- **Remote scripting.** Execute scripts (PowerShell, Bash, Python) across devices
+- **Patch management.** Inventory, approve, and deploy OS and application patches; maintenance windows + update rings
+- **Alerts & notifications.** Configurable alerts with severity classification, routing, webhook delivery
+- **Playbooks.** Reusable remediation workflows
+- **Deployments.** Push agents and software at scale
+- **Watchdog.** Self-healing agent supervisor that auto-restarts on failure
+
+### Service Desk & Billing (PSA built in)
+- **Tickets & help desk.** One queue for every request from alerts, devices, and your customers; SLA tracking, time and parts logged on the ticket as the work happens
+- **Quotes.** From ticket to quote without leaving the platform, priced from your catalog with your markups applied
+- **Billing & invoicing.** Time and parts on the ticket become the invoice. No export, no re-entry, no second system to reconcile
+- **Service catalog.** Price it once. Quote it and bill it everywhere
+- **Customer portal.** A branded self-service hub where your clients' end-users open tickets and see their devices and assets
 
 ### Backup & Recovery
-- **Endpoint snapshot backup** — Restic-based snapshots to S3-compatible storage
-- **Bare-metal recovery** — Full-disk restore for Windows endpoints
-- **Hyper-V & SQL Server agents** — Application-aware backups
-- **Cloud-to-cloud (M365)** — Email, OneDrive, SharePoint, Teams, calendar
-- **Disaster recovery & verification** — Restore tests, encryption, retention policies
+- **Endpoint snapshot backup.** Restic-based snapshots to S3-compatible storage
+- **Bare-metal recovery.** Full-disk restore for Windows endpoints
+- **Hyper-V & SQL Server agents.** Application-aware backups
+- **Cloud-to-cloud (M365).** Email, OneDrive, SharePoint, Teams, calendar
+- **Disaster recovery & verification.** Restore tests, encryption, retention policies
 
 ### Integrations
-- **EDR** — SentinelOne and Huntress with risk-classified actions and incident correlation
-- **PSA** — Connect to popular ticketing systems
-- **MCP server** — Connect Claude.ai, ChatGPT, Cursor, or any MCP-aware AI agent over OAuth 2.1
+- **EDR.** SentinelOne and Huntress with risk-classified actions and incident correlation
+- **MCP server.** The first MCP server shipped in an RMM. Connect Claude.ai, ChatGPT, Cursor, or any MCP-aware AI agent over OAuth 2.1
 
-### AI Brain (BYOK)
-- **AI chat on every page** — Context-aware assistant that knows what you're looking at
-- **Tool-equipped agent** — The AI doesn't just talk, it acts — querying devices, running diagnostics, executing remediations
-- **Risk-classified actions** — Every AI action is validated against a risk engine before execution. Dangerous actions require human approval. Always.
-- **Bring your own key** — Plug in your Anthropic API key and the brain works out of the box
-- **External AI agents via MCP** — Or connect Claude.ai, ChatGPT, Cursor through the built-in MCP server with OAuth 2.1 + PKCE
+### AI Operator (included free)
+- **AI chat on every page.** Context-aware operator that knows what you're looking at
+- **Tool-equipped agent.** The AI doesn't just talk, it acts: querying devices, running diagnostics, executing remediations
+- **Risk-classified actions.** Every AI action is validated against a risk engine before execution. Impactful actions require human approval. Always.
+- **Bring your own key.** Plug in your Anthropic API key and the operator works out of the box
+- **External AI agents via MCP.** Or connect Claude.ai, ChatGPT, Cursor through the built-in MCP server with OAuth 2.1 + PKCE
 
 > **🧠 [LanternOps Brain](https://lanternops.io)** — Want persistent memory, cross-tenant intelligence, automated playbooks, and compliance evidence generation? LanternOps is the managed AI brain for BL4CK. Same RMM, smarter brain. [Learn more →](https://lanternops.io)
 
@@ -299,7 +307,7 @@ BL4CK will be running at `https://your-domain` (or `https://localhost` with a se
 
 On first production boot against an empty database, BL4CK creates the initial Partner Admin only from operator-provided `BREEZE_BOOTSTRAP_ADMIN_EMAIL` and `BREEZE_BOOTSTRAP_ADMIN_PASSWORD` values. If those values are missing, startup refuses to seed the empty production database. The password is never printed to logs. After you sign in and finish setup, remove those bootstrap values from `.env`.
 
-For hardened production deploys (Cloudflare Tunnel, mandatory digest-pinned images, monitoring + logging), see [docs/DEPLOY_PRODUCTION.md](docs/DEPLOY_PRODUCTION.md) which uses `deploy/docker-compose.prod.yml`.
+For hardened production deploys (Cloudflare Tunnel, mandatory digest-pinned images, monitoring + logging), see [docs/operations/DEPLOY_PRODUCTION.md](docs/operations/DEPLOY_PRODUCTION.md) which uses `deploy/docker-compose.prod.yml`.
 
 ### Install the Agent
 
@@ -314,35 +322,37 @@ make build
 
 # Binaries land in agent/bin/ — including breeze-agent, breeze-desktop-helper,
 # breeze-watchdog, and breeze-backup.
-# See docs/AGENT_INSTALLATION.md for enrollment instructions.
+# See docs/guides/AGENT_INSTALLATION.md for enrollment instructions.
 ```
 
-### Enable the AI Brain (Optional)
+### Enable the AI Operator (Optional)
 
-1. Go to **Settings → AI Brain → BYOK**
-2. Enter your [Anthropic API key](https://console.anthropic.com/)
-3. The AI assistant is now active on every page
+1. Set `ANTHROPIC_API_KEY` in your `.env` (get one from the [Anthropic Console](https://console.anthropic.com/))
+2. Restart the stack: `docker compose up -d`
+3. The AI operator is now active on every page
+
+Self-hosted deployments can also point the operator at any Anthropic-compatible endpoint (a proxy, a gateway like LiteLLM, or a third-party backend) via `ANTHROPIC_BASE_URL`; see the comments in `.env.example`.
 
 ---
 
-## AI Brain
+## AI Operator
 
 BL4CK ships with the Claude Agent SDK integrated and an MCP server you can point any AI agent at. The AI isn't a separate product or plugin — it's woven into the platform, and the same risk engine governs every action whether it comes from the in-product chat or from an external agent over MCP.
 
 ### How It Works
 
-The AI brain has access to **tools** — the same capabilities you have in the dashboard. When you ask it to investigate an alert, it can query device details, check event logs, run diagnostic scripts, and propose remediations. When it decides to take an action, that action passes through the **risk engine** before execution.
+The AI operator has access to **tools**: the same capabilities you have in the dashboard. When you ask it to investigate an alert, it can query device details, check event logs, run diagnostic scripts, and propose remediations. When it decides to take an action, that action passes through the **risk engine** before execution.
 
 ```
 You: "Why is ACME-WS05 running slow?"
 
-Brain: I'll investigate. Let me check the device health.
+Operator: I'll investigate. Let me check the device health.
        → [calls get_device_details]
        → [calls get_event_stream]
        → [calls run_script: Get-Process | Sort-Object CPU -Descending | Select -First 10]
 
        ACME-WS05 has high CPU from Windows Update stuck in a retry loop.
-       KB5034441 failed with error 0x80070643 — the recovery partition
+       KB5034441 failed with error 0x80070643: the recovery partition
        is too small. I can fix this by extending the partition and
        retrying the update.
 
@@ -352,7 +362,7 @@ Brain: I'll investigate. Let me check the device health.
 
 ### Risk Classification
 
-Every action the AI can take is classified by risk level. This is enforced by the RMM, not the AI — the brain cannot bypass it.
+Every action the AI can take is classified by risk level. This is enforced by the RMM, not the AI. The operator cannot bypass it.
 
 | Risk Level | Behavior | Examples |
 |---|---|---|
@@ -363,20 +373,23 @@ Every action the AI can take is classified by risk level. This is enforced by th
 
 Risk policies are fully configurable per partner, organization, site, or device group.
 
-### BYOK vs LanternOps Brain
+### Run It Yourself vs Managed AI Ops
 
-| Capability | BYOK (Free) | LanternOps Brain |
+Run the built-in AI yourself, free. Or add the managed team: AI agents that work your queue while we read their conversations, verify their fixes, and tune them with you.
+
+| Capability | Run it yourself (free) | Managed AI Ops |
 |---|---|---|
 | AI chat on every page | ✅ | ✅ |
 | Tool-equipped agent | ✅ | ✅ |
 | Risk-classified actions | ✅ | ✅ |
+| A team of agents working your queue | ❌ | ✅ |
 | Persistent memory | ❌ | ✅ |
-| Cross-tenant intelligence | ❌ | ✅ |
 | Automated playbooks | ❌ | ✅ |
-| Proactive remediation | ❌ | ✅ |
 | Compliance evidence | ❌ | ✅ |
-| Client-facing reports | ❌ | ✅ |
-| Escalation routing | ❌ | ✅ |
+| Resolutions verified and agents tuned | You | The Breeze team, with you |
+| Support | Community | Included |
+
+Same Breeze. Same tools. Same risk engine. The difference is who does the work. Managed AI Ops is a curated engagement: we take on teams we can supervise properly. [Book a call →](https://breezermm.com/contact/)
 
 ---
 
@@ -406,12 +419,12 @@ Every entity in BL4CK is scoped to this hierarchy. Permissions, policies, alerts
 
 ### Brain Connector
 
-The Brain Connector is the interface between the RMM and any AI brain (BYOK or LanternOps). It exposes RMM capabilities as Agent SDK tools and enforces risk classification on every action.
+The Brain Connector is the interface between the RMM and the AI, whether that's the built-in operator or the Managed AI Ops team. It exposes RMM capabilities as Agent SDK tools and enforces risk classification on every action.
 
 ```
 ┌─────────────────────────────┐
-│  AI Brain                   │
-│  (BYOK local or LanternOps) │
+│  AI Operator                │
+│  (built-in or Managed)      │
 │         │                   │
 │    Agent SDK                │
 │    "I need to check this    │
@@ -433,7 +446,7 @@ The Brain Connector is the interface between the RMM and any AI brain (BYOK or L
 └─────────────────────────────┘
 ```
 
-For detailed architecture documentation, see [docs/architecture.md](docs/architecture.md).
+For detailed architecture documentation, see [docs/guides/architecture.md](docs/guides/architecture.md).
 
 ---
 
@@ -456,21 +469,23 @@ For detailed architecture documentation, see [docs/architecture.md](docs/archite
 - [x] Cloud-to-cloud backup (M365)
 - [x] EDR integrations (SentinelOne, Huntress)
 - [x] MCP server with OAuth 2.1 for external AI agents
+- [x] Ticketing & help desk (SLA tracking, time & parts on the ticket)
+- [x] Quotes, billing & invoicing, service catalog, customer portal
 - [x] Native viewer + helper desktop apps (macOS, Windows)
+- [x] Mobile app (iOS / Android): alerts, device status, on-call triage
 - [x] Watchdog auto-restart and agent self-update
 - [x] Reports & client-facing exports
 - [x] CIS hardening checks and audit baselines
 - [x] Email verification + cross-tenant abuse controls
+- [x] Managed AI Ops (supervised AI team, curated engagements)
 
 ### Next
-- [ ] LanternOps Brain connector (managed AI brain with cross-tenant intelligence)
 - [ ] Playbook engine (executable workflow runtime)
 - [ ] Approval workflow UI for high-risk AI actions
 - [ ] Expanded compliance framework evaluations
-- [ ] PSA integrations (ConnectWise, Autotask, HaloPSA)
+- [ ] External PSA sync (ConnectWise, Autotask, HaloPSA) for teams mid-migration
 - [ ] Documentation platform integrations (IT Glue, Hudu)
-- [ ] Mobile app (iOS / Android) — alerts, approvals, on-call response
-- [ ] SSO (SAML, OIDC) — implemented, awaiting field validation
+- [ ] SSO (SAML, OIDC): implemented, awaiting field validation
 
 ### Later
 - [ ] Cross-tenant intelligence
@@ -486,6 +501,18 @@ For detailed architecture documentation, see [docs/architecture.md](docs/archite
 | macOS | ✅ Working | Primary development platform; native helper + viewer |
 | Windows | ✅ Working | Full feature parity with macOS; signed MSI installer + Watchdog service |
 | Linux | ✅ Working | Daemon + service install via systemd; remote desktop and discovery require root |
+
+---
+
+## Support Breeze
+
+Breeze is free and open source. If it helps your team, you can support ongoing development by [sponsoring LanternOps on GitHub](https://github.com/sponsors/LanternOps).
+
+### Sponsors
+
+<!-- sponsors:start -->
+_No public sponsors yet. [Become the first sponsor →](https://github.com/sponsors/LanternOps)_
+<!-- sponsors:end -->
 
 ---
 
@@ -516,18 +543,30 @@ make build  # outputs to agent/bin/
 
 ### Ways to Contribute
 
-- **Bug reports** — Found something broken? [Open an issue](https://github.com/lanternops/breeze/issues).
-- **Feature requests** — Have an idea? [Start a discussion](https://github.com/lanternops/breeze/discussions).
-- **Code** — Pick up an issue, submit a PR. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-- **Agent testing** — Run the agent on Windows/Linux and report what works and what doesn't.
-- **Playbooks** — Share your remediation workflows so others can use them.
-- **Documentation** — Help us make the docs better.
+- **Bug reports.** Found something broken? [Open an issue](https://github.com/lanternops/breeze/issues).
+- **Feature requests.** Have an idea? [Start a discussion](https://github.com/lanternops/breeze/discussions).
+- **Code.** Pick up an issue, submit a PR. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+- **Agent testing.** Run the agent on Windows/Linux and report what works and what doesn't.
+- **Playbooks.** Share your remediation workflows so others can use them.
+- **Documentation.** Help us make the docs better.
+
+### Contributors
+
+Thank you to everyone who has contributed to Breeze.
+
+<!-- contributors:start -->
+<a href="https://github.com/ToddHebebrand"><img src="https://avatars.githubusercontent.com/u/8375744?v=4&amp;s=128" width="64" height="64" alt="ToddHebebrand" title="ToddHebebrand (@ToddHebebrand)" /></a>
+<a href="https://github.com/bdunncompany"><img src="https://avatars.githubusercontent.com/u/17571793?v=4&amp;s=128" width="64" height="64" alt="bdunncompany" title="bdunncompany (@bdunncompany)" /></a>
+<a href="https://github.com/ramphex"><img src="https://avatars.githubusercontent.com/u/43665314?v=4&amp;s=128" width="64" height="64" alt="ramphex" title="ramphex (@ramphex)" /></a>
+<a href="https://github.com/Emilien-Etadam"><img src="https://avatars.githubusercontent.com/u/56485277?v=4&amp;s=128" width="64" height="64" alt="Emilien-Etadam" title="Emilien-Etadam (@Emilien-Etadam)" /></a>
+<a href="https://github.com/CookieSource"><img src="https://avatars.githubusercontent.com/u/36531905?v=4&amp;s=128" width="64" height="64" alt="CookieSource" title="CookieSource (@CookieSource)" /></a>
+<!-- contributors:end -->
 
 ### Community
 
-- [Discord](https://breezermm.com/discord) — Chat with the team and other MSPs
-- [GitHub Discussions](https://github.com/lanternops/breeze/discussions) — Feature requests and ideas
-- [Twitter/X](https://twitter.com/breeze_rmm) — Updates and announcements
+- [Discord](https://breezermm.com/discord): chat with the team and other MSPs
+- [GitHub Discussions](https://github.com/lanternops/breeze/discussions): feature requests and ideas
+- [Twitter/X](https://twitter.com/breeze_rmm): updates and announcements
 
 ---
 
@@ -540,19 +579,19 @@ Yes. BL4CK is AGPL-3.0 licensed. Self-host it, use it in production, manage as m
 No catch. The business model is [LanternOps](https://lanternops.io) — a managed AI brain that connects to BL4CK and adds persistent memory, cross-tenant intelligence, automated playbooks, and compliance evidence. BL4CK is great on its own. LanternOps makes it autonomous.
 
 **How is this different from Tactical RMM?**
-Tactical RMM is a solid project. BL4CK is AI-native — the agent SDK and tool system are core to the architecture, not an integration. We also have built-in remote access (WebRTC), a modern frontend (Astro + React), and a multi-tenant hierarchy designed for MSPs from day one.
+Tactical RMM is a solid project. BL4CK is AI-native — the agent SDK and tool system are core to the architecture, not an integration. BL4CK also has PSA built in (ticketing, quotes, billing, service catalog), built-in remote access (WebRTC), a modern frontend (Astro + React), and a multi-tenant hierarchy designed for MSPs from day one.
 
 **Can I use this for my internal IT team (not an MSP)?**
-Absolutely. The multi-tenant hierarchy works for internal IT too — just use Organizations as departments or offices.
+Absolutely. The multi-tenant hierarchy works for internal IT too. Use Organizations as departments or offices.
 
 **What AI models are supported?**
-For the in-product AI chat, BL4CK uses the Claude Agent SDK (Anthropic). BYOK mode requires an Anthropic API key. We chose Claude for its tool-use capabilities and reasoning quality. Separately, BL4CK runs a built-in MCP server with OAuth 2.1 + PKCE, so you can connect Claude.ai, ChatGPT, Cursor, or any other MCP-compatible AI agent — using whichever model that platform runs. We're open to community contributions for additional in-product model providers.
+For the in-product AI chat, BL4CK uses the Claude Agent SDK (Anthropic). BYOK mode requires an Anthropic API key, and self-hosted deployments can point at any Anthropic-compatible endpoint (such as a LiteLLM gateway) via `ANTHROPIC_BASE_URL`. We chose Claude for its tool-use capabilities and reasoning quality. Separately, BL4CK runs a built-in MCP server with OAuth 2.1 + PKCE, so you can connect Claude.ai, ChatGPT, Cursor, or any other MCP-compatible AI agent — using whichever model that platform runs. We're open to community contributions for additional in-product model providers.
 
 **Is there an agent auto-update?**
-Yes. The BL4CK agent has a built-in updater that pulls signed release artifacts and self-installs across macOS, Windows, and Linux. The Watchdog service supervises the agent process and restarts it on failure. Production deployments verify Ed25519-signed release manifests via `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS`.
+Yes. The BL4CK agent has a built-in updater that pulls signed release artifacts and self-installs on Windows. The Watchdog service supervises the agent process and restarts it on failure. Production deployments verify Ed25519-signed release manifests via `RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS`.
 
 **Is my data safe?**
-Self-hosted: your data never leaves your infrastructure. Cloud-hosted: data is isolated per partner with strict tenant separation. See our [Security Practices](docs/SECURITY_PRACTICES.md) for the full security whitepaper, including SOC 2 alignment mapping, encryption standards, and audit controls.
+Self-hosted: your data never leaves your infrastructure. Cloud-hosted: data is isolated per partner with strict tenant separation, in your choice of US or EU region. See our [Security Practices](docs/security/SECURITY_PRACTICES.md) for the full security whitepaper, including SOC 2 alignment mapping, encryption standards, and audit controls.
 
 ---
 
@@ -565,5 +604,5 @@ You can use, modify, and self-host BL4CK freely. If you modify BL4CK and offer i
 ---
 
 <p align="center">
-  Built by <a href="https://lanternops.io">LanternOps</a>
+  Built by the team at <a href="https://breezermm.com">breezermm.com</a>
 </p>

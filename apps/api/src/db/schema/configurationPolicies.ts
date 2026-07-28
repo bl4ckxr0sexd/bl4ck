@@ -11,7 +11,9 @@ import {
   real,
   index,
   uniqueIndex,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { organizations, partners } from './orgs';
 import { users } from './users';
 import { alertSeverityEnum } from './alerts';
@@ -81,6 +83,18 @@ export const configurationPolicies = pgTable('configuration_policies', {
   statusIdx: index('config_policies_status_idx').on(table.status),
 }));
 
+// Coarse per-organization material clocks for desired-configuration exports.
+// Child definition/value tables advance these clocks through database-owned
+// triggers so an incremental traversal cannot miss a nested change.
+export const partnerExportConfigurationOrgState = pgTable('partner_export_configuration_org_state', {
+  resource: varchar('resource', { length: 40 }).notNull(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  updatedAt: timestamp('updated_at', { precision: 3 }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.resource, table.orgId] }),
+  orgIdIdx: index('partner_export_configuration_org_state_org_id_idx').on(table.orgId),
+}));
+
 export const configPolicyFeatureLinks = pgTable('config_policy_feature_links', {
   id: uuid('id').primaryKey().defaultRandom(),
   configPolicyId: uuid('config_policy_id').notNull().references(() => configurationPolicies.id, { onDelete: 'cascade' }),
@@ -92,6 +106,9 @@ export const configPolicyFeatureLinks = pgTable('config_policy_feature_links', {
 }, (table) => ({
   configPolicyIdIdx: index('config_feature_links_policy_id_idx').on(table.configPolicyId),
   featureTypeIdx: index('config_feature_links_feature_type_idx').on(table.featureType),
+  featurePolicyIdIdx: index('config_feature_links_feature_policy_id_idx')
+    .on(table.featurePolicyId)
+    .where(sql`${table.featurePolicyId} IS NOT NULL`),
   uniqueFeaturePerPolicy: uniqueIndex('config_feature_links_unique').on(table.configPolicyId, table.featureType),
 }));
 
@@ -219,7 +236,10 @@ export const configPolicyEventLogSettings = pgTable('config_policy_event_log_set
   maxEventsPerCycle: integer('max_events_per_cycle').notNull().default(100),
   collectCategories: text('collect_categories').array().notNull().default(['security', 'hardware', 'application', 'system']),
   minimumLevel: eventLogLevelEnum('minimum_level').notNull().default('info'),
-  collectionIntervalMinutes: integer('collection_interval_minutes').notNull().default(5),
+  // 15m default (was 5m) — issue #2390. Shadowed in practice (writes always go
+  // through eventLogInlineSettingsSchema, which supplies the value), but kept in
+  // sync to avoid latent drift. Migration: 2026-07-12-event-log-interval-default.sql
+  collectionIntervalMinutes: integer('collection_interval_minutes').notNull().default(15),
   rateLimitPerHour: integer('rate_limit_per_hour').notNull().default(12000),
   enableFullTextSearch: boolean('enable_full_text_search').notNull().default(true),
   enableCorrelation: boolean('enable_correlation').notNull().default(true),
@@ -251,12 +271,27 @@ export const configPolicySensitiveDataSettings = pgTable('config_policy_sensitiv
 export const configPolicyBackupSettings = pgTable('config_policy_backup_settings', {
   id: uuid('id').primaryKey().defaultRandom(),
   featureLinkId: uuid('feature_link_id').notNull().unique().references(() => configPolicyFeatureLinks.id, { onDelete: 'cascade' }),
-  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  // Dual-axis mirror of the parent policy's ownership (org XOR partner) so
+  // RLS never needs an EXISTS join to the parent. Partner-wide policies
+  // write partner_id with org_id NULL (2026-07-13-backup-profiles.sql).
+  orgId: uuid('org_id').references(() => organizations.id),
+  partnerId: uuid('partner_id').references(() => partners.id),
   schedule: jsonb('schedule').notNull().default({}),
   retention: jsonb('retention').notNull().default({}),
   paths: jsonb('paths').notNull().default([]),
   backupMode: backupModeEnum('backup_mode').notNull().default('file'),
   targets: jsonb('targets').notNull().default({}),
+  // Backup-profiles model (2026-07-13-backup-profiles.sql). When
+  // backup_profile_id is set, the profile's selections replace
+  // backup_mode/paths/targets (which remain the legacy "custom selection"
+  // path). destination_config_id points at the backup_configs destination;
+  // NULL with a profile set means "resolve the device org's default
+  // destination at job time" (required for partner-wide policies). Real FKs
+  // live in the SQL migration — no drizzle .references() here because
+  // schema/backup.ts already imports from this module and a reference back
+  // would create an import cycle.
+  backupProfileId: uuid('backup_profile_id'),
+  destinationConfigId: uuid('destination_config_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

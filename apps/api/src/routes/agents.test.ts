@@ -22,6 +22,7 @@ vi.mock('../services/rate-limit', () => ({
   })),
 }));
 vi.mock('../services/auditEvents', () => ({
+  requestLikeFromSnapshot: vi.fn(() => ({ req: { header: () => undefined } })),
   writeAuditEvent: vi.fn()
 }));
 // Enrollment now gates on tenant status; default to an active tenant so these
@@ -868,11 +869,12 @@ describe('agent routes', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.configUpdate).toEqual({
+        backup_server_url: '',
         event_log_settings: {
           max_events_per_cycle: 100,
           collect_categories: ['security', 'hardware', 'application', 'system'],
           minimum_level: 'info',
-          collection_interval_minutes: 5,
+          collection_interval_minutes: 15,
         },
         policy_registry_state_probes: [
           { registry_path: 'HKLM\\SOFTWARE\\Policies\\Alpha', value_name: 'Flag' },
@@ -984,11 +986,12 @@ describe('agent routes', () => {
       expect(body.commands).toHaveLength(1);
       expect(body.commands[0].type).toBe('filesystem_analysis');
       expect(body.configUpdate).toEqual({
+        backup_server_url: '',
         event_log_settings: {
           max_events_per_cycle: 100,
           collect_categories: ['security', 'hardware', 'application', 'system'],
           minimum_level: 'info',
-          collection_interval_minutes: 5,
+          collection_interval_minutes: 15,
         },
         policy_registry_state_probes: [],
         policy_config_state_probes: [],
@@ -1279,7 +1282,13 @@ describe('agent routes', () => {
       expect(res.status).toBe(200);
       // runOutsideDbContext is called 3 times: command lookup, command update, and audit policy queueing
       expect(vi.mocked(runOutsideDbContext)).toHaveBeenCalledTimes(3);
-      expect(vi.mocked(withSystemDbAccessContext)).toHaveBeenCalledTimes(1);
+      // withSystemDbAccessContext is called twice: once by the pre-existing
+      // path, and once wrapping the terminal device_commands compare-and-set.
+      // That second call is the #1375 fix (Sentry BREEZE-7) — this route is the
+      // REST twin of agentWs.processCommandResult and was writing
+      // device_commands with no access context. The count is load-bearing:
+      // dropping back to 1 means the write went contextless again.
+      expect(vi.mocked(withSystemDbAccessContext)).toHaveBeenCalledTimes(2);
       expect(vi.mocked(queueCommandForExecution)).toHaveBeenCalledWith(
         'device-123',
         'collect_audit_policy',

@@ -1,4 +1,5 @@
 import { redactLogFields, redactLogMessage } from './logRedaction';
+import { scrubErrorFieldsDeep } from './aiToolErrors';
 
 type CompactStats = {
   stringsTruncated: number;
@@ -58,6 +59,27 @@ export function redactAiToolOutputText(value: string): string {
     (current, pattern) => current.replace(pattern, REDACTED),
     redactLogMessage(value),
   );
+}
+
+/**
+ * Deep-redact known-sensitive keys from a tool-call INPUT before it is persisted
+ * to `ai_messages.tool_input` (SR5-16).
+ *
+ * Tool schemas invite plaintext secrets — e.g. `manage_backup_configs`
+ * `providerConfig.accessKey` / `secretKey` — and the streaming manager persists
+ * `block.input` UNCONDITIONALLY, even for a call the user later denies. That put
+ * cleartext credentials in the transcript, readable by anyone who could load the
+ * session. This is the single chokepoint that keeps them out: it runs
+ * `redactLogFields` (the shared deep key-based redactor — masks values for keys
+ * matching password/token/secret/*key/clientSecret/connectionString/… and also
+ * scrubs inline `key=value` secrets in string leaves) over EVERY tool's input as
+ * defense-in-depth, rather than relying on per-tool allow/deny lists.
+ */
+export function redactSensitiveToolInput(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const redacted = redactLogFields(input);
+  return isRecord(redacted) ? redacted : {};
 }
 
 function clampInteger(value: unknown, defaultValue: number, min: number, max: number): number {
@@ -420,6 +442,12 @@ function safeStringify(value: unknown): string {
 export function compactToolResultForChat(toolName: string, rawResult: string): string {
   const parsed = tryParseJson(rawResult);
   if (parsed === null) {
+    // Non-JSON output is raw tool payload (command stdout, file contents, log
+    // text) — NOT error text. It is deliberately not error-scrubbed here: the
+    // #2603 scrub is keyed on error-ish JSON fields, and applying it to free
+    // text would wipe legitimate output that merely looks query-shaped.
+    // Thrown errors never reach this branch; they are wrapped in
+    // JSON.stringify({ error }) by sanitizeThrownToolError at the call sites.
     const redactedRaw = redactAiToolOutputText(rawResult);
     if (redactedRaw.length <= MAX_TOOL_RESULT_CHARS) {
       return redactedRaw;
@@ -436,7 +464,13 @@ export function compactToolResultForChat(toolName: string, rawResult: string): s
 
   const stats = emptyStats();
 
-  const minimized = sanitizeToolPayloadValue(toolName, parsed, stats);
+  // Scrub driver/runtime detail out of error-ish fields BEFORE compaction, so it
+  // cannot survive into a truncated `preview` further down (#2603). This is the
+  // single chokepoint every aiTools*.ts result passes through, which is why the
+  // fix does not need a catch-block edit in each of the ~19 leaking handlers.
+  const errorScrubbed = scrubErrorFieldsDeep(parsed);
+
+  const minimized = sanitizeToolPayloadValue(toolName, errorScrubbed, stats);
   const redacted = redactLogFields(minimized);
   const sanitized = sanitizeToolPayloadValue(toolName, redacted, stats);
   const toolSpecific = applyToolSpecificCompaction(toolName, sanitized, stats);

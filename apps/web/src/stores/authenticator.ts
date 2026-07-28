@@ -32,34 +32,119 @@ export interface ApproverDevice {
   disabledAt?: string | null;
 }
 
+export type RegisterReauth =
+  | { method: 'passkey' }
+  | { method: 'totp'; code: string }
+  | { method: 'password'; password: string };
+
+class RegisterStepError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function jsonOrThrow(response: Response, fallback: string): Promise<any> {
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new RegisterStepError(data?.error ?? fallback, response.status);
+  }
+  // A 2xx with an unparseable body (empty body, truncated proxy response) must
+  // not silently resolve to `null` — every caller immediately reads a field
+  // off the result (e.g. `data.registerGrantId`), which would throw a raw
+  // TypeError deep in the ceremony instead of surfacing a clean, catchable
+  // RegisterStepError the UI can map to a toast.
+  try {
+    return await response.json();
+  } catch {
+    throw new RegisterStepError('Unexpected server response.');
+  }
+}
+
+/**
+ * Mint a single-use register_approver_device grant with whichever re-auth
+ * factor the caller proved (#2707 — spec: strongest available factor; the
+ * password endpoint 403s `stronger_factor_required` if TOTP/passkey exist).
+ */
+async function mintRegisterGrant(reauth: RegisterReauth): Promise<string> {
+  if (reauth.method === 'password') {
+    const data = await jsonOrThrow(
+      await fetchWithAuth('/authenticator/register-grant', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: reauth.password }),
+        // A 401 here means "wrong password", not "stale access token" — unlike
+        // most fetchWithAuth callers, replaying after a token refresh would
+        // just resubmit the same bad password and fail again. Same rationale
+        // as the single-use webauthn assertion in intentApprovals.ts.
+        skipUnauthorizedRetry: true,
+      }),
+      'Verification failed.'
+    );
+    if (!data?.registerGrantId) throw new RegisterStepError('Verification failed.');
+    return data.registerGrantId;
+  }
+
+  let stepUpBody: Record<string, unknown>;
+  if (reauth.method === 'totp') {
+    stepUpBody = { method: 'totp', code: reauth.code, operation: 'register_approver_device' };
+  } else {
+    // Passkey: fetch an authenticated step-up challenge, run the assertion
+    // ceremony, then prove it to /auth/mfa/step-up.
+    const challengeData = await jsonOrThrow(
+      await fetchWithAuth('/auth/mfa/step-up/options', { method: 'POST' }),
+      'Could not start passkey verification.'
+    );
+    const optionsJSON: PublicKeyCredentialRequestOptionsJSON =
+      challengeData.options ?? challengeData.optionsJSON ?? challengeData;
+    const credential = await startAuthentication({ optionsJSON });
+    stepUpBody = { method: 'passkey', credential, operation: 'register_approver_device' };
+  }
+
+  const data = await jsonOrThrow(
+    await fetchWithAuth('/auth/mfa/step-up', {
+      method: 'POST',
+      body: JSON.stringify(stepUpBody),
+      // Same reasoning: a 401 means the TOTP code / passkey assertion was
+      // rejected (wrong code, or the assertion is already burned), not that
+      // the access token is stale — never replay it.
+      skipUnauthorizedRetry: true,
+    }),
+    'Verification failed.'
+  );
+  if (!data?.stepUpGrantId) throw new RegisterStepError('Verification failed.');
+  // The step-up endpoint names it stepUpGrantId; the register routes take it
+  // as registerGrantId — same value, different field name.
+  return data.stepUpGrantId;
+}
+
 /**
  * Register the current browser/platform authenticator as an approver device.
- * options → Windows Hello / Touch ID registration ceremony → verify.
+ * re-auth mint → options (validates the grant) → Windows Hello / Touch ID
+ * registration ceremony → verify (consumes the grant).
  */
-export async function registerApproverDevice(label: string): Promise<void> {
-  const optionsResponse = await fetchWithAuth('/authenticator/devices/webauthn/options', {
-    method: 'POST',
-  });
-  const optionsData = await optionsResponse.json().catch(() => null);
-  // fetchWithAuth does NOT throw on a non-2xx — guard explicitly so a failed
-  // options/verify rejects and runAction surfaces an error toast instead of a
-  // false success (CLAUDE.md no-silent-mutations).
-  if (!optionsResponse.ok) {
-    throw new Error(optionsData?.error ?? 'Failed to start device registration.');
-  }
+export async function registerApproverDevice(label: string, reauth: RegisterReauth): Promise<void> {
+  const registerGrantId = await mintRegisterGrant(reauth);
+
+  const optionsData = await jsonOrThrow(
+    await fetchWithAuth('/authenticator/devices/webauthn/options', {
+      method: 'POST',
+      body: JSON.stringify({ registerGrantId }),
+    }),
+    'Failed to start device registration.'
+  );
   const optionsJSON: PublicKeyCredentialCreationOptionsJSON =
     optionsData.options ?? optionsData.optionsJSON ?? optionsData;
 
   const response = await startRegistration({ optionsJSON });
 
-  const verifyResponse = await fetchWithAuth('/authenticator/devices/webauthn/verify', {
-    method: 'POST',
-    body: JSON.stringify({ label, response }),
-  });
-  if (!verifyResponse.ok) {
-    const verifyData = await verifyResponse.json().catch(() => null);
-    throw new Error(verifyData?.error ?? 'Device registration failed.');
-  }
+  await jsonOrThrow(
+    await fetchWithAuth('/authenticator/devices/webauthn/verify', {
+      method: 'POST',
+      body: JSON.stringify({ registerGrantId, label, response }),
+    }),
+    'Device registration failed.'
+  );
 }
 
 /** List the caller's active approver devices. */
@@ -104,15 +189,32 @@ export async function getApprovalAssertion(basePath: string, id: string): Promis
   if (!challengeResponse.ok) {
     throw new Error(challengeData?.error ?? `Could not start verification (${challengeResponse.status}).`);
   }
-  const optionsJSON: PublicKeyCredentialRequestOptionsJSON =
-    challengeData.options ?? challengeData.optionsJSON ?? challengeData;
+  // A 2xx whose body isn't a usable challenge (empty body, truncated proxy
+  // response, a future field rename) must NOT fall through to the device-less
+  // branch below — that would tell a user who HAS a registered authenticator to
+  // go register one, and in PamRespondModal it silently downgrades the approve
+  // to a proofless L1. Require the device-less case to be explicit: a real
+  // options object carrying a `challenge`, whose allowCredentials is empty.
+  const optionsJSON: PublicKeyCredentialRequestOptionsJSON | null =
+    challengeData && typeof challengeData === 'object'
+      ? (challengeData.options ?? challengeData.optionsJSON ?? challengeData)
+      : null;
+  if (
+    !optionsJSON ||
+    typeof optionsJSON !== 'object' ||
+    typeof optionsJSON.challenge !== 'string' ||
+    optionsJSON.challenge.length === 0
+  ) {
+    throw new Error('Could not start verification: the server returned an unusable challenge.');
+  }
 
   // No registered approver device → the challenge carries no allowCredentials.
   // Signal this distinctly (name='NoApproverDeviceError') BEFORE the ceremony so
   // callers can fall back to an L1 (session-tap) approval instead of firing a
   // Windows Hello prompt the technician can't satisfy. Thrown before
-  // startAuthentication so it is never a DOMException (which callers treat as a
-  // genuine cancel/abort). P2 is opt-in, not required (enforcement is Phase 4).
+  // startAuthentication, so it can never be confused with a ceremony failure
+  // (which callers treat as a genuine cancel/abort). P2 is opt-in, not required
+  // (enforcement is Phase 4).
   if (!optionsJSON.allowCredentials || optionsJSON.allowCredentials.length === 0) {
     const err = new Error('No registered approver device');
     err.name = 'NoApproverDeviceError';

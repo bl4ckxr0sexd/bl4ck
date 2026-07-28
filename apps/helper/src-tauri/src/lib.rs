@@ -1,4 +1,5 @@
 mod ipc;
+mod workspace_open;
 
 use crate::ipc::token::HelperToken;
 use futures_util::StreamExt;
@@ -44,27 +45,35 @@ struct AgentConfigFull {
 // ---------------------------------------------------------------------------
 
 fn agent_config_path() -> PathBuf {
+    // Debug builds honor BREEZE_AGENT_CONFIG so a dev rig can point the helper
+    // at a seeded agent.yaml without touching the machine's real enrollment.
+    #[cfg(debug_assertions)]
+    if let Ok(p) = std::env::var("BREEZE_AGENT_CONFIG") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
     #[cfg(target_os = "macos")]
     {
-        PathBuf::from("/Library/Application Support/BL4CK/agent.yaml")
+        PathBuf::from("/Library/Application Support/Breeze/agent.yaml")
     }
     #[cfg(target_os = "windows")]
     {
         let program_data =
             std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".into());
         PathBuf::from(program_data)
-            .join("BL4CK")
+            .join("Breeze")
             .join("agent.yaml")
     }
     #[cfg(target_os = "linux")]
     {
-        PathBuf::from("/etc/bl4ck/agent.yaml")
+        PathBuf::from("/etc/breeze/agent.yaml")
     }
 }
 
-/// Log a message to the BL4CK helper log file.
+/// Log a message to the Breeze helper log file.
 /// In SYSTEM service context, stderr is not connected to anything visible,
-/// so we append to a log file in the BL4CK data directory instead.
+/// so we append to a log file in the Breeze data directory instead.
 fn log_helper_error(msg: &str) {
     eprintln!("{}", msg); // still try stderr for non-service contexts
     let log_path = agent_config_path().with_file_name("helper.log");
@@ -97,7 +106,7 @@ fn load_agent_config_full() -> Result<AgentConfigFull, String> {
 
     let contents = std::fs::read_to_string(&path).map_err(|e| {
         log_helper_error(&format!("agent config not found at {}: {}", path.display(), e));
-        "BL4CK Assist requires the BL4CK agent. Ensure the BL4CK agent is installed and running on this device.".to_string()
+        "Breeze Assist requires the Breeze agent. Ensure the Breeze agent is installed and running on this device.".to_string()
     })?;
 
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|e| {
@@ -106,7 +115,7 @@ fn load_agent_config_full() -> Result<AgentConfigFull, String> {
             path.display(),
             e
         ));
-        "Agent configuration is corrupt. Reinstall the BL4CK agent or contact your administrator."
+        "Agent configuration is corrupt. Reinstall the Breeze agent or contact your administrator."
             .to_string()
     })?;
 
@@ -129,7 +138,7 @@ fn load_agent_config_full() -> Result<AgentConfigFull, String> {
 
     let token = helper_token_from_config(&yaml, secrets.as_ref()).ok_or_else(|| {
         log_helper_error("missing helper_auth_token in agent config");
-        "The BL4CK agent is still setting up. Wait a moment and retry, or contact your administrator.".to_string()
+        "The Breeze agent is still setting up. Wait a moment and retry, or contact your administrator.".to_string()
     })?;
 
     let agent_id = yaml
@@ -293,7 +302,7 @@ fn load_agent_server_url() -> Result<String, String> {
             path.display(),
             e
         ));
-        "BL4CK agent configuration is unavailable.".to_string()
+        "Breeze agent configuration is unavailable.".to_string()
     })?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|e| {
         log_helper_error(&format!(
@@ -364,7 +373,7 @@ fn get_http_state_lock() -> &'static Mutex<Option<HttpClientState>> {
     HTTP_STATE.get_or_init(|| Mutex::new(None))
 }
 
-/// Process-global helper auth token delivered over IPC from the BL4CK agent.
+/// Process-global helper auth token delivered over IPC from the Breeze agent.
 /// Distinct from the file-loaded `HttpClientState::config.token` (Phase-1 fallback).
 static HELPER_TOKEN: OnceLock<HelperToken> = OnceLock::new();
 
@@ -402,6 +411,16 @@ async fn ensure_http_state() -> Result<(), String> {
         });
     }
     Ok(())
+}
+
+/// Drop the cached HTTP client + agent config so the next request re-reads
+/// agent.yaml (#2288). Called on transport-level failures: after a backup
+/// server promotion the agent rewrites server_url, and re-reading is how the
+/// helper follows the swap without a restart.
+async fn invalidate_http_state() {
+    let lock = get_http_state_lock();
+    let mut guard = lock.lock().await;
+    *guard = None;
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +698,7 @@ fn validate_portal_open_url(portal_url: &str, api_url: Option<&str>) -> Result<S
         }
     }
 
-    Err("Portal URL must target an approved BL4CK portal origin".to_string())
+    Err("Portal URL must target an approved Breeze portal origin".to_string())
 }
 
 #[tauri::command]
@@ -705,11 +724,22 @@ async fn helper_fetch(
             state.config.api_url.clone(),
         )
     };
-    let token = ipc_token.unwrap_or(file_token);
 
     // Validate that the request URL targets the configured API server.
     // This prevents SSRF and token leakage to arbitrary hosts.
     request_url_allowed(&api_url, &request.url)?;
+
+    let configured_url = reqwest::Url::parse(&api_url)
+        .map_err(|e| format!("Configured API URL is invalid: {}", e))?;
+    let requested_url =
+        reqwest::Url::parse(&request.url).map_err(|e| format!("Request URL is invalid: {}", e))?;
+    let configured_path = configured_url.path().trim_end_matches('/');
+    let relative_path = requested_url
+        .path()
+        .strip_prefix(configured_path)
+        .unwrap_or(requested_url.path())
+        .to_string();
+    let request_query = requested_url.query().map(str::to_string);
 
     // Build the request
     let method: Method = request
@@ -719,11 +749,9 @@ async fn helper_fetch(
         .parse()
         .map_err(|e| format!("Invalid HTTP method: {}", e))?;
 
-    let mut req_builder = client.request(method, &request.url);
-
     // Apply caller-specified headers (excluding Authorization which is always set by us)
+    let mut header_map = HeaderMap::new();
     if let Some(hdrs) = &request.headers {
-        let mut header_map = HeaderMap::new();
         for (k, v) in hdrs {
             // Prevent overriding the Authorization header
             if k.eq_ignore_ascii_case("authorization") {
@@ -737,20 +765,94 @@ async fn helper_fetch(
                 .map_err(|e| format!("Invalid header value for '{}': {}", k, e))?;
             header_map.insert(name, val);
         }
-        req_builder = req_builder.headers(header_map);
     }
 
-    // Set Authorization header last so it cannot be overridden
-    req_builder = req_builder.header("Authorization", format!("Bearer {}", token));
-
-    if let Some(body) = &request.body {
-        req_builder = req_builder.body(body.clone());
+    enum SendError {
+        Url(String),
+        Request { error: reqwest::Error, url: String },
     }
 
-    let response = req_builder.send().await.map_err(|e| {
-        log_helper_error(&format!("HTTP request to {} failed: {}", request.url, e));
-        "Cannot connect to the BL4CK server. Check your network connection.".to_string()
-    })?;
+    // Construct the URL and request from the supplied state snapshot on every
+    // call. The retry supplies a snapshot loaded after invalidation, so both
+    // the client and URL use the freshly re-read agent.yaml.
+    let send_once = |client: Client, file_token: String, api_url: String| {
+        let ipc_token = ipc_token.clone();
+        let method = method.clone();
+        let header_map = header_map.clone();
+        let body = request.body.clone();
+        let relative_path = relative_path.clone();
+        let request_query = request_query.clone();
+
+        async move {
+            let mut url = reqwest::Url::parse(&api_url)
+                .map_err(|e| SendError::Url(format!("Configured API URL is invalid: {}", e)))?;
+            let base_path = url.path().trim_end_matches('/');
+            url.set_path(&format!("{}{}", base_path, relative_path));
+            url.set_query(request_query.as_deref());
+            let request_url = url.to_string();
+            request_url_allowed(&api_url, &request_url).map_err(SendError::Url)?;
+            let token = ipc_token.unwrap_or(file_token);
+
+            let mut req_builder = client.request(method, url).headers(header_map);
+
+            // Set Authorization header last so it cannot be overridden.
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", token));
+
+            if let Some(body) = body {
+                req_builder = req_builder.body(body);
+            }
+
+            req_builder
+                .send()
+                .await
+                .map_err(|error| SendError::Request {
+                    error,
+                    url: request_url,
+                })
+        }
+    };
+
+    let response = match send_once(client, file_token, api_url).await {
+        Ok(response) => response,
+        Err(SendError::Request { error, .. }) if error.is_connect() || error.is_timeout() => {
+            // Transport failure — the agent may have swapped server_url.
+            // Re-read agent.yaml and retry exactly once.
+            invalidate_http_state().await;
+            ensure_http_state().await?;
+
+            let (fresh_client, fresh_file_token, fresh_api_url) = {
+                let lock = get_http_state_lock();
+                let guard = lock.lock().await;
+                let state = guard
+                    .as_ref()
+                    .ok_or_else(|| "HTTP state not initialized".to_string())?;
+                (
+                    state.client.clone(),
+                    state.config.token.clone(),
+                    state.config.api_url.clone(),
+                )
+            };
+
+            match send_once(fresh_client, fresh_file_token, fresh_api_url).await {
+                Ok(response) => response,
+                Err(SendError::Url(message)) => return Err(message),
+                Err(SendError::Request { error, url }) => {
+                    log_helper_error(&format!("HTTP request to {} failed: {}", url, error));
+                    return Err(
+                        "Cannot connect to the Breeze server. Check your network connection."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        Err(SendError::Url(message)) => return Err(message),
+        Err(SendError::Request { error, url }) => {
+            log_helper_error(&format!("HTTP request to {} failed: {}", url, error));
+            return Err(
+                "Cannot connect to the Breeze server. Check your network connection.".to_string(),
+            );
+        }
+    };
 
     let status = response.status().as_u16();
 
@@ -882,7 +984,7 @@ fn build_tray_menu(
     }
 
     if config.show_open_portal {
-        let item = MenuItemBuilder::with_id("open_portal", "Open BL4CK Portal").build(app)?;
+        let item = MenuItemBuilder::with_id("open_portal", "Open Breeze Portal").build(app)?;
         builder = builder.item(&item);
     }
 
@@ -907,6 +1009,7 @@ fn build_tray_menu(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             read_agent_config,
             helper_fetch,
@@ -917,6 +1020,7 @@ pub fn run() {
             update_chat_active,
             helper_token_ready,
             submit_consent,
+            workspace_open::open_workspace_path,
         ])
         .setup(|app| {
             // Create main window manually (not from config) so we can set
@@ -931,8 +1035,9 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("BL4CK Helper")
-            .inner_size(380.0, 600.0)
+            .title("Breeze Helper")
+            .inner_size(920.0, 640.0)
+            .min_inner_size(360.0, 520.0)
             .resizable(true)
             .center();
 
@@ -953,7 +1058,7 @@ pub fn run() {
                 if local.to_lowercase().contains("systemprofile") || local.is_empty() {
                     let pd =
                         std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".into());
-                    let data_dir = PathBuf::from(pd).join("BL4CK").join("helper-webview");
+                    let data_dir = PathBuf::from(pd).join("Breeze").join("helper-webview");
                     if let Err(e) = std::fs::create_dir_all(&data_dir) {
                         let msg = format!(
                             "[helper] Failed to create WebView2 data dir {}: {}",
@@ -996,7 +1101,7 @@ pub fn run() {
             if let Some(tray) = app.tray_by_id("main") {
                 // Set tray tooltip with version
                 let _ = tray.set_tooltip(Some(&format!(
-                    "BL4CK Helper v{}",
+                    "Breeze Helper v{}",
                     env!("CARGO_PKG_VERSION")
                 )));
 
@@ -1098,7 +1203,7 @@ pub fn run() {
                 }
             });
 
-            // Deliver the helper auth token over IPC from the BL4CK agent.
+            // Deliver the helper auth token over IPC from the Breeze agent.
             // Keep the stop sender in managed state so the watch channel stays open
             // for the app's lifetime; on app exit the state is dropped, the channel
             // closes, and the client task exits. (The task also exits on a permanent
@@ -1161,11 +1266,11 @@ mod tests {
 
     #[test]
     fn config_path_from_args_parses_equals_form() {
-        let args = vec!["--config=/etc/bl4ck/sessions/s-2/helper_config.yaml"];
+        let args = vec!["--config=/etc/breeze/sessions/s-2/helper_config.yaml"];
         assert_eq!(
             config_path_from_args(args.into_iter()),
             Some(PathBuf::from(
-                "/etc/bl4ck/sessions/s-2/helper_config.yaml"
+                "/etc/breeze/sessions/s-2/helper_config.yaml"
             ))
         );
     }

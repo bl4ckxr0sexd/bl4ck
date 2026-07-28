@@ -1,10 +1,12 @@
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { nanoid } from 'nanoid';
 import { getTrustedClientIp } from '../../services/clientIp';
+import { isRequestConnectionSecure } from '../auth/helpers';
 import { writeAuditEvent } from '../../services/auditEvents';
 import { DEFAULT_ALLOWED_ORIGINS } from '../../services/corsOrigins';
 import { getRedis } from '../../services/redis';
+import { portalBase } from '../../services/portalUrl';
 import type { PortalSession } from './schemas';
 import {
   PORTAL_SESSION_COOKIE_NAME,
@@ -125,51 +127,134 @@ function resolvePortalCookieSameSite(): SameSiteValue {
   return normalizeSameSite(process.env.PORTAL_COOKIE_SAME_SITE ?? process.env.COOKIE_SAME_SITE);
 }
 
-function shouldSetSecureCookie(sameSite: SameSiteValue): boolean {
+function forcePortalSecureCookie(): boolean {
+  const forceSecure = (process.env.PORTAL_COOKIE_FORCE_SECURE ?? process.env.COOKIE_FORCE_SECURE)?.trim().toLowerCase();
+  return forceSecure === '1' || forceSecure === 'true';
+}
+
+function shouldSetSecureCookie(sameSite: SameSiteValue, connectionSecure: boolean): boolean {
   if (sameSite === 'None') {
     // Browsers require Secure when SameSite=None.
     return true;
   }
-  const forceSecure = (process.env.PORTAL_COOKIE_FORCE_SECURE ?? process.env.COOKIE_FORCE_SECURE)?.trim().toLowerCase();
-  if (forceSecure === '1' || forceSecure === 'true') {
+  if (forcePortalSecureCookie()) {
     return true;
   }
-  return isSecureCookieEnvironment();
+  return connectionSecure;
 }
 
-function buildCookieSecuritySuffix(sameSite: SameSiteValue): string {
-  const secure = shouldSetSecureCookie(sameSite) ? '; Secure' : '';
+function buildCookieSecuritySuffix(sameSite: SameSiteValue, connectionSecure: boolean): string {
+  const secure = shouldSetSecureCookie(sameSite, connectionSecure) ? '; Secure' : '';
   return `; SameSite=${sameSite}${secure}`;
 }
 
-export function buildPortalSessionCookie(token: string): string {
+// `connectionSecure` is required on every build* function so no caller can
+// silently fall back to the pre-#1618 NODE_ENV heuristic (#2611 — the portal
+// surface had its own copy of that footgun). Derive it from the request via
+// isRequestConnectionSecure(c), or use the set/clear entry points below, which
+// also emit the misconfiguration warnings.
+export function buildPortalSessionCookie(token: string, connectionSecure: boolean): string {
   const sameSite = resolvePortalCookieSameSite();
-  return `${PORTAL_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=${PORTAL_SESSION_COOKIE_PATH}; HttpOnly${buildCookieSecuritySuffix(sameSite)}; Max-Age=${SESSION_TTL_SECONDS}`;
+  return `${PORTAL_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=${PORTAL_SESSION_COOKIE_PATH}; HttpOnly${buildCookieSecuritySuffix(sameSite, connectionSecure)}; Max-Age=${SESSION_TTL_SECONDS}`;
 }
 
-export function buildPortalCsrfCookie(token: string): string {
+export function buildPortalCsrfCookie(token: string, connectionSecure: boolean): string {
   const sameSite = resolvePortalCookieSameSite();
-  return `${PORTAL_CSRF_COOKIE_NAME}=${encodeURIComponent(token)}; Path=${PORTAL_CSRF_COOKIE_PATH}${buildCookieSecuritySuffix(sameSite)}; Max-Age=${SESSION_TTL_SECONDS}`;
+  return `${PORTAL_CSRF_COOKIE_NAME}=${encodeURIComponent(token)}; Path=${PORTAL_CSRF_COOKIE_PATH}${buildCookieSecuritySuffix(sameSite, connectionSecure)}; Max-Age=${SESSION_TTL_SECONDS}`;
 }
 
-export function buildClearPortalSessionCookie(): string {
+export function buildClearPortalSessionCookie(connectionSecure: boolean): string {
   const sameSite = resolvePortalCookieSameSite();
-  return `${PORTAL_SESSION_COOKIE_NAME}=; Path=${PORTAL_SESSION_COOKIE_PATH}; HttpOnly${buildCookieSecuritySuffix(sameSite)}; Max-Age=0`;
+  return `${PORTAL_SESSION_COOKIE_NAME}=; Path=${PORTAL_SESSION_COOKIE_PATH}; HttpOnly${buildCookieSecuritySuffix(sameSite, connectionSecure)}; Max-Age=0`;
 }
 
-export function buildClearPortalCsrfCookie(): string {
+export function buildClearPortalCsrfCookie(connectionSecure: boolean): string {
   const sameSite = resolvePortalCookieSameSite();
-  return `${PORTAL_CSRF_COOKIE_NAME}=; Path=${PORTAL_CSRF_COOKIE_PATH}${buildCookieSecuritySuffix(sameSite)}; Max-Age=0`;
+  return `${PORTAL_CSRF_COOKIE_NAME}=; Path=${PORTAL_CSRF_COOKIE_PATH}${buildCookieSecuritySuffix(sameSite, connectionSecure)}; Max-Age=0`;
+}
+
+// Throttled warnings so a busy misconfigured deployment logs periodically
+// without flooding. Keyed per warning kind (a small fixed set — never by
+// host/peer) so one misconfiguration class can't suppress reports of another.
+// Module-scoped; resets on process restart. Mirrors the admin-app pattern
+// (routes/auth/helpers.ts) on the portal surface (#2611).
+const PORTAL_COOKIE_WARN_INTERVAL_MS = 10 * 60 * 1000;
+const portalCookieLastWarnAt = new Map<string, number>();
+
+function warnPortalCookieThrottled(kind: string, message: string): void {
+  const now = Date.now();
+  const last = portalCookieLastWarnAt.get(kind);
+  if (last !== undefined && now - last < PORTAL_COOKIE_WARN_INTERVAL_MS) {
+    return;
+  }
+  portalCookieLastWarnAt.set(kind, now);
+  console.warn(message);
+}
+
+export function _resetPortalCookieWarnStateForTests(): void {
+  portalCookieLastWarnAt.clear();
+}
+
+function describePortalCookieTransport(c: Context): string {
+  const host = c.req.header('host') ?? 'unknown-host';
+  const observedProto = c.req.header('x-forwarded-proto');
+  return `host "${host}", X-Forwarded-Proto ${observedProto ? `"${observedProto}"` : 'absent'}`;
+}
+
+// Keyed off the ACTUAL Secure decision, not just the transport: `Secure` can be
+// forced onto an insecure transport (PORTAL_COOKIE_FORCE_SECURE / SameSite=None),
+// and that case breaks portal login outright — the warning must say so, not
+// claim the cookies are non-Secure. The blind NODE_ENV fallback breadcrumb is
+// emitted by the shared isRequestConnectionSecure().
+function warnOnPortalCookieTransportMismatch(c: Context, sameSite: SameSiteValue, connectionSecure: boolean, secure: boolean): void {
+  if (connectionSecure) {
+    return;
+  }
+  if (secure) {
+    // Explicit config forces `Secure` onto a transport the browser will reject
+    // it on. Only reachable via deliberate configuration, so warn in every
+    // environment — this is the #1618/#2611 symptom by operator choice.
+    const cause = sameSite === 'None'
+      ? 'PORTAL_COOKIE_SAME_SITE=None requires the Secure attribute'
+      : 'PORTAL_COOKIE_FORCE_SECURE is set';
+    warnPortalCookieThrottled(
+      'forced-secure-over-http',
+      `[portal] Issuing \`Secure\` session cookies over a NON-HTTPS request (${describePortalCookieTransport(c)}) because ${cause}. ` +
+      'The browser WILL silently discard them and portal login WILL break (issue #2611). Fix TLS so the ' +
+      'browser reaches Breeze over https, or remove that configuration.'
+    );
+    return;
+  }
+  // Non-Secure cookies over HTTP: login works, but credentials transit
+  // unencrypted. Dev-over-http is the normal local flow — only warn when
+  // deployed (production).
+  if (!isSecureCookieEnvironment()) {
+    return;
+  }
+  warnPortalCookieThrottled(
+    'insecure-transport',
+    `[portal] Issuing NON-Secure session cookies: this production request arrived over HTTP (${describePortalCookieTransport(c)}). ` +
+    'Persistent login will work, but the connection is not encrypted. If Breeze should be served over HTTPS, ' +
+    'fix TLS / your reverse proxy so the browser reaches it over https and the proxy forwards ' +
+    '`X-Forwarded-Proto: https` (see issue #2611).'
+  );
 }
 
 export function setPortalSessionCookies(c: Context, sessionToken: string): void {
-  c.header('Set-Cookie', buildPortalSessionCookie(sessionToken), { append: true });
-  c.header('Set-Cookie', buildPortalCsrfCookie(randomBytes(32).toString('hex')), { append: true });
+  const connectionSecure = isRequestConnectionSecure(c);
+  const sameSite = resolvePortalCookieSameSite();
+  warnOnPortalCookieTransportMismatch(c, sameSite, connectionSecure, shouldSetSecureCookie(sameSite, connectionSecure));
+  c.header('Set-Cookie', buildPortalSessionCookie(sessionToken, connectionSecure), { append: true });
+  c.header('Set-Cookie', buildPortalCsrfCookie(randomBytes(32).toString('hex'), connectionSecure), { append: true });
 }
 
 export function clearPortalSessionCookies(c: Context): void {
-  c.header('Set-Cookie', buildClearPortalSessionCookie(), { append: true });
-  c.header('Set-Cookie', buildClearPortalCsrfCookie(), { append: true });
+  // Derive from the same request so the clearing cookie's attributes match the
+  // set cookie's within this transport (a `Secure` clear sent over HTTP would
+  // itself be ignored by the browser, stranding the cookie).
+  const connectionSecure = isRequestConnectionSecure(c);
+  c.header('Set-Cookie', buildClearPortalSessionCookie(connectionSecure), { append: true });
+  c.header('Set-Cookie', buildClearPortalCsrfCookie(connectionSecure), { append: true });
 }
 
 export function getCookieValue(cookieHeader: string | undefined, name: string): string | null {
@@ -467,6 +552,36 @@ export function validatePortalCookieCsrfRequest(c: Context): string | null {
   return null;
 }
 
+/**
+ * Shared boundary guard for the portal quote/invoice mutation routers.
+ * Cookie sessions must prove the double-submit CSRF token, while bearer-token
+ * API clients remain exempt. Mutations with a JSON body must also reject form
+ * submissions before Hono's JSON validator attempts to parse them.
+ */
+export const portalFinancialMutationGuard: MiddlewareHandler = async (c, next) => {
+  if (c.req.method !== 'POST') {
+    await next();
+    return;
+  }
+
+  const csrfError = validatePortalCookieCsrfRequest(c);
+  if (csrfError) {
+    return c.json({ error: csrfError }, 403);
+  }
+
+  const requiresJsonBody =
+    /\/quotes\/[^/]+\/(?:accept|decline)$/.test(c.req.path)
+    || /\/invoices\/[^/]+\/settle$/.test(c.req.path);
+  if (requiresJsonBody) {
+    const contentType = c.req.header('content-type')?.toLowerCase() ?? '';
+    if (!contentType.startsWith('application/json')) {
+      return c.json({ error: 'Content-Type must be application/json' }, 415);
+    }
+  }
+
+  await next();
+};
+
 function safeCompareTokens(headerToken: string, cookieToken: string): boolean {
   const headerBuffer = Buffer.from(headerToken, 'utf8');
   const cookieBuffer = Buffer.from(cookieToken, 'utf8');
@@ -483,14 +598,12 @@ function safeCompareTokens(headerToken: string, cookieToken: string): boolean {
 /**
  * Absolute base for portal-hosted pages in outbound emails (reset, invite).
  * The portal is served under /portal on the main domain, so links MUST include
- * that segment — DASHBOARD_URL/PUBLIC_APP_URL point at the MSP app root.
+ * that segment — delegated to the shared portalBase() resolver, which appends
+ * the portal base path to app-origin fallbacks and rejects malformed values.
  */
 export function buildPortalUrl(path: string): string {
-  const explicit = process.env.PUBLIC_PORTAL_URL?.trim();
-  const appRoot = (process.env.DASHBOARD_URL || process.env.PUBLIC_APP_URL || 'http://localhost:4321').trim();
-  const base = (explicit && explicit.length > 0 ? explicit : `${appRoot.replace(/\/$/, '')}/portal`).replace(/\/$/, '');
   const suffix = path.startsWith('/') ? path : `/${path}`;
-  return `${base}${suffix}`;
+  return `${portalBase()}${suffix}`;
 }
 
 export async function storePortalInviteToken(portalUserId: string): Promise<string | null> {

@@ -27,6 +27,12 @@ export interface PendingApproval {
   input: Record<string, unknown>;
   description: string;
   deviceContext?: DeviceContext;
+  /** Tier-3 durable action-intent (spec §6.1) — see AiApprovalDialog's prop doc. */
+  intentBacked?: boolean;
+  /** Set when the viewer (requester) holds the fanned-out approval row — enables inline L3 self-approve. */
+  selfApprovalRequestId?: string;
+  /** The intent's real server-side expiry (ISO), so the self-approve countdown reflects actual deadline. */
+  intentExpiresAt?: string;
 }
 
 export interface PendingPlan {
@@ -129,6 +135,9 @@ export function processStreamEvent(
           input: event.input,
           description: event.description,
           deviceContext: event.deviceContext,
+          intentBacked: event.intentBacked,
+          selfApprovalRequestId: event.selfApprovalRequestId,
+          intentExpiresAt: event.intentExpiresAt,
         }
       }));
       return currentAssistantId;

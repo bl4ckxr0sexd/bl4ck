@@ -29,7 +29,7 @@ on:
     branches: [main]
 
 env:
-  PNPM_VERSION: '10.33.4'
+  PNPM_VERSION: '10.34.5'
 
 permissions:
   contents: read
@@ -66,11 +66,13 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
           cache: pnpm
@@ -85,7 +87,7 @@ jobs:
         env:
           # Authenticate binarySync's github API call so we don't hit the
           # 60/hour unauthenticated rate limit on the shared CI runner IP.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           BINARY_SOURCE: github
           # Use the most recent published release whose manifest format is
           # known to be compatible with the current API code. Bump this when
@@ -110,6 +112,9 @@ jobs:
           PUBLIC_API_URL: http://localhost:3001
           # Production-strict env that the API requires at boot post-#568.
           JWT_SECRET: ci-smoke-bsg-k7x9Qm4pR2vL8nW5jT3yF6hB0cA1dE4gI7
+          # Partner reconstruction API cursor signing key (32 random bytes,
+          # canonical base64) — required at production boot post-#2506.
+          PARTNER_API_CURSOR_SIGNING_KEY: ZYPDfyEGlkK3+NOZT1SlzbzAxpO/3vQRqXTA1HtPLMc=
           APP_ENCRYPTION_KEY: e9367714341ea19491ff7cd095d1a97e15ae3f7962416723ecfb29a89ed71eb9
           MFA_ENCRYPTION_KEY: e86f8b88f2c058d428de55c4abec1b50a3cd960a7205dffdb65be8130abbb777
           ENROLLMENT_KEY_PEPPER: ci-smoke-bsg-enrollment-pepper-Hy4Bz9Mp2Wq6Tv0Lk3

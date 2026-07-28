@@ -1,4 +1,4 @@
-import { db } from '../db';
+import { db, runOutsideDbContext, withSystemDbAccessContext } from '../db';
 import {
   configurationPolicies,
   configPolicyFeatureLinks,
@@ -14,6 +14,8 @@ import {
   configPolicyMonitoringWatches,
   configPolicyRemoteAccessSettings,
   configPolicyBackupSettings,
+  configPolicyOnedriveSettings,
+  configPolicyOnedriveLibraries,
   devices,
   deviceGroups,
   organizations,
@@ -22,6 +24,7 @@ import {
   patchPolicies,
   alertRules,
   backupConfigs,
+  backupProfiles,
   securityPolicies,
   automationPolicies,
   maintenanceWindows,
@@ -32,7 +35,14 @@ import {
 import { and, eq, desc, or, sql, inArray, asc, getTableColumns, SQL } from 'drizzle-orm';
 import { canManagePartnerWidePolicies, PartnerWideWriteDeniedError } from './partnerWideAccess';
 import { z } from 'zod';
-import { eventLogInlineSettingsSchema, monitoringInlineSettingsSchema } from '@breeze/shared/validators';
+import {
+  backupExcludePatternsSchema,
+  configFeatureInlineSettingsSchema,
+  eventLogInlineSettingsSchema,
+  monitoringInlineSettingsSchema,
+  onedriveHelperInlineSettingsSchema,
+  remoteAccessInlineSettingsSchema as remoteAccessCapabilitySettingsSchema,
+} from '@breeze/shared/validators';
 import type { AuthContext } from '../middleware/auth';
 import { normalizePatchInlineSettings, tryNormalizePatchInlineSettings } from './configPolicyPatching';
 import { resolvePartnerIdForOrg } from '../routes/patches/helpers';
@@ -42,16 +52,44 @@ import { getPolicyBaselineDefaults } from './policyBaselineDefaults';
 // Inline settings schemas
 // ============================================
 
-// Remote access session consent/notification settings.
-// Exported so routes can import the same schema (single source of truth).
-// All fields are optional with spec-defined defaults so {} is always valid.
-export const remoteAccessInlineSettingsSchema = z.object({
-  sessionPromptMode: z.enum(['off', 'notify', 'consent']).default('notify'),
-  consentUnavailableBehavior: z.enum(['proceed', 'block']).default('proceed'),
+// Remote access session consent/notification enums — shared between the
+// consent-subset schema (decompose path, defaults applied) and the write-path
+// schema (route validation, plain optionals) below.
+const sessionPromptModeSchema = z.enum(['off', 'notify', 'consent']);
+const consentUnavailableBehaviorSchema = z.enum(['proceed', 'block']);
+const technicianIdentityLevelSchema = z.enum(['name_email', 'name', 'generic']);
+
+// Remote access session consent/notification settings (#1694) — the SUBSET of
+// the `remote_access` inlineSettings blob that decomposes into the normalized
+// config_policy_remote_access_settings row. All fields default so {} is valid.
+// Deliberately NOT strict: the same blob also carries the agent-facing
+// capability fields (webrtcDesktop, vncRelay, clipboard*, proxy, limits — see
+// remoteAccessInlineSettingsSchema in @breeze/shared/validators), which this
+// pick must ignore rather than reject (#2320).
+export const remoteAccessConsentSettingsSchema = z.object({
+  sessionPromptMode: sessionPromptModeSchema.default('notify'),
+  consentUnavailableBehavior: consentUnavailableBehaviorSchema.default('proceed'),
   notifyOnSessionEnd: z.boolean().default(true),
   showActiveIndicator: z.boolean().default(true),
-  technicianIdentityLevel: z.enum(['name_email', 'name', 'generic']).default('name_email'),
-}).strict();
+  technicianIdentityLevel: technicianIdentityLevelSchema.default('name_email'),
+});
+
+// Write-path validation for the WHOLE remote_access inlineSettings blob: the
+// capability fields the RemoteAccessTab edits (shared validator — the same
+// shape resolveRemoteAccessForDevice parses on the agent path) plus the
+// consent fields above, all optional. #1694 replaced this with the
+// consent-only .strict() schema, which rejected every capability-shape payload
+// ("Unrecognized keys: webrtcDesktop, ...") and made the Remote Access tab
+// unsavable (#2320). Non-strict on purpose: pre-existing rows can carry stale
+// keys that the tab round-trips back on save — strip them, don't reject.
+// Exported so routes can import the same schema (single source of truth).
+export const remoteAccessInlineSettingsSchema = remoteAccessCapabilitySettingsSchema.extend({
+  sessionPromptMode: sessionPromptModeSchema.optional(),
+  consentUnavailableBehavior: consentUnavailableBehaviorSchema.optional(),
+  notifyOnSessionEnd: z.boolean().optional(),
+  showActiveIndicator: z.boolean().optional(),
+  technicianIdentityLevel: technicianIdentityLevelSchema.optional(),
+});
 
 // Exported so the route can import the same schema (single source of truth).
 // uacInterceptionEnabled defaults to false on the read side (parsePamSettings)
@@ -574,35 +612,113 @@ async function decomposeInlineSettings(
     }
 
     case 'backup': {
-      // Look up orgId via feature link → policy join
+      // Settings mirror the parent policy's ownership axis (org XOR partner —
+      // spec 2026-07-13; partner-wide backup links are supported since
+      // profiles + org-default destinations replaced the old #1724 rejection).
       const [policyRow] = await tx
-        .select({ orgId: configurationPolicies.orgId })
+        .select({
+          orgId: configurationPolicies.orgId,
+          partnerId: configurationPolicies.partnerId,
+          featurePolicyId: configPolicyFeatureLinks.featurePolicyId,
+        })
         .from(configPolicyFeatureLinks)
         .innerJoin(configurationPolicies, eq(configPolicyFeatureLinks.configPolicyId, configurationPolicies.id))
         .where(eq(configPolicyFeatureLinks.id, linkId))
         .limit(1);
-      if (!policyRow) throw new Error(`Cannot resolve orgId for feature link ${linkId}`);
-      // Backup settings carry a concrete org_id FK (per-org backup target). A
-      // partner-wide policy (org_id NULL) has no single owning org, so backup is
-      // not supported on partner-owned policies (#1724 — deferred; would need a
-      // per-device org-resolved backup design). Reject rather than write NULL.
-      if (!policyRow.orgId) {
-        throw new Error('Backup settings are not supported on partner-wide configuration policies');
+      if (!policyRow) throw new Error(`Cannot resolve ownership for feature link ${linkId}`);
+      if (!policyRow.orgId && !policyRow.partnerId) {
+        throw new Error('Configuration policy has no owning organization or partner');
       }
+
+      // featurePolicyId is a backup_profiles id (preferred) or, on legacy
+      // links, the org's backup_configs (destination) id.
+      let backupProfileId: string | null = null;
+      let legacyDestinationId: string | null = null;
+      if (policyRow.featurePolicyId) {
+        const [profile] = await tx
+          .select({ id: backupProfiles.id })
+          .from(backupProfiles)
+          .where(eq(backupProfiles.id, policyRow.featurePolicyId))
+          .limit(1);
+        if (profile) {
+          backupProfileId = profile.id;
+        } else {
+          legacyDestinationId = policyRow.featurePolicyId;
+        }
+      }
+
+      const requestedDestination =
+        typeof s.destinationConfigId === 'string' && s.destinationConfigId
+          ? s.destinationConfigId
+          : null;
+      const destinationConfigId = requestedDestination ?? legacyDestinationId;
+      if (destinationConfigId) {
+        // NULL means "resolve the device org's default destination at job
+        // time" — the only valid choice for partner-wide policies, whose
+        // devices span orgs.
+        if (!policyRow.orgId) {
+          throw new Error('Partner-wide backup links resolve each organization\'s default destination; do not set a destination config');
+        }
+        // Destination must belong to the policy's own org: the FK proves
+        // existence but not tenancy, and job dispatch writes to whatever
+        // destination this row names.
+        const [destination] = await tx
+          .select({ id: backupConfigs.id })
+          .from(backupConfigs)
+          .where(and(eq(backupConfigs.id, destinationConfigId), eq(backupConfigs.orgId, policyRow.orgId)))
+          .limit(1);
+        if (!destination) {
+          throw new Error('Backup destination not found in this organization');
+        }
+      }
+
+      // #2473 backstop for file-mode exclusion globs.
+      //
+      // The HTTP routes validate inlineSettings with backupInlineSettingsSchema,
+      // but the AI/MCP `manage_policy_feature_link` tool takes inlineSettings as
+      // an unvalidated `z.record(z.string(), z.unknown())` and hands it straight
+      // to addFeatureLink/updateFeatureLink. Both land here, so this is the last
+      // chokepoint before a malformed glob is persisted and shipped to the
+      // agent (which would silently ignore it and back the files up anyway).
+      //
+      // Scoped deliberately to `excludes`: re-parsing the whole blob with
+      // backupInlineSettingsSchema would reject profile-linked links, whose
+      // targets are legitimately empty because "what to protect" lives on the
+      // linked profile.
+      const rawTargets = (s.targets ?? {}) as Record<string, unknown>;
+      let targets = rawTargets;
+      if (rawTargets.excludes !== undefined) {
+        const parsed = backupExcludePatternsSchema.safeParse(rawTargets.excludes);
+        if (!parsed.success) {
+          const detail = parsed.error.issues.map((i) => i.message).join('; ');
+          throw new Error(`Invalid backup exclusion pattern: ${detail}`);
+        }
+        // Persist the stripped/validated list, not the raw one.
+        targets = { ...rawTargets, excludes: parsed.data };
+      }
+
       await tx.insert(configPolicyBackupSettings).values({
         featureLinkId: linkId,
         orgId: policyRow.orgId,
+        partnerId: policyRow.orgId ? null : policyRow.partnerId,
         schedule: (s.schedule ?? {}) as Record<string, unknown>,
         retention: (s.retention ?? {}) as Record<string, unknown>,
         paths: (Array.isArray(s.paths) ? s.paths : []) as unknown[],
         backupMode: (s.backupMode ?? 'file') as 'file' | 'hyperv' | 'mssql' | 'system_image',
-        targets: (s.targets ?? {}) as Record<string, unknown>,
+        targets,
+        backupProfileId,
+        destinationConfigId,
       });
       break;
     }
 
     case 'remote_access': {
-      const parsed = remoteAccessInlineSettingsSchema.parse(s);
+      // Pick out only the consent fields (#1694). The blob also carries the
+      // capability fields (webrtcDesktop, ...) that have no normalized columns
+      // — they live in the feature link's JSONB mirror, which the agent path
+      // (resolveRemoteAccessForDevice) reads directly. They must not make this
+      // parse throw (#2320).
+      const parsed = remoteAccessConsentSettingsSchema.parse(s);
       await tx.insert(configPolicyRemoteAccessSettings).values({
         featureLinkId: linkId,
         sessionPromptMode: parsed.sessionPromptMode,
@@ -611,6 +727,56 @@ async function decomposeInlineSettings(
         showActiveIndicator: parsed.showActiveIndicator,
         technicianIdentityLevel: parsed.technicianIdentityLevel,
       });
+      break;
+    }
+
+    case 'onedrive_helper': {
+      const parsed = onedriveHelperInlineSettingsSchema.parse(s);
+      // Look up orgId via feature link → policy join (same pattern as 'backup').
+      const [policyRow] = await tx
+        .select({ orgId: configurationPolicies.orgId })
+        .from(configPolicyFeatureLinks)
+        .innerJoin(configurationPolicies, eq(configPolicyFeatureLinks.configPolicyId, configurationPolicies.id))
+        .where(eq(configPolicyFeatureLinks.id, linkId))
+        .limit(1);
+      if (!policyRow) throw new Error(`Cannot resolve orgId for feature link ${linkId}`);
+      // Library mappings are per-tenant (each org has its own M365 tenant), so
+      // onedrive_helper is org-scoped-only (ORG_SCOPED_ONLY_FEATURE_TYPES). The
+      // route already 400s partner-wide links; this is the service-level backstop.
+      if (!policyRow.orgId) {
+        throw new Error('OneDrive Helper settings are not supported on partner-wide configuration policies');
+      }
+      const [settingsRow] = await tx.insert(configPolicyOnedriveSettings).values({
+        featureLinkId: linkId,
+        orgId: policyRow.orgId,
+        silentAccountConfig: parsed.silentAccountConfig,
+        filesOnDemand: parsed.filesOnDemand,
+        kfmSilentOptIn: parsed.kfmSilentOptIn,
+        kfmFolders: parsed.kfmFolders,
+        kfmBlockOptOut: parsed.kfmBlockOptOut,
+        tenantAssociationId: parsed.tenantAssociationId ?? null,
+        restartOnChange: parsed.restartOnChange,
+      }).returning();
+      if (settingsRow && parsed.libraries.length > 0) {
+        await tx.insert(configPolicyOnedriveLibraries).values(
+          parsed.libraries.map((l, idx) => ({
+            settingsId: settingsRow.id,
+            orgId: policyRow.orgId!,
+            libraryId: l.libraryId,
+            displayName: l.displayName,
+            siteUrl: l.siteUrl ?? null,
+            siteId: l.siteId ?? null,
+            webId: l.webId ?? null,
+            listId: l.listId ?? null,
+            targetingMode: l.targetingMode,
+            groupId: l.groupId ?? null,
+            groupName: l.groupName ?? null,
+            hiveScope: l.hiveScope,
+            sortOrder: idx,
+            enabled: l.enabled,
+          }))
+        );
+      }
       break;
     }
 
@@ -671,6 +837,11 @@ async function deleteNormalizedRows(
     case 'remote_access':
       await tx.delete(configPolicyRemoteAccessSettings).where(eq(configPolicyRemoteAccessSettings.featureLinkId, linkId));
       break;
+    case 'onedrive_helper': {
+      // Libraries cascade-delete from settings, so just delete settings
+      await tx.delete(configPolicyOnedriveSettings).where(eq(configPolicyOnedriveSettings.featureLinkId, linkId));
+      break;
+    }
     case 'warranty':
     case 'helper':
     case 'pam':
@@ -932,6 +1103,8 @@ async function assembleInlineSettings(
         paths: row.paths,
         backupMode: row.backupMode,
         targets: row.targets,
+        ...(row.backupProfileId ? { backupProfileId: row.backupProfileId } : {}),
+        ...(row.destinationConfigId ? { destinationConfigId: row.destinationConfigId } : {}),
       };
     }
 
@@ -973,12 +1146,27 @@ export async function addFeatureLink(
   featurePolicyId?: string | null,
   inlineSettings?: unknown
 ) {
+  if (inlineSettings !== undefined && inlineSettings !== null) {
+    inlineSettings = configFeatureInlineSettingsSchema.parse(inlineSettings);
+  }
+
   if (featureType === 'pam' && inlineSettings !== undefined && inlineSettings !== null) {
     pamInlineSettingsSchema.parse(inlineSettings);
   }
 
   if (featureType === 'vulnerability' && inlineSettings !== undefined && inlineSettings !== null) {
     vulnerabilityInlineSettingsSchema.parse(inlineSettings);
+  }
+
+  // Service-level backstop for callers that bypass the HTTP route's validation
+  // (the AI manage_policy_feature_link tool calls this directly). Validates the
+  // combined capability + consent shape and stores the PARSED result so unknown
+  // keys are stripped from the JSONB mirror on every path (an AI-guessed key
+  // like `remoteDesktop` must not be persisted-and-echoed as if it took effect
+  // — the runtime readers would silently ignore it). Decompose below re-picks
+  // the consent subset for the normalized row (#2320).
+  if (featureType === 'remote_access' && inlineSettings !== undefined && inlineSettings !== null) {
+    inlineSettings = remoteAccessInlineSettingsSchema.parse(inlineSettings);
   }
 
   return db.transaction(async (tx) => {
@@ -1010,8 +1198,17 @@ export async function addFeatureLink(
     if (!link) return null;
 
     // Decompose inlineSettings into normalized per-feature table
-    if (featureType === 'patch' || effectiveInlineSettings) {
-      await decomposeInlineSettings(link.id, featureType, effectiveInlineSettings, tx);
+    if (
+      featureType === 'patch'
+      || effectiveInlineSettings
+      || (featureType === 'backup' && featurePolicyId)
+    ) {
+      await decomposeInlineSettings(
+        link.id,
+        featureType,
+        featureType === 'backup' ? (effectiveInlineSettings ?? {}) : effectiveInlineSettings,
+        tx
+      );
     }
 
     return link;
@@ -1023,6 +1220,10 @@ export async function updateFeatureLink(
   updates: { featurePolicyId?: string | null; inlineSettings?: unknown },
   configPolicyId?: string
 ) {
+  if (updates.inlineSettings !== undefined && updates.inlineSettings !== null) {
+    updates.inlineSettings = configFeatureInlineSettingsSchema.parse(updates.inlineSettings);
+  }
+
   return db.transaction(async (tx) => {
     // Fetch current link to get featureType, scoped to configPolicyId when provided
     const conditions = [eq(configPolicyFeatureLinks.id, linkId)];
@@ -1044,6 +1245,27 @@ export async function updateFeatureLink(
       vulnerabilityInlineSettingsSchema.parse(updates.inlineSettings);
     }
 
+    // Same service-level backstop as addFeatureLink (AI tool path) — see #2320.
+    // remote_access updates use MERGE semantics: the incoming payload is
+    // validated + stripped, then merged over the (validated) currently stored
+    // blob. The blob is written by two surfaces — the RemoteAccessTab edits the
+    // capability fields, the consent fields (#1694) have no UI and arrive via
+    // the AI tool — and decompose below re-creates the normalized consent row
+    // from scratch with schema defaults. A replace-semantics partial update
+    // (e.g. AI sending only {webrtcDesktop: false}) would silently reset
+    // sessionPromptMode 'consent' → 'notify' and, inversely, a consent-only
+    // update would drop every capability key from the mirror, fail-open
+    // re-enabling deliberately disabled capabilities via the permissive
+    // baseline. Merging closes both holes; fields can only be changed, never
+    // implicitly reset (every field has a spec default anyway).
+    if (existing.featureType === 'remote_access' && updates.inlineSettings !== undefined && updates.inlineSettings !== null) {
+      const incoming = remoteAccessInlineSettingsSchema.parse(updates.inlineSettings);
+      // Tolerate malformed/legacy stored blobs on the read side: safeParse and
+      // fall back to {} rather than making the whole update impossible.
+      const stored = remoteAccessInlineSettingsSchema.safeParse(existing.inlineSettings ?? {});
+      updates.inlineSettings = { ...(stored.success ? stored.data : {}), ...incoming };
+    }
+
     const setValues: Record<string, unknown> = { updatedAt: new Date() };
     const normalizedInlineSettings =
       existing.featureType === 'patch' && updates.inlineSettings !== undefined
@@ -1061,12 +1283,35 @@ export async function updateFeatureLink(
       .where(eq(configPolicyFeatureLinks.id, linkId))
       .returning();
 
-    // If inlineSettings changed, replace normalized rows (delete + re-insert)
-    if (updates.inlineSettings !== undefined) {
+    // A backup featurePolicyId selects the profile (or legacy destination)
+    // materialized into config_policy_backup_settings. Rebuild that row even
+    // when callers omit inlineSettings, otherwise the link can say profile B
+    // while runtime keeps applying the previously materialized profile A.
+    const backupReferenceChanged =
+      existing.featureType === 'backup'
+      && updates.featurePolicyId !== undefined
+      && updates.featurePolicyId !== existing.featurePolicyId;
+
+    // If settings or the backup reference changed, replace normalized rows
+    // (delete + re-insert) from the updated reference and effective mirror.
+    if (updates.inlineSettings !== undefined || backupReferenceChanged) {
       const featureType = existing.featureType as ConfigFeatureType;
+      const settingsToDecompose =
+        updates.inlineSettings !== undefined
+          ? normalizedInlineSettings
+          : existing.inlineSettings;
       await deleteNormalizedRows(linkId, featureType, tx);
-      if (featureType === 'patch' || normalizedInlineSettings) {
-        await decomposeInlineSettings(linkId, featureType, normalizedInlineSettings, tx);
+      if (
+        featureType === 'patch'
+        || settingsToDecompose
+        || (featureType === 'backup' && updates.featurePolicyId)
+      ) {
+        await decomposeInlineSettings(
+          linkId,
+          featureType,
+          featureType === 'backup' ? (settingsToDecompose ?? {}) : settingsToDecompose,
+          tx
+        );
       }
     }
 
@@ -1118,6 +1363,19 @@ export async function listFeatureLinks(configPolicyId: string) {
               apps: storedInline.apps,
             })
           : storedInline;
+      } else if (featureType === 'remote_access' && assembled) {
+        // The normalized row (config_policy_remote_access_settings) holds ONLY
+        // the session-consent fields (#1694); the capability toggles the
+        // RemoteAccessTab edits (webrtcDesktop, vncRelay, clipboard*, proxy,
+        // limits) live ONLY in the feature link's JSONB mirror. Merge the two
+        // (normalized consent row wins) so reads don't hide the capability
+        // settings — otherwise the tab renders defaults and the next save
+        // writes those defaults back over the real values (#2320).
+        const mirror =
+          link.inlineSettings && typeof link.inlineSettings === 'object' && !Array.isArray(link.inlineSettings)
+            ? (link.inlineSettings as Record<string, unknown>)
+            : {};
+        effectiveInlineSettings = { ...mirror, ...(assembled as Record<string, unknown>) };
       } else {
         effectiveInlineSettings = assembled ?? link.inlineSettings;
       }
@@ -1311,6 +1569,100 @@ export async function validateAssignmentTarget(
     default:
       return { valid: false, error: 'Unsupported assignment target level' };
   }
+}
+
+/**
+ * Site-axis (SR5-07) authorization for a policy assignment target. This is a
+ * SEPARATE concern from `validateAssignmentTarget`, which only proves the target
+ * belongs to the policy's owning org/partner. `authorizeAssignmentTarget` proves
+ * the CALLER is permitted to touch the target under their site allowlist —
+ * Postgres RLS does NOT enforce the site sub-axis, so it must be checked here.
+ *
+ * No-op (allow) for an unrestricted caller (`allowedSiteIds` undefined). For a
+ * site-restricted caller it fails closed:
+ *  - organization/partner targets are denied outright — a site-scoped tech
+ *    cannot push a policy across a whole org or partner.
+ *  - site targets must be in the caller's site allowlist.
+ *  - device_group / device targets are resolved to their site and checked with
+ *    `canAccessSite` (a group/device with no site, or an unknown id, is denied).
+ *
+ * Callable at assignment time (create) AND re-checked at removal time using the
+ * stored assignment's level/targetId so a later site-restriction change can't be
+ * bypassed by deleting an assignment created earlier.
+ */
+export async function authorizeAssignmentTarget(
+  auth: AuthContext,
+  level: ConfigAssignmentLevel,
+  targetId: string
+): Promise<AssignmentTargetValidation> {
+  // Unrestricted caller (partner/system scope, or org user with no site
+  // restriction) — org/partner ownership is already enforced elsewhere.
+  if (!auth.allowedSiteIds || !auth.canAccessSite) return { valid: true };
+  const canAccessSite = auth.canAccessSite;
+
+  switch (level) {
+    case 'partner':
+    case 'organization':
+      return {
+        valid: false,
+        error: 'Your access is restricted to specific sites — you cannot assign a policy at the organization or partner level.',
+      };
+
+    case 'site':
+      return canAccessSite(targetId)
+        ? { valid: true }
+        : { valid: false, error: 'Target site is outside your site access' };
+
+    case 'device_group': {
+      const [group] = await db
+        .select({ siteId: deviceGroups.siteId })
+        .from(deviceGroups)
+        .where(eq(deviceGroups.id, targetId))
+        .limit(1);
+      // Unknown group, or a group with no single site (org-wide), is denied for a
+      // site-restricted caller (fail closed).
+      return group && canAccessSite(group.siteId)
+        ? { valid: true }
+        : { valid: false, error: 'Target device group is outside your site access' };
+    }
+
+    case 'device': {
+      const [device] = await db
+        .select({ siteId: devices.siteId })
+        .from(devices)
+        .where(eq(devices.id, targetId))
+        .limit(1);
+      return device && canAccessSite(device.siteId)
+        ? { valid: true }
+        : { valid: false, error: 'Target device is outside your site access' };
+    }
+
+    default:
+      return { valid: false, error: 'Unsupported assignment target level' };
+  }
+}
+
+/**
+ * Fetch a single assignment's identity (level + targetId) scoped to its policy.
+ * Used by the REST delete route to re-run the site-axis check against the
+ * stored target before removing the row.
+ */
+export async function getAssignment(assignmentId: string, configPolicyId: string) {
+  const [row] = await db
+    .select({
+      id: configPolicyAssignments.id,
+      level: configPolicyAssignments.level,
+      targetId: configPolicyAssignments.targetId,
+    })
+    .from(configPolicyAssignments)
+    .where(
+      and(
+        eq(configPolicyAssignments.id, assignmentId),
+        eq(configPolicyAssignments.configPolicyId, configPolicyId)
+      )
+    )
+    .limit(1);
+  return row ?? null;
 }
 
 export async function unassignPolicy(assignmentId: string, configPolicyId: string) {
@@ -1615,14 +1967,13 @@ export async function previewEffectiveConfig(
 // ============================================
 
 const FEATURE_TABLE_MAP: Partial<Record<ConfigFeatureType, { table: any; orgIdCol: any }>> = {
-  // Every other linked feature type is handled separately in
-  // validateFeaturePolicyExists: rings are pure partner-axis, and software /
+  // Every linked feature type is handled separately in
+  // validateFeaturePolicyExists: rings are pure partner-axis; software /
   // security / alert-rule / compliance / sensitive-data / peripheral /
   // maintenance are dual-ownership (org XOR partner,
-  // #2126/#2127/#2128/#2129/#2131). backup stays org-only deliberately —
-  // backup configs carry org-owned storage credentials (see the
-  // partner-wide-first rule in CLAUDE.md; #2132 tracks its template design).
-  backup: { table: backupConfigs, orgIdCol: backupConfigs.orgId },
+  // #2126/#2127/#2128/#2129/#2131); backup links a dual-ownership
+  // backup_profiles selection profile (spec 2026-07-13), with a legacy
+  // fallback accepting an org-owned backup_configs id from pre-profile links.
 };
 
 /**
@@ -1641,7 +1992,38 @@ export const PARTNER_LINKABLE_FEATURE_TYPES: ReadonlySet<ConfigFeatureType> = ne
   'sensitive_data',
   'peripheral_control',
   'maintenance',
+  // backup (spec 2026-07-13): links a dual-ownership backup_profiles
+  // selection profile; partner-wide links resolve each device org's DEFAULT
+  // destination at job time (backup_configs stays org-owned — credentials).
+  'backup',
 ]);
+
+/**
+ * True when featurePolicyId references a backup_profiles row (vs a legacy
+ * backup_configs destination id). Routes use this to pick the right inline
+ * settings schema for backup links.
+ *
+ * Pure existence probe, deliberately run in a system context: a PARTNER-WIDE
+ * profile is RLS-invisible to an org-scoped token, so under the caller's context
+ * an org admin linking one would have it misclassified as a legacy destination
+ * id and rejected with a nonsense error. Tenancy of the link is enforced
+ * separately by validateFeaturePolicyExists, which matches on the owner axis.
+ */
+export async function isBackupProfileReference(
+  featurePolicyId: string | null | undefined
+): Promise<boolean> {
+  if (!featurePolicyId) return false;
+  const [row] = await runOutsideDbContext(() =>
+    withSystemDbAccessContext(() =>
+      db
+        .select({ id: backupProfiles.id })
+        .from(backupProfiles)
+        .where(eq(backupProfiles.id, featurePolicyId))
+        .limit(1)
+    )
+  );
+  return !!row;
+}
 
 export async function validateFeaturePolicyExists(
   featureType: ConfigFeatureType,
@@ -1678,6 +2060,65 @@ export async function validateFeaturePolicyExists(
     }
 
     return { valid: true };
+  }
+
+  if (featureType === 'backup') {
+    if (!featurePolicyId) {
+      return { valid: true };
+    }
+    // Preferred reference: a dual-ownership backup_profiles selection profile
+    // (org-owned in the config policy's own org, or partner-wide under its
+    // partner). Legacy fallback: pre-profile links stored the org's
+    // backup_configs (storage destination) id in featurePolicyId — still
+    // accepted for org-owned config policies so existing links keep saving.
+    const partnerId =
+      owner.partnerId ?? (owner.orgId ? await resolvePartnerIdForOrg(owner.orgId) : null);
+    const profileConditions: SQL[] = [];
+    if (owner.orgId) {
+      profileConditions.push(eq(backupProfiles.orgId, owner.orgId));
+    }
+    if (partnerId) {
+      profileConditions.push(
+        sql`(${backupProfiles.orgId} IS NULL AND ${backupProfiles.partnerId} = ${partnerId})`
+      );
+    }
+    // Both lookups are self-tenanted by the owner axis above, and run in a
+    // system context: a partner-wide profile (org_id NULL) is RLS-invisible to
+    // an org-scoped token, so validating in the caller's context would reject a
+    // legitimate org-policy → partner-wide-profile link as "not found".
+    if (profileConditions.length > 0) {
+      const [profile] = await runOutsideDbContext(() =>
+        withSystemDbAccessContext(() =>
+          db
+            .select({ id: backupProfiles.id })
+            .from(backupProfiles)
+            .where(and(eq(backupProfiles.id, featurePolicyId), or(...profileConditions)))
+            .limit(1)
+        )
+      );
+      if (profile) {
+        return { valid: true };
+      }
+    }
+    const ownerOrgId = owner.orgId;
+    if (ownerOrgId) {
+      const [config] = await runOutsideDbContext(() =>
+        withSystemDbAccessContext(() =>
+          db
+            .select({ id: backupConfigs.id })
+            .from(backupConfigs)
+            .where(and(eq(backupConfigs.id, featurePolicyId), eq(backupConfigs.orgId, ownerOrgId)))
+            .limit(1)
+        )
+      );
+      if (config) {
+        return { valid: true };
+      }
+    }
+    return {
+      valid: false,
+      error: `Backup profile "${featurePolicyId}" not found for this organization or partner`,
+    };
   }
 
   if (

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import MFASetupForm from './MFASetupForm';
 import {
   AuthSessionExpiredError,
@@ -8,10 +9,15 @@ import {
 } from '../../stores/auth';
 import { extractApiError } from '../../lib/apiError';
 import { navigateTo } from '../../lib/navigation';
+// Initializes the shared i18next singleton. This page's layout has no Sidebar
+// (which is what pulls i18n in elsewhere), so without this every t() call here
+// renders its raw key.
+import '../../lib/i18n';
 
 type Step = 'password' | 'enroll' | 'done';
 
 export default function ForcedMfaSetupPage() {
+  const { t } = useTranslation('auth');
   const [step, setStep] = useState<Step>('password');
   const [currentPassword, setCurrentPassword] = useState('');
   const [error, setError] = useState<string | undefined>();
@@ -56,7 +62,7 @@ export default function ForcedMfaSetupPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(extractApiError(data, 'Could not start MFA setup'));
+        setError(extractApiError(data, t('forcedMfa.errors.startFailed', { defaultValue: 'Could not start MFA setup' })));
         return;
       }
       setQrCodeDataUrl(data.qrCodeDataUrl);
@@ -66,7 +72,7 @@ export default function ForcedMfaSetupPage() {
       // Session died and fetchWithAuth is already redirecting to /login — don't
       // flash a misleading "Network error" over the navigation.
       if (err instanceof AuthSessionExpiredError) return;
-      setError('Network error');
+      setError(t('common.networkError', { defaultValue: 'Network error' }));
     } finally {
       setLoading(false);
     }
@@ -83,12 +89,12 @@ export default function ForcedMfaSetupPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(extractApiError(data, 'Invalid verification code'));
+        setError(extractApiError(data, t('forcedMfa.errors.invalidCode', { defaultValue: 'Invalid verification code' })));
         return;
       }
       updateUser({ mfaEnabled: true });
       setStep('done');
-      setInfo('MFA enabled. Redirecting...');
+      setInfo(t('forcedMfa.done.redirecting', { defaultValue: 'MFA enabled. Redirecting...' }));
       setTimeout(() => {
         navigateTo('/').catch(() => {
           window.location.href = '/';
@@ -96,7 +102,7 @@ export default function ForcedMfaSetupPage() {
       }, 1500);
     } catch (err) {
       if (err instanceof AuthSessionExpiredError) return;
-      setError('Network error');
+      setError(t('common.networkError', { defaultValue: 'Network error' }));
     } finally {
       setLoading(false);
     }
@@ -105,9 +111,11 @@ export default function ForcedMfaSetupPage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <p className="text-sm font-medium text-muted-foreground">Account security</p>
+        <p className="text-sm font-medium text-muted-foreground">{t('forcedMfa.eyebrow', { defaultValue: 'Account security' })}</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight">
-          {step === 'done' ? 'MFA enabled' : 'Set up multi-factor authentication'}
+          {step === 'done'
+            ? t('forcedMfa.done.title', { defaultValue: 'MFA enabled' })
+            : t('forcedMfa.title', { defaultValue: 'Set up multi-factor authentication' })}
         </h1>
       </div>
 
@@ -116,8 +124,10 @@ export default function ForcedMfaSetupPage() {
           data-testid="forced-mfa-banner"
           className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
         >
-          Your role requires multi-factor authentication. You must enroll an authenticator app before
-          you can continue using BL4CK.
+          {t('forcedMfa.requiredBanner', {
+            defaultValue:
+              'Your role requires multi-factor authentication. You must enroll an authenticator app before you can continue using BL4CK.',
+          })}
         </div>
       )}
 
@@ -127,14 +137,16 @@ export default function ForcedMfaSetupPage() {
           className="space-y-4 rounded-lg border bg-card p-6 shadow-xs"
         >
           <div className="space-y-1">
-            <h2 className="text-lg font-semibold">Confirm your password</h2>
+            <h2 className="text-lg font-semibold">{t('forcedMfa.password.title', { defaultValue: 'Confirm your password' })}</h2>
             <p className="text-sm text-muted-foreground">
-              Re-enter your account password to start setting up an authenticator app.
+              {t('forcedMfa.password.description', {
+                defaultValue: 'Re-enter your account password to start setting up an authenticator app.',
+              })}
             </p>
           </div>
           <div className="space-y-2">
             <label htmlFor="forced-mfa-password" className="text-sm font-medium">
-              Current password
+              {t('fields.currentPassword', { defaultValue: 'Current password' })}
             </label>
             <input
               id="forced-mfa-password"
@@ -157,7 +169,7 @@ export default function ForcedMfaSetupPage() {
             disabled={loading || !currentPassword}
             className="flex h-11 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {loading ? 'Verifying...' : 'Continue'}
+            {loading ? t('common.verifying', { defaultValue: 'Verifying...' }) : t('common.continue', { defaultValue: 'Continue' })}
           </button>
         </form>
       )}
@@ -172,10 +184,12 @@ export default function ForcedMfaSetupPage() {
           />
           {recoveryCodes && recoveryCodes.length > 0 && (
             <div className="rounded-md border bg-card p-4 text-sm">
-              <p className="mb-2 font-medium">Save your recovery codes</p>
+              <p className="mb-2 font-medium">{t('recoveryCodes.title', { defaultValue: 'Save your recovery codes' })}</p>
               <p className="mb-3 text-muted-foreground">
-                Store these somewhere safe. Each code can only be used once if you lose access to
-                your authenticator app.
+                {t('forcedMfa.recoveryDescription', {
+                  defaultValue:
+                    'Store these somewhere safe. Each code can only be used once if you lose access to your authenticator app.',
+                })}
               </p>
               <div className="grid grid-cols-2 gap-2 rounded-md border bg-muted/30 p-3 font-mono text-xs">
                 {recoveryCodes.map((code, index) => (

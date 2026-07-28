@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../lib/validation';
 import { z } from 'zod';
 import { and, desc, eq, gte, inArray, lt, lte, or, sql, SQL } from 'drizzle-orm';
 import { db } from '../db';
@@ -13,7 +13,9 @@ const changeTypeValues = [
   'startup',
   'network',
   'scheduled_task',
-  'user_account'
+  'user_account',
+  'hardware',
+  'os_version'
 ] as const;
 
 const changeActionValues = [

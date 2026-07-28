@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/breeze-rmm/agent/internal/observability"
 )
 
 type CollectorConfig struct {
@@ -18,9 +21,15 @@ type CollectorConfig struct {
 }
 
 type CollectorDeps struct {
-	APIBaseURL string       // the BL4CK server root (cfg.ServerURL), e.g. https://breeze.example.com — NOT including /api/v1
+	// APIBaseURL returns the CURRENT Breeze server root, e.g.
+	// https://breeze.example.com — NOT including /api/v1. It is a provider
+	// (typically heartbeat.ServerURL), not a copied string, so backup-server-URL
+	// promotion after failover (#2323) is visible to every request. A copied
+	// cfg.ServerURL kept uploading to a dead primary for the process lifetime
+	// (#2423).
+	APIBaseURL func() string
 	AgentID    string       // this agent's id; agent telemetry endpoints live under /api/v1/agents/<AgentID>/
-	HTTP       *http.Client // authed transport to the BL4CK API (agent token attached)
+	HTTP       *http.Client // authed transport to the Breeze API (agent token attached)
 	Logf       func(format string, args ...any)
 }
 
@@ -31,8 +40,20 @@ type CollectorDeps struct {
 // API 404s the request and the collector never leaves status=pending (#2263).
 // The device is resolved from the agent token server-side; the :id in the path
 // matches the existing agent routes.
-func (d CollectorDeps) agentBase() string {
-	return d.APIBaseURL + "/api/v1/agents/" + d.AgentID
+//
+// An unset or empty-returning APIBaseURL provider is a wiring bug, not a
+// runtime condition: report it as a named error rather than dereferencing a
+// nil func (which would panic the collector goroutine) or silently building a
+// scheme-less relative URL that fails as a cryptic transport error forever.
+func (d CollectorDeps) agentBase() (string, error) {
+	if d.APIBaseURL == nil {
+		return "", errors.New("unifi collector: APIBaseURL provider not set")
+	}
+	baseURL := d.APIBaseURL()
+	if baseURL == "" {
+		return "", errors.New("unifi collector: APIBaseURL provider returned an empty server URL")
+	}
+	return baseURL + "/api/v1/agents/" + d.AgentID, nil
 }
 
 func (d CollectorDeps) logf(format string, args ...any) {
@@ -143,7 +164,11 @@ func RunOnce(ctx context.Context, deps CollectorDeps, cfg CollectorConfig, contr
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, deps.agentBase()+"/unifi-telemetry", bytes.NewReader(body))
+	base, err := deps.agentBase()
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/unifi-telemetry", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -168,6 +193,10 @@ func StartCollectorLoop(ctx context.Context, deps CollectorDeps) <-chan struct{}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// A panic in this loop must not take the whole agent down with it —
+		// the sibling workspaceindex loop has carried this guard since it
+		// shipped; the collector never did.
+		defer observability.Recoverer("unifi.collector")
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		lastRun := map[string]time.Time{}
@@ -199,7 +228,11 @@ func StartCollectorLoop(ctx context.Context, deps CollectorDeps) <-chan struct{}
 }
 
 func fetchConfigs(ctx context.Context, deps CollectorDeps) ([]CollectorConfig, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, deps.agentBase()+"/unifi-collectors", nil)
+	base, err := deps.agentBase()
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/unifi-collectors", nil)
 	if err != nil {
 		return nil, err
 	}

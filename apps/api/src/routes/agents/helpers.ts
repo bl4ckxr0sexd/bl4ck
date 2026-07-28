@@ -30,6 +30,7 @@ import {
   configPolicyMonitoringWatches,
   configPolicyOnedriveSettings,
   configPolicyOnedriveLibraries,
+  onedriveDeviceState,
   pamOrgConfig,
   agentVersions,
 } from '../../db/schema';
@@ -54,7 +55,9 @@ import {
 } from '../../services/filesystemAnalysis';
 import { recordSoftwarePolicyAudit } from '../../services/softwarePolicyService';
 import { resolvePatchConfigForDevice } from '../../services/featureConfigResolver';
+import { resolveUserGroupMembershipCached } from '../../services/onedriveGraph';
 import { captureException } from '../../services/sentry';
+import { redactSecretsDeep, redactOptionalSecretText } from '../../services/secretRedaction';
 import { CloudflareMtlsService } from '../../services/cloudflareMtls';
 import { isAllowedPolicyConfigProbe } from './policyProbeSafety';
 import { PAM_DEFAULTS, parsePamSettings, type PamSettings } from './pamSettings';
@@ -649,7 +652,11 @@ export async function handleSecurityCommandResult(
           filePath: asString(threat.path) ?? asString(threat.filePath) ?? null,
           processName: asString(threat.processName) ?? null,
           detectedAt: completedAt,
-          details: threat
+          // #2434: `threat` is the raw agent/AV threat object parsed out of
+          // stdout (stdout is deliberately NOT redacted at the ingest
+          // chokepoint). AV records routinely embed the offending command line
+          // or script fragment, so redact every string in the blob.
+          details: redactSecretsDeep(threat)
         });
       }
 
@@ -825,7 +832,8 @@ export async function handleSensitiveDataCommandResult(
           ...existingSummary,
           commandId: command.id,
           commandStatus: resultData.status,
-          agentSummary: scanSummary,
+          // #2434: agent-supplied summary blob parsed from raw stdout.
+          agentSummary: redactSecretsDeep(scanSummary),
           findingsCount: dedupedFindings.length,
           findings: {
             total: dedupedFindings.length,
@@ -1060,7 +1068,11 @@ export async function handleSoftwareRemediationCommandResult(
       commandId: command.id,
       softwareName,
       softwareVersion: softwareVersion ?? null,
-      message: resultData.error ?? resultData.stderr ?? 'Uninstall command failed',
+      // #2434: self-redact rather than depend on the ingest chokepoint two
+      // modules away (idempotent — already-redacted text passes through).
+      message: redactOptionalSecretText(resultData.error)
+        ?? redactOptionalSecretText(resultData.stderr)
+        ?? 'Uninstall command failed',
       status: resultData.status,
       exitCode: resultData.exitCode ?? null,
       failedAt: new Date().toISOString(),
@@ -1089,7 +1101,8 @@ export async function handleSoftwareRemediationCommandResult(
         softwareVersion: softwareVersion ?? null,
         commandStatus: resultData.status,
         exitCode: resultData.exitCode ?? null,
-        error: resultData.error ?? null,
+        // #2434: self-redact (see above) — this lands in audit_logs.details.
+        error: redactOptionalSecretText(resultData.error) ?? null,
       },
     }).catch((err) => {
       console.error('[agents/helpers] Audit write failed for remediation_command_failed:', err);
@@ -1208,8 +1221,33 @@ export async function handleCisCommandResult(
       .orderBy(desc(cisBaselineResults.checkedAt))
       .limit(1);
 
-    let parsed = parseCisCollectorOutput(resultData.stdout);
+    // #2434: the success path parses findings out of RAW stdout (stdout is not
+    // redacted at the ingest chokepoint), and each finding carries free-text
+    // `message` / `evidence` / `remediation` produced by the collector — a
+    // failing check's evidence can quote the very config value (connection
+    // string, service-account password) that made it fail.
+    //
+    // Redact only the JSON-safe sub-parts. Do NOT hand the whole object to
+    // redactSecretsDeep: `checkedAt` is a Date, and a generic object walk
+    // would rebuild it as `{}` (Object.entries(new Date()) === []), which
+    // makes Drizzle's timestamp mapper throw on insert — a throw the caller
+    // swallows, so successful scans would silently stop persisting while
+    // failed ones (which rebuild checkedAt below) kept working.
+    const collected = parseCisCollectorOutput(resultData.stdout);
+    let parsed: ReturnType<typeof parseCisCollectorOutput> = {
+      ...collected,
+      findings: redactSecretsDeep(collected.findings) as typeof collected.findings,
+      rawSummary: redactSecretsDeep(collected.rawSummary) as typeof collected.rawSummary,
+    };
     if (resultData.status !== 'completed') {
+      // #2434: error/stderr arrive already-redacted from the ingest chokepoint,
+      // but redact again here rather than depending on a caller two modules
+      // away — this handler is reachable from both ingest legs and the
+      // failure branch writes agent text straight into a user-visible finding.
+      // Every sibling persistence service (backup/restore/vault) self-redacts
+      // for the same reason; redaction is idempotent, so this is free.
+      const failureError = redactOptionalSecretText(resultData.error);
+      const failureStderr = redactOptionalSecretText(resultData.stderr);
       parsed = {
         checkedAt: new Date(),
         findings: [{
@@ -1217,7 +1255,7 @@ export async function handleCisCommandResult(
           title: 'CIS collector execution',
           severity: 'high',
           status: 'fail',
-          message: resultData.error ?? resultData.stderr ?? 'CIS collector execution failed',
+          message: failureError ?? failureStderr ?? 'CIS collector execution failed',
           evidence: null,
           remediation: null,
         }],
@@ -1226,8 +1264,8 @@ export async function handleCisCommandResult(
         failedChecks: 1,
         score: 0,
         rawSummary: {
-          error: resultData.error ?? null,
-          stderr: resultData.stderr ?? null,
+          error: failureError ?? null,
+          stderr: failureStderr ?? null,
           status: resultData.status,
         },
       };
@@ -1377,15 +1415,21 @@ export async function handleCisCommandResult(
     completedAt: new Date().toISOString(),
   };
 
+  // #2434: resultDetails / beforeState / afterState / rollbackHint are all
+  // derived from RAW stdout (unredacted at the chokepoint). before/afterState
+  // hold the ACTUAL values of the registry keys or config the remediation
+  // changed — a service-account password living in a registry value would be
+  // persisted verbatim and rendered in the CIS UI. Redaction is idempotent, so
+  // the already-redacted error/stderr in updatedDetails pass through unharmed.
   await db
     .update(cisRemediationActions)
     .set({
       status: completed ? 'completed' : 'failed',
       executedAt: new Date(),
-      details: updatedDetails,
-      beforeState: beforeStateFromResult ?? action.beforeState ?? null,
-      afterState: afterStateFromResult ?? action.afterState ?? null,
-      rollbackHint: rollbackHint ?? null,
+      details: redactSecretsDeep(updatedDetails) as Record<string, unknown>,
+      beforeState: redactSecretsDeep(beforeStateFromResult ?? action.beforeState ?? null) as Record<string, unknown> | null,
+      afterState: redactSecretsDeep(afterStateFromResult ?? action.afterState ?? null) as Record<string, unknown> | null,
+      rollbackHint: redactOptionalSecretText(rollbackHint ?? null),
     })
     .where(eq(cisRemediationActions.id, action.id));
 
@@ -1492,7 +1536,8 @@ export async function maybeQueueThresholdFilesystemAnalysis(
 
 export async function handleFilesystemAnalysisCommandResult(
   command: typeof deviceCommands.$inferSelect,
-  resultData: z.infer<typeof commandResultSchema>
+  resultData: z.infer<typeof commandResultSchema>,
+  orgId: string
 ): Promise<void> {
   if (resultData.status !== 'completed') {
     return;
@@ -1505,19 +1550,30 @@ export async function handleFilesystemAnalysisCommandResult(
 
   const parsed = parseFilesystemAnalysisStdout(resultData.stdout ?? '');
   if (Object.keys(parsed).length === 0) {
+    // A completed scan whose stdout is empty or non-JSON produces no snapshot,
+    // which surfaces to the user as an empty Disk Cleanup tab with no error.
+    console.warn(
+      `[agents/helpers] filesystem_analysis command ${command.id} (device ${command.deviceId}) completed with unparseable/empty stdout (len=${resultData.stdout?.length ?? 0}); no snapshot written`
+    );
     return;
   }
 
-  const [device] = await db
-    .select({ orgId: devices.orgId })
-    .from(devices)
-    .where(eq(devices.id, command.deviceId))
-    .limit(1);
-  if (!device) {
-    return;
-  }
+  // orgId comes from the caller's agent-auth context, which already resolved
+  // the device's org — no need to re-query devices here.
 
-  const currentState = await getFilesystemScanState(command.deviceId);
+  // The scan-state read and the disk-usage read are independent; run them
+  // together. The disk figure is only consumed by the scan-state upsert below.
+  const [currentState, diskRows] = await Promise.all([
+    getFilesystemScanState(command.deviceId),
+    db
+      .select({ usedPercent: deviceDisks.usedPercent })
+      .from(deviceDisks)
+      .where(eq(deviceDisks.deviceId, command.deviceId))
+      .limit(1),
+  ]);
+  const currentDiskUsedPercent =
+    typeof diskRows[0]?.usedPercent === 'number' ? diskRows[0].usedPercent : null;
+
   const existingAggregate = isObject(currentState?.aggregate) ? currentState.aggregate : {};
   const mergedPayload = scanMode === 'baseline'
     ? mergeFilesystemAnalysisPayload(existingAggregate, parsed)
@@ -1537,14 +1593,7 @@ export async function handleFilesystemAnalysisCommandResult(
       scanMode,
     };
 
-  await saveFilesystemSnapshot(command.deviceId, device.orgId, snapshotTrigger, snapshotPayload);
-
-  const [disk] = await db
-    .select({ usedPercent: deviceDisks.usedPercent })
-    .from(deviceDisks)
-    .where(eq(deviceDisks.deviceId, command.deviceId))
-    .limit(1);
-  const currentDiskUsedPercent = typeof disk?.usedPercent === 'number' ? disk.usedPercent : null;
+  await saveFilesystemSnapshot(command.deviceId, orgId, snapshotTrigger, snapshotPayload);
 
   const hotFromRun = extractHotDirectoriesFromSnapshotPayload(snapshotPayload, 24);
   const mergedHotDirectories = Array.from(
@@ -1554,9 +1603,15 @@ export async function handleFilesystemAnalysisCommandResult(
     ])
   ).slice(0, 24);
 
-  const snapshotIsPartial = 'partial' in snapshotPayload ? Boolean(snapshotPayload.partial) : false;
-  const baselineCompleted = scanMode === 'baseline' && pendingDirs.length === 0 && !snapshotIsPartial;
-  await upsertFilesystemScanState(command.deviceId, device.orgId, {
+  // Baseline completion is defined solely by having no pending checkpoint
+  // directories left to resume. The snapshot's `partial` flag must NOT gate
+  // this: `partial` is also set (and stays sticky across merges) for routine
+  // max-depth truncation, which is not a resumable condition — folding it in
+  // here left `lastBaselineCompletedAt` permanently null on any deep tree, which
+  // forced every subsequent scan back to a full baseline and defeated the
+  // incremental hot-directory path.
+  const baselineCompleted = scanMode === 'baseline' && pendingDirs.length === 0;
+  await upsertFilesystemScanState(command.deviceId, orgId, {
     lastRunMode: scanMode,
     lastBaselineCompletedAt: baselineCompleted
       ? new Date()
@@ -1661,7 +1716,10 @@ export const EVENT_LOG_DEFAULTS: EventLogSettings = {
   maxEventsPerCycle: 100,
   collectCategories: ['security', 'hardware', 'application', 'system'],
   minimumLevel: 'info',
-  collectionIntervalMinutes: 5,
+  // 15m default (was 5m) — issue #2390 subprocess-churn backoff. Keep in sync
+  // with eventLogInlineSettingsSchema (shared validators) and the agent's
+  // NewEventLogCollector default.
+  collectionIntervalMinutes: 15,
   rateLimitPerHour: 12000,
 };
 
@@ -2655,6 +2713,7 @@ export interface OnedriveConfigUpdate {
     groupId: string | null;
     groupName: string | null;
     hiveScope: string;
+    allowedUpns: string[];
   }>;
 }
 
@@ -2748,6 +2807,75 @@ async function resolveDeviceOnedriveSettings(deviceId: string): Promise<Onedrive
     ))
     .orderBy(configPolicyOnedriveLibraries.sortOrder);
 
+  const [state] = libs.length > 0
+    ? await db
+      .select()
+      .from(onedriveDeviceState)
+      .where(eq(onedriveDeviceState.deviceId, deviceId))
+      .limit(1)
+    : [];
+
+  // Phase 4: tag enabled graph_group libraries with the reported UPNs whose
+  // transitive Entra membership includes the rule's groupId. Fail closed:
+  // no UPNs / no groupId / Graph error → no tag → the agent never mounts it.
+  const graphRules = libs.filter((l) => l.targetingMode === 'graph_group' && l.groupId);
+  // Guard the jsonb shape: a corrupt/non-array signedInUpns value degrades to
+  // no-tagging (delivery of non-graph libraries must survive) instead of throwing.
+  // zod validates ingest, so a non-array here means an out-of-band write — worth a log.
+  const rawUpns = state?.signedInUpns;
+  if (rawUpns != null && !Array.isArray(rawUpns)) {
+    console.warn(`[agents] graph_group tagging: signed_in_upns is not an array for device ${deviceId}; treating as empty`);
+  }
+  const reportedUpns = (Array.isArray(rawUpns) ? rawUpns : []).filter(
+    (u): u is string => typeof u === 'string' && u.length > 0
+  );
+  // Dedupe case-insensitively, keeping the first occurrence's casing: the agent already
+  // dedupes case-insensitively via EqualFold before reporting, so which casing survives
+  // here is cosmetic. This is defense-in-depth against a stale agent version or an
+  // out-of-band write — each duplicate otherwise costs a Graph resolution and produces
+  // duplicate allowedUpns entries on the wire.
+  const seenUpns = new Set<string>();
+  const upns = reportedUpns.filter((u) => {
+    const key = u.toLowerCase();
+    if (seenUpns.has(key)) return false;
+    seenUpns.add(key);
+    return true;
+  });
+  // Group ids are GUIDs from two sources (Graph responses vs. the stored rule,
+  // which future entry paths may brace/uppercase) — normalize both sides so a
+  // formatting mismatch can't silently fail-close the library forever.
+  const normalizeGuid = (g: string) => g.replace(/^\{|\}$/g, '').toLowerCase();
+  const allowedByLib = new Map<string, string[]>();
+  if (graphRules.length > 0 && upns.length > 0) {
+    // Aggregate deadline: per-call timeouts bound each round-trip, but 16 UPNs
+    // × (token + up to 5 membership pages) can still sum past the agent's
+    // heartbeat client timeout — which would drop the WHOLE response including
+    // already-claimed commands. Past the budget, remaining UPNs stay untagged
+    // this cycle (fail closed) and retry next heartbeat against a warm cache.
+    const taggingDeadline = Date.now() + 15_000;
+    for (const upn of upns) {
+      if (Date.now() > taggingDeadline) {
+        console.warn(`[agents] graph_group tagging: time budget exhausted for device ${deviceId}; remaining UPNs untagged this cycle`);
+        break;
+      }
+      const res = await resolveUserGroupMembershipCached(device.orgId, upn);
+      if (res.kind !== 'ok') {
+        // Deliberately no UPN in the log line — it's end-user PII; the code +
+        // deviceId is enough to triage.
+        console.warn(`[agents] graph_group tagging: membership lookup failed for device ${deviceId}: ${res.code}`);
+        continue;
+      }
+      const groupIds = new Set(res.data.groupIds.map(normalizeGuid));
+      for (const rule of graphRules) {
+        if (rule.groupId && groupIds.has(normalizeGuid(rule.groupId))) {
+          const arr = allowedByLib.get(rule.id) ?? [];
+          arr.push(upn);
+          allowedByLib.set(rule.id, arr);
+        }
+      }
+    }
+  }
+
   return {
     base: {
       silentAccountConfig: winner.silentAccountConfig,
@@ -2766,6 +2894,7 @@ async function resolveDeviceOnedriveSettings(deviceId: string): Promise<Onedrive
       groupId: l.groupId,
       groupName: l.groupName,
       hiveScope: l.hiveScope,
+      allowedUpns: allowedByLib.get(l.id) ?? [],
     })),
   };
 }

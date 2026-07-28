@@ -71,25 +71,98 @@ type CalendarRole = (typeof CALENDAR_ROLES)[number];
 type DirectoryClient = ReturnType<typeof getDirectoryClient>;
 
 /**
- * Issue a mobile-device action to every device enrolled to a user.
+ * Canonicalize a user-supplied email to a single, strict addr-spec.
+ *
+ * Returns the lowercased address, or null if the input is not a bare, single
+ * email. This deliberately rejects the Google Directory query metacharacters
+ * (`*`, `:`, whitespace, quotes, parentheses, angle brackets, commas) that would
+ * otherwise turn `email:${x}` into a prefix / OR search matching MORE than one
+ * user — the SR5-02 wipe target-expansion vector. A value like `a*` or
+ * `a@x.com OR b@y.com` fails this test and is refused before any wipe.
+ */
+export function canonicalizeUserEmail(raw: string): string | null {
+  const email = raw.trim();
+  // Single addr-spec only (user@example.com form), RFC-ish, no query operators.
+  const STRICT_EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+  if (!STRICT_EMAIL.test(email)) return null;
+  // No embedded whitespace or wildcard survived the regex, but be explicit.
+  if (/[\s*]/.test(email)) return null;
+  return email.toLowerCase();
+}
+
+type ResolvedWipeTarget =
+  | { ok: true; user: string; deviceIds: string[] }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Resolve the EXACT set of mobile devices to wipe for one user.
+ *
+ * Hardening (SR5-02): rather than trusting the raw `email:${x}` server query to
+ * scope the target set, we (1) canonicalize the input to a single address,
+ * (2) resolve the exact identity via `users.get` (one user or fail — zero/404 is
+ * refused, and an exact key can never resolve multiple), then (3) locally
+ * EXACT-match each returned device's account emails to the resolved
+ * `primaryEmail`, dropping any device that does not carry that exact account.
+ * The server query is only a prefilter; the local exact-match is the real gate.
+ */
+async function resolveWipeTarget(dir: DirectoryClient, rawEmail: string): Promise<ResolvedWipeTarget> {
+  const canonical = canonicalizeUserEmail(rawEmail);
+  if (!canonical) {
+    return {
+      ok: false,
+      code: 'invalid_user_email',
+      message:
+        'userEmail must be a single canonical email address (no wildcards, query operators, or whitespace).',
+    };
+  }
+
+  // Resolve the exact identity first. `users.get` by key returns exactly one
+  // user or 404 — this rejects both zero (no such user) and any expansion.
+  let primaryEmail: string;
+  try {
+    const res = await dir.users.get({ userKey: canonical });
+    const pe = res.data.primaryEmail;
+    if (!pe) {
+      return { ok: false, code: 'user_not_resolved', message: `Could not resolve a single user for ${canonical}.` };
+    }
+    primaryEmail = pe.toLowerCase();
+  } catch (err) {
+    const norm = normalizeGoogleError(err);
+    return { ok: false, code: norm.code, message: norm.message };
+  }
+
+  const list = await dir.mobiledevices.list({ customerId: 'my_customer', query: `email:${primaryEmail}` });
+  const deviceIds: string[] = [];
+  for (const d of list.data.mobiledevices ?? []) {
+    if (!d.resourceId) continue;
+    // EXACT-match: only wipe a device that actually carries the resolved
+    // user's account. Drops prefix / fuzzy matches the server may return.
+    const accounts = (d.email ?? []).map((e) => (e ?? '').toLowerCase());
+    if (!accounts.includes(primaryEmail)) continue;
+    deviceIds.push(d.resourceId);
+  }
+  return { ok: true, user: primaryEmail, deviceIds };
+}
+
+/**
+ * Issue a mobile-device action to a pre-resolved, bounded set of device IDs.
  *   - admin_account_wipe: remove ONLY the managed corporate account + its data
  *     (mail/Drive) from the device. Safe for BYOD; the personal device is intact.
  *   - admin_remote_wipe: full factory reset of the entire device. STOLEN-DEVICE
  *     use only — never part of offboarding.
+ * The caller resolves `deviceIds` via `resolveWipeTarget` so the acted-on set is
+ * bound to one exact user, not whatever a raw query happened to return.
  */
 async function wipeMobileDevices(
   dir: DirectoryClient,
-  userEmail: string,
+  deviceIds: string[],
   action: 'admin_account_wipe' | 'admin_remote_wipe',
 ): Promise<number> {
-  const list = await dir.mobiledevices.list({ customerId: 'my_customer', query: `email:${userEmail}` });
-  const devices = list.data.mobiledevices ?? [];
   let n = 0;
-  for (const d of devices) {
-    if (!d.resourceId) continue;
+  for (const resourceId of deviceIds) {
     await dir.mobiledevices.action({
       customerId: 'my_customer',
-      resourceId: d.resourceId,
+      resourceId,
       requestBody: { action },
     });
     n++;
@@ -112,15 +185,14 @@ async function runStep(step: string, fn: () => Promise<string>): Promise<StepRes
   }
 }
 
-type ResolvedContext =
-  | { error: string }
-  | { conn: GoogleWorkspaceConnectionRow; keyJson: string };
+export type GoogleToolContext = { conn: GoogleWorkspaceConnectionRow; keyJson: string };
 
-async function resolveContext(_auth: AuthContext, sessionId: string): Promise<ResolvedContext> {
-  const session = await loadSession(sessionId);
-  if (!session) return { error: errorString('session_not_found', 'AI session not found.') };
-  const conn = await loadGoogleConnection(session.orgId);
-  const authz = authorizeGoogleConnection(conn, session.orgId);
+type ResolvedContext = { error: string } | GoogleToolContext;
+
+/** Resolve + decrypt the org's Google connection by orgId (no session). */
+export async function resolveContextByOrg(orgId: string): Promise<ResolvedContext> {
+  const conn = await loadGoogleConnection(orgId);
+  const authz = authorizeGoogleConnection(conn, orgId);
   if (!authz.ok) {
     return {
       error: errorString(
@@ -136,6 +208,13 @@ async function resolveContext(_auth: AuthContext, sessionId: string): Promise<Re
     return { error: errorString('connection_key_error', (err as Error).message) };
   }
   return { conn: authz.conn, keyJson };
+}
+
+/** Inline (session) path: derive orgId from the live AI session, unchanged behavior. */
+async function resolveContext(_auth: AuthContext, sessionId: string): Promise<ResolvedContext> {
+  const session = await loadSession(sessionId);
+  if (!session) return { error: errorString('session_not_found', 'AI session not found.') };
+  return resolveContextByOrg(session.orgId);
 }
 
 function requireString(input: Record<string, unknown>, key: string): string | null {
@@ -189,15 +268,12 @@ export async function googleLookupUserHandler(
 
 // ── Tier 3: mutations (require reason + approval) ─────────────────────────────
 
-export async function googleResetPasswordHandler(
+export async function googleResetPasswordAction(
+  ctx: GoogleToolContext,
   input: Record<string, unknown>,
-  auth: AuthContext,
-  sessionId: string,
 ): Promise<string> {
   const reason = requireString(input, 'reason');
   if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
-  const ctx = await resolveContext(auth, sessionId);
-  if ('error' in ctx) return ctx.error;
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
 
@@ -214,15 +290,22 @@ export async function googleResetPasswordHandler(
   }
 }
 
-export async function googleSuspendUserHandler(
+export async function googleResetPasswordHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleResetPasswordAction(ctx, input);
+}
+
+export async function googleSuspendUserAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
 
@@ -235,15 +318,22 @@ export async function googleSuspendUserHandler(
   }
 }
 
-export async function googleRestoreUserHandler(
+export async function googleSuspendUserHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleSuspendUserAction(ctx, input);
+}
+
+export async function googleRestoreUserAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
 
@@ -254,6 +344,16 @@ export async function googleRestoreUserHandler(
   } catch (err) {
     return googleError(err);
   }
+}
+
+export async function googleRestoreUserHandler(
+  input: Record<string, unknown>,
+  auth: AuthContext,
+  sessionId: string,
+): Promise<string> {
+  const ctx = await resolveContext(auth, sessionId);
+  if ('error' in ctx) return ctx.error;
+  return googleRestoreUserAction(ctx, input);
 }
 
 // ── Group membership (cluster 3) ──────────────────────────────────────────────
@@ -278,15 +378,12 @@ export async function googleListUserGroupsHandler(
   }
 }
 
-export async function googleAddToGroupHandler(
+export async function googleAddToGroupAction(
+  ctx: GoogleToolContext,
   input: Record<string, unknown>,
-  auth: AuthContext,
-  sessionId: string,
 ): Promise<string> {
   const reason = requireString(input, 'reason');
   if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
-  const ctx = await resolveContext(auth, sessionId);
-  if ('error' in ctx) return ctx.error;
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
   const groupEmail = requireString(input, 'groupEmail');
@@ -306,15 +403,22 @@ export async function googleAddToGroupHandler(
   }
 }
 
-export async function googleRemoveFromGroupHandler(
+export async function googleAddToGroupHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleAddToGroupAction(ctx, input);
+}
+
+export async function googleRemoveFromGroupAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
   const groupEmail = requireString(input, 'groupEmail');
@@ -329,15 +433,22 @@ export async function googleRemoveFromGroupHandler(
   }
 }
 
-export async function googleMoveOuHandler(
+export async function googleRemoveFromGroupHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleRemoveFromGroupAction(ctx, input);
+}
+
+export async function googleMoveOuAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
   const orgUnitPath = requireString(input, 'orgUnitPath');
@@ -352,15 +463,22 @@ export async function googleMoveOuHandler(
   }
 }
 
-export async function googleRenameUserHandler(
+export async function googleMoveOuHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleMoveOuAction(ctx, input);
+}
+
+export async function googleRenameUserAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
   const newPrimaryEmail = requireString(input, 'newPrimaryEmail');
@@ -373,6 +491,16 @@ export async function googleRenameUserHandler(
   } catch (err) {
     return googleError(err);
   }
+}
+
+export async function googleRenameUserHandler(
+  input: Record<string, unknown>,
+  auth: AuthContext,
+  sessionId: string,
+): Promise<string> {
+  const ctx = await resolveContext(auth, sessionId);
+  if ('error' in ctx) return ctx.error;
+  return googleRenameUserAction(ctx, input);
 }
 
 // ── License management (cluster 3) ────────────────────────────────────────────
@@ -401,15 +529,12 @@ export async function googleListLicensesHandler(
   }
 }
 
-export async function googleAssignLicenseHandler(
+export async function googleAssignLicenseAction(
+  ctx: GoogleToolContext,
   input: Record<string, unknown>,
-  auth: AuthContext,
-  sessionId: string,
 ): Promise<string> {
   const reason = requireString(input, 'reason');
   if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
-  const ctx = await resolveContext(auth, sessionId);
-  if ('error' in ctx) return ctx.error;
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
   const productId = requireString(input, 'productId');
@@ -425,15 +550,22 @@ export async function googleAssignLicenseHandler(
   }
 }
 
-export async function googleRemoveLicenseHandler(
+export async function googleAssignLicenseHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleAssignLicenseAction(ctx, input);
+}
+
+export async function googleRemoveLicenseAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
   const productId = requireString(input, 'productId');
@@ -449,15 +581,22 @@ export async function googleRemoveLicenseHandler(
   }
 }
 
-export async function googleResetTwoSvHandler(
+export async function googleRemoveLicenseHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleRemoveLicenseAction(ctx, input);
+}
+
+export async function googleResetTwoSvAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
 
@@ -470,15 +609,22 @@ export async function googleResetTwoSvHandler(
   }
 }
 
-export async function googleAddMailDelegateHandler(
+export async function googleResetTwoSvHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleResetTwoSvAction(ctx, input);
+}
+
+export async function googleAddMailDelegateAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user (mailbox owner) email is required.');
   const delegateEmail = requireString(input, 'delegateEmail');
@@ -493,15 +639,22 @@ export async function googleAddMailDelegateHandler(
   }
 }
 
-export async function googleRemoveMailDelegateHandler(
+export async function googleAddMailDelegateHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleAddMailDelegateAction(ctx, input);
+}
+
+export async function googleRemoveMailDelegateAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user (mailbox owner) email is required.');
   const delegateEmail = requireString(input, 'delegateEmail');
@@ -516,15 +669,22 @@ export async function googleRemoveMailDelegateHandler(
   }
 }
 
-export async function googleSignOutHandler(
+export async function googleRemoveMailDelegateHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleRemoveMailDelegateAction(ctx, input);
+}
+
+export async function googleSignOutAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
 
@@ -535,6 +695,16 @@ export async function googleSignOutHandler(
   } catch (err) {
     return googleError(err);
   }
+}
+
+export async function googleSignOutHandler(
+  input: Record<string, unknown>,
+  auth: AuthContext,
+  sessionId: string,
+): Promise<string> {
+  const ctx = await resolveContext(auth, sessionId);
+  if ('error' in ctx) return ctx.error;
+  return googleSignOutAction(ctx, input);
 }
 
 type ForwardingOutcome =
@@ -585,15 +755,12 @@ async function enableAutoForwarding(
   return { ok: true, verificationStatus: verificationStatus ?? 'unknown' };
 }
 
-export async function googleSetForwardingHandler(
+export async function googleSetForwardingAction(
+  ctx: GoogleToolContext,
   input: Record<string, unknown>,
-  auth: AuthContext,
-  sessionId: string,
 ): Promise<string> {
   const reason = requireString(input, 'reason');
   if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
-  const ctx = await resolveContext(auth, sessionId);
-  if ('error' in ctx) return ctx.error;
   const email = requireString(input, 'userEmail');
   const forwardTo = requireString(input, 'forwardTo');
   if (!email) return errorString('missing_user', 'A user email (the mailbox to forward FROM) is required.');
@@ -625,15 +792,22 @@ export async function googleSetForwardingHandler(
   }
 }
 
-export async function googleDisableForwardingHandler(
+export async function googleSetForwardingHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleSetForwardingAction(ctx, input);
+}
+
+export async function googleDisableForwardingAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email (the mailbox to stop forwarding) is required.');
   // Optionally also delete the forwarding address; `forwardTo` is only needed
@@ -671,15 +845,22 @@ export async function googleDisableForwardingHandler(
   }
 }
 
-export async function googleSetVacationHandler(
+export async function googleDisableForwardingHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleDisableForwardingAction(ctx, input);
+}
+
+export async function googleSetVacationAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
   const enable = input.enable !== false; // default enable
@@ -705,15 +886,22 @@ export async function googleSetVacationHandler(
   }
 }
 
-export async function googleUpdateUserHandler(
+export async function googleSetVacationHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleSetVacationAction(ctx, input);
+}
+
+export async function googleUpdateUserAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
 
@@ -758,15 +946,22 @@ export async function googleUpdateUserHandler(
   }
 }
 
-export async function googleShareCalendarHandler(
+export async function googleUpdateUserHandler(
   input: Record<string, unknown>,
   auth: AuthContext,
   sessionId: string,
 ): Promise<string> {
-  const reason = requireString(input, 'reason');
-  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ctx = await resolveContext(auth, sessionId);
   if ('error' in ctx) return ctx.error;
+  return googleUpdateUserAction(ctx, input);
+}
+
+export async function googleShareCalendarAction(
+  ctx: GoogleToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const reason = requireString(input, 'reason');
+  if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
   const ownerEmail = requireString(input, 'ownerEmail');
   const shareWithEmail = requireString(input, 'shareWithEmail');
   if (!ownerEmail) return errorString('missing_owner', 'The calendar owner email is required.');
@@ -793,6 +988,16 @@ export async function googleShareCalendarHandler(
   }
 }
 
+export async function googleShareCalendarHandler(
+  input: Record<string, unknown>,
+  auth: AuthContext,
+  sessionId: string,
+): Promise<string> {
+  const ctx = await resolveContext(auth, sessionId);
+  if ('error' in ctx) return ctx.error;
+  return googleShareCalendarAction(ctx, input);
+}
+
 /**
  * Guided offboard: a single, best-effort sequence over one departing user.
  * Mailbox steps (OOO, forwarding) run FIRST, while the account is still active —
@@ -801,15 +1006,12 @@ export async function googleShareCalendarHandler(
  * because the fleet is BYOD. Suspend is last. Each step is independent: a failure
  * is recorded and the rest still run.
  */
-export async function googleOffboardUserHandler(
+export async function googleOffboardUserAction(
+  ctx: GoogleToolContext,
   input: Record<string, unknown>,
-  auth: AuthContext,
-  sessionId: string,
 ): Promise<string> {
   const reason = requireString(input, 'reason');
   if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
-  const ctx = await resolveContext(auth, sessionId);
-  if ('error' in ctx) return ctx.error;
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'A user email is required.');
 
@@ -878,8 +1080,14 @@ export async function googleOffboardUserHandler(
   // 4. SELECTIVE mobile account-wipe (BYOD: corporate data only).
   if (accountWipeMobile) {
     steps.push(await runStep('mobile_account_wipe', async () => {
-      const n = await wipeMobileDevices(dir, email, 'admin_account_wipe');
-      return n === 0 ? 'no mobile devices enrolled' : `account-wiped ${n} device(s) (corporate data only)`;
+      const resolved = await resolveWipeTarget(dir, email);
+      // Fail the step (not swallow) if the target can't be resolved to one
+      // exact user — the offboard then reports incomplete rather than green.
+      if (!resolved.ok) throw new Error(`${resolved.code}: ${resolved.message}`);
+      const n = await wipeMobileDevices(dir, resolved.deviceIds, 'admin_account_wipe');
+      return n === 0
+        ? `no mobile devices enrolled for ${resolved.user}`
+        : `account-wiped ${n} device(s) for ${resolved.user} (corporate data only) [${resolved.deviceIds.join(', ')}]`;
     }));
   }
 
@@ -910,32 +1118,53 @@ export async function googleOffboardUserHandler(
   return summary;
 }
 
+export async function googleOffboardUserHandler(
+  input: Record<string, unknown>,
+  auth: AuthContext,
+  sessionId: string,
+): Promise<string> {
+  const ctx = await resolveContext(auth, sessionId);
+  if ('error' in ctx) return ctx.error;
+  return googleOffboardUserAction(ctx, input);
+}
+
 /**
  * STOLEN-DEVICE remote wipe: a full factory reset of every device enrolled to a
  * user. This erases the ENTIRE device, not just corporate data — it is NOT part
  * of offboarding (offboard uses a selective account wipe). Use only for lost or
  * stolen hardware.
  */
-export async function googleWipeMobileDeviceHandler(
+export async function googleWipeMobileDeviceAction(
+  ctx: GoogleToolContext,
   input: Record<string, unknown>,
-  auth: AuthContext,
-  sessionId: string,
 ): Promise<string> {
   const reason = requireString(input, 'reason');
   if (!reason) return errorString('missing_reason', 'A reason is required for this action.');
-  const ctx = await resolveContext(auth, sessionId);
-  if ('error' in ctx) return ctx.error;
   const email = requireString(input, 'userEmail');
   if (!email) return errorString('missing_user', 'The user whose lost/stolen device should be fully wiped is required.');
 
   try {
     const dir = getDirectoryClient(ctx.keyJson, ctx.conn.adminEmail);
-    const n = await wipeMobileDevices(dir, email, 'admin_remote_wipe');
-    if (n === 0) return `No mobile devices are enrolled for ${email}; nothing to wipe.`;
-    return `Issued a FULL factory reset to ${n} device(s) for ${email} (stolen-device remote wipe). This erases the entire device, not just corporate data.`;
+    const resolved = await resolveWipeTarget(dir, email);
+    if (!resolved.ok) return errorString(resolved.code, resolved.message);
+    const n = await wipeMobileDevices(dir, resolved.deviceIds, 'admin_remote_wipe');
+    if (n === 0) return `No mobile devices are enrolled for ${resolved.user}; nothing to wipe.`;
+    // Execution record is bound to the resolved canonical user + the concrete
+    // device IDs, so the audited action is a known, bounded set (SR5-02).
+    return `Issued a FULL factory reset to ${n} device(s) for ${resolved.user} (stolen-device remote wipe) [${resolved.deviceIds.join(', ')}]. This erases the entire device, not just corporate data.`;
   } catch (err) {
     return googleError(err);
   }
+}
+
+export async function googleWipeMobileDeviceHandler(
+  input: Record<string, unknown>,
+  auth: AuthContext,
+  sessionId: string,
+): Promise<string> {
+  const ctx = await resolveContext(auth, sessionId);
+  if ('error' in ctx) return ctx.error;
+  return googleWipeMobileDeviceAction(ctx, input);
 }
 
 // ── Cluster 2: security drift (read) + reports-by-email ───────────────────────

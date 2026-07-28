@@ -4,14 +4,14 @@ import { verifyToken, TokenPayload } from '../services/jwt';
 import { getUserPermissions, hasPermission, canAccessOrg, canAccessSite, UserPermissions } from '../services/permissions';
 import { isTokenIssuedBeforePasswordChange, isUserTokenRevoked } from '../services/tokenRevocation';
 import { db, withDbAccessContext, withSystemDbAccessContext, type DbAccessContext, type DbAccessScope } from '../db';
-import { users, partnerUsers, organizationUsers, organizations, roles } from '../db/schema';
+import { users, partnerUsers, organizations } from '../db/schema';
 import { and, eq, inArray, isNull, SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { ENABLE_2FA } from '../routes/auth/schemas';
 import { assertActiveTenantContext, TenantInactiveError } from '../services/tenantStatus';
 import { writeAuditEvent } from '../services/auditEvents';
 import { withSentryRequestScope } from '../services/sentry';
-import { mfaForcePartnerAdmin } from '../config/env';
+import { getEffectiveMfaPolicy } from '../services/mfaPolicy';
 import { ipAllowlistGuard } from './ipAllowlistGuard';
 import { isSelfManagedDbContextRoute } from './selfManagedDbContextRoutes';
 
@@ -116,59 +116,6 @@ export function siteAccessCheck(
 }
 
 /**
- * Resolve whether the user's effective role for the current request has
- * `force_mfa=true`. Returns false for system scope (platform admin is a
- * user flag, not a role) and for any user whose membership row is missing.
- *
- * Runs under system scope because the request's RLS context isn't set yet.
- */
-async function userRoleRequiresMfa(
-  scope: 'system' | 'partner' | 'organization',
-  partnerId: string | null,
-  orgId: string | null,
-  userId: string
-): Promise<boolean> {
-  if (scope === 'system') return false;
-  // Kill-switch: when off, skip the role lookup entirely so an enrollment
-  // outage can be relieved by ops with an env flag (no code deploy).
-  if (!mfaForcePartnerAdmin()) return false;
-
-  return withSystemDbAccessContext(async () => {
-    if (scope === 'organization' && orgId) {
-      const [row] = await db
-        .select({ forceMfa: roles.forceMfa })
-        .from(organizationUsers)
-        .innerJoin(roles, eq(organizationUsers.roleId, roles.id))
-        .where(
-          and(
-            eq(organizationUsers.userId, userId),
-            eq(organizationUsers.orgId, orgId)
-          )
-        )
-        .limit(1);
-      return row?.forceMfa === true;
-    }
-
-    if (scope === 'partner' && partnerId) {
-      const [row] = await db
-        .select({ forceMfa: roles.forceMfa })
-        .from(partnerUsers)
-        .innerJoin(roles, eq(partnerUsers.roleId, roles.id))
-        .where(
-          and(
-            eq(partnerUsers.userId, userId),
-            eq(partnerUsers.partnerId, partnerId)
-          )
-        )
-        .limit(1);
-      return row?.forceMfa === true;
-    }
-
-    return false;
-  });
-}
-
-/**
  * Paths the user is permitted to hit while in the mfa_enrollment_required
  * state. Without this they couldn't enroll MFA — the same gate would
  * bounce them off the setup endpoints. Kept intentionally tight.
@@ -181,11 +128,65 @@ function isMfaEnrollmentExemptPath(path: string): boolean {
   const rel = path.startsWith('/api/v1') ? path.slice('/api/v1'.length) : path;
 
   if (rel === '/auth/logout') return true;
+  // /users/me is exempted WHOLESALE so an unenrolled user can load their profile
+  // (GET) and finish enrolling. This path-level exemption cannot see the body,
+  // so the narrower rule — that it must NOT admit a RECOVERY-ADDRESS change
+  // (SR2-18) — is enforced in the PATCH /users/me handler (routes/users.ts),
+  // which re-checks getEffectiveMfaPolicy + userIsMfaProtected before recording
+  // a pending email.
   if (rel === '/users/me') return true;
   if (rel.startsWith('/auth/mfa/')) return true;
   // Phone verification is part of the MFA setup flow (SMS factor).
   if (rel.startsWith('/auth/phone/')) return true;
+  // Passkey registration is an enrollment action (passkey is the always-allowed,
+  // phishing-resistant factor). Without this, a policy-required-but-unenrolled
+  // user is 428'd on /auth/passkeys/register/* and can never enroll a passkey.
+  if (rel.startsWith('/auth/passkeys/')) return true;
   return false;
+}
+
+/**
+ * Build the AuthContext org-axis closures (`orgCondition`, `canAccessOrg`)
+ * from a resolved `accessibleOrgIds` list. `null` = unrestricted (system
+ * scope — no filter, always true); `[]` = no accessible orgs (impossible
+ * condition, always false); otherwise an equality or IN-list filter.
+ *
+ * Single source of truth for the org-axis closures, reused by the request
+ * path (authMiddleware, for all three scopes — `accessibleOrgIds` is already
+ * scope-resolved by `computeAccessibleOrgIds` by the time this runs) and by
+ * `services/actionIntents/actorContext.ts`, which reconstructs a one-org
+ * AuthContext (`accessibleOrgIds: [intent.orgId]`) for the durable release
+ * worker's revalidated actor — passing a single-element array here collapses
+ * to exactly the same `eq(orgIdColumn, orgId)` / identity-check shape
+ * authMiddleware produces for an organization-scope token, so the two paths
+ * can never drift.
+ */
+export function buildOrgAccessClosures(
+  accessibleOrgIds: string[] | null
+): {
+  orgCondition: (orgIdColumn: PgColumn) => SQL | undefined;
+  canAccessOrg: (orgId: string) => boolean;
+} {
+  const orgCondition = (orgIdColumn: PgColumn): SQL | undefined => {
+    if (accessibleOrgIds === null) {
+      return undefined; // System scope - no filter
+    }
+    if (accessibleOrgIds.length === 0) {
+      // No accessible orgs - return impossible condition
+      return eq(orgIdColumn, '00000000-0000-0000-0000-000000000000');
+    }
+    if (accessibleOrgIds.length === 1) {
+      return eq(orgIdColumn, accessibleOrgIds[0]);
+    }
+    return inArray(orgIdColumn, accessibleOrgIds);
+  };
+
+  const canAccessOrg = (orgId: string): boolean => {
+    if (accessibleOrgIds === null) return true; // System scope
+    return accessibleOrgIds.includes(orgId);
+  };
+
+  return { orgCondition, canAccessOrg };
 }
 
 /**
@@ -396,7 +397,9 @@ export async function authMiddleware(c: Context, next: Next): Promise<void | Res
         status: users.status,
         passwordChangedAt: users.passwordChangedAt,
         mfaEnabled: users.mfaEnabled,
-        isPlatformAdmin: users.isPlatformAdmin
+        isPlatformAdmin: users.isPlatformAdmin,
+        authEpoch: users.authEpoch,
+        mfaEpoch: users.mfaEpoch
       })
       .from(users)
       .where(eq(users.id, payload.sub))
@@ -409,6 +412,51 @@ export async function authMiddleware(c: Context, next: Next): Promise<void | Res
 
   if (user.status !== 'active') {
     throw new HTTPException(403, { message: 'Account is not active' });
+  }
+
+  // Epoch gate (core-auth hardening PR 1). Scoped to the user-JWT path — this
+  // middleware only ever runs on aud='breeze-api' access tokens (agent/helper/
+  // portal/viewer/MCP-bearer paths use separate verifiers and never reach here).
+  // A token missing any epoch/session claim predates the rollout: reject it
+  // (deliberate global sign-out). A stale aep/mep means a security-state change
+  // happened after the token was minted: reject.
+  // Rejection reasons below are logged server-side only (structured, bounded
+  // fields — reason/userId/scope/epoch numbers, never token material); the
+  // public response body stays generic per the design spec.
+  if (
+    typeof payload.aep !== 'number' ||
+    typeof payload.mep !== 'number' ||
+    !payload.sid
+  ) {
+    console.warn('[authMiddleware] rejected access token', {
+      reason: 'epoch_claims_missing',
+      userId: payload.sub,
+      scope: payload.scope
+    });
+    throw new HTTPException(401, { message: 'Invalid or expired token' });
+  }
+  if (payload.aep !== user.authEpoch || payload.mep !== user.mfaEpoch) {
+    console.warn('[authMiddleware] rejected access token', {
+      reason: 'epoch_stale',
+      userId: payload.sub,
+      scope: payload.scope,
+      tokenAep: payload.aep,
+      liveAep: user.authEpoch,
+      tokenMep: payload.mep,
+      liveMep: user.mfaEpoch
+    });
+    throw new HTTPException(401, { message: 'Invalid or expired token' });
+  }
+
+  // Live system binding: scope='system' is only legitimate for a current
+  // platform admin. A demoted admin's signed scope claim must not survive an
+  // out-of-band is_platform_admin=false (SR2-02).
+  if (payload.scope === 'system' && user.isPlatformAdmin !== true) {
+    console.warn('[authMiddleware] rejected access token', {
+      reason: 'system_scope_demoted',
+      userId: payload.sub
+    });
+    throw new HTTPException(403, { message: 'Insufficient permissions' });
   }
 
   if (isTokenIssuedBeforePasswordChange(payload.iat, user.passwordChangedAt)) {
@@ -428,22 +476,29 @@ export async function authMiddleware(c: Context, next: Next): Promise<void | Res
     throw err;
   }
 
-  // Role-level MFA gate. If the user's role requires MFA and they
-  // haven't enabled it, short-circuit to 428 Precondition Required.
-  // Allow a tight set of routes through (logout, the user's own
-  // profile, MFA setup endpoints) so they can complete enrollment.
-  if (ENABLE_2FA && !user.mfaEnabled) {
-    const requiresMfa = await userRoleRequiresMfa(
-      payload.scope,
-      payload.partnerId,
-      payload.orgId,
-      user.id
-    );
+  // Enrollment gate via the effective-policy resolver. If org/partner
+  // settings (or a force_mfa role, resolved inside getEffectiveMfaPolicy)
+  // require MFA and the user hasn't enrolled, short-circuit to 428
+  // Precondition Required. Allow a tight set of routes through (logout,
+  // the user's own profile, MFA setup endpoints) so they can complete
+  // enrollment.
+  //
+  // Check the exempt path FIRST — the resolver runs an extra
+  // getEffectiveOrgSettings query, and hot polled exempt routes
+  // (/users/me, /auth/mfa/*) must not pay that DB cost on every request
+  // (the US DB has a ~25-connection ceiling).
+  if (ENABLE_2FA && !user.mfaEnabled && !isMfaEnrollmentExemptPath(c.req.path)) {
+    const policy = await getEffectiveMfaPolicy({
+      scope: payload.scope,
+      userId: user.id,
+      orgId: payload.orgId,
+      partnerId: payload.partnerId,
+    });
 
-    if (requiresMfa && !isMfaEnrollmentExemptPath(c.req.path)) {
+    if (policy.required) {
       // Fire-and-forget audit. Lets ops see when forced-enrollment is
       // bouncing users — useful for diagnosing onboarding friction or
-      // a misconfigured role flag.
+      // a misconfigured role flag / org policy.
       writeAuditEvent(c, {
         orgId: payload.orgId ?? null,
         action: 'auth.mfa.enrollment.required',
@@ -453,7 +508,7 @@ export async function authMiddleware(c: Context, next: Next): Promise<void | Res
         actorId: user.id,
         actorEmail: user.email,
         result: 'denied',
-        details: { path: c.req.path, scope: payload.scope }
+        details: { path: c.req.path, scope: payload.scope, source: policy.source }
       });
 
       return c.json(
@@ -470,25 +525,28 @@ export async function authMiddleware(c: Context, next: Next): Promise<void | Res
     payload.orgId,
     user.id
   );
-  // Create helper functions
-  const orgCondition = (orgIdColumn: PgColumn): SQL | undefined => {
-    if (accessibleOrgIds === null) {
-      return undefined; // System scope - no filter
-    }
-    if (accessibleOrgIds.length === 0) {
-      // No accessible orgs - return impossible condition
-      return eq(orgIdColumn, '00000000-0000-0000-0000-000000000000');
-    }
-    if (accessibleOrgIds.length === 1) {
-      return eq(orgIdColumn, accessibleOrgIds[0]);
-    }
-    return inArray(orgIdColumn, accessibleOrgIds);
-  };
 
-  const canAccessOrg = (orgId: string): boolean => {
-    if (accessibleOrgIds === null) return true; // System scope
-    return accessibleOrgIds.includes(orgId);
-  };
+  // REQUIRED live partner-membership binding (spec invariant 4). An empty org
+  // allowlist is NOT sufficient denial for a partner token: partner-axis RLS
+  // policies key on the token's partnerId claim (breeze_has_partner_access),
+  // so a partner user whose partner_users row was removed OUT-OF-BAND (no
+  // auth_epoch advance) could still read partner-axis tables with orgIds=[].
+  // computeAccessibleOrgIds already queried partner_users — partnerOrgAccess
+  // is null for a partner-scope token ⇔ no live membership row (an existing
+  // row with org_access='none' yields 'none', not null). Zero extra queries.
+  if (payload.scope === 'partner' && partnerOrgAccess === null) {
+    console.warn('[authMiddleware] rejected access token', {
+      reason: 'partner_membership_missing',
+      userId: payload.sub,
+      partnerId: payload.partnerId
+    });
+    throw new HTTPException(401, { message: 'Invalid or expired token' });
+  }
+
+  // Create helper functions — buildOrgAccessClosures is the single source of
+  // truth (also reused by services/actionIntents/actorContext.ts to
+  // reconstruct a one-org AuthContext for the durable release worker).
+  const { orgCondition, canAccessOrg } = buildOrgAccessClosures(accessibleOrgIds);
 
   // Resolve the site-axis allowlist (sub-org restriction). Only organization
   // scope carries site restrictions (`organizationUsers.siteIds` via

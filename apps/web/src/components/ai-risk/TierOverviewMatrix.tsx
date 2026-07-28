@@ -1,29 +1,48 @@
-import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, Search } from 'lucide-react';
-import { formatToolName } from '../../lib/utils';
-import { TIER_DEFINITIONS, groupByCategory } from './tierConfig';
-import type { ToolCategory } from './tierConfig';
+import { useTranslation } from "react-i18next";
+import "@/lib/i18n";
+import { useState, useMemo } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldOff,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { formatToolName } from "../../lib/utils";
+import { TIER_DEFINITIONS, groupByCategory } from "./tierConfig";
+import type { ToolCategory, TierIconName } from "./tierConfig";
 
+// tierConfig.ts is imported by an api-side contract test (issue #2686) and so
+// must stay dependency-free; it names its icons and they are resolved here.
+const TIER_ICONS: Record<TierIconName, LucideIcon> = {
+  eye: Eye,
+  "shield-check": ShieldCheck,
+  "shield-alert": ShieldAlert,
+  "shield-off": ShieldOff,
+};
 export function TierOverviewMatrix() {
-  const [search, setSearch] = useState('');
+  const { t } = useTranslation("security");
+  const [search, setSearch] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-
   const toggle = (key: string) =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
-
   const q = search.toLowerCase().trim();
-
   return (
     <div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-lg font-semibold">Guardrail Tier Matrix</h2>
+        <h2 className="text-lg font-semibold">
+          {t("aiRiskTierOverviewMatrix.guardrailTierMatrix")}
+        </h2>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter tools..."
+            placeholder={t("aiRiskTierOverviewMatrix.filterTools")}
             className="h-8 w-56 rounded-lg border bg-card pl-8 pr-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-primary"
           />
         </div>
@@ -43,7 +62,6 @@ export function TierOverviewMatrix() {
     </div>
   );
 }
-
 function TierCard({
   tier,
   search,
@@ -55,8 +73,8 @@ function TierCard({
   collapsed: Record<string, boolean>;
   onToggle: (key: string) => void;
 }) {
-  const Icon = tier.icon;
-
+  const { t } = useTranslation("security");
+  const Icon = TIER_ICONS[tier.iconName];
   const filteredTools = useMemo(() => {
     if (!search) return tier.tools;
     return tier.tools.filter(
@@ -65,14 +83,8 @@ function TierCard({
         t.description.toLowerCase().includes(search),
     );
   }, [tier.tools, search]);
-
-  const groups = useMemo(
-    () => groupByCategory(filteredTools),
-    [filteredTools],
-  );
-
+  const groups = useMemo(() => groupByCategory(filteredTools), [filteredTools]);
   if (search && filteredTools.length === 0) return null;
-
   return (
     <div
       className={`rounded-lg border border-l-4 bg-card shadow-xs ${tier.borderColor}`}
@@ -83,13 +95,16 @@ function TierCard({
           <span
             className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${tier.badgeBg} ${tier.badgeText}`}
           >
-            Tier {tier.tier}
+            {t("aiRiskTierOverviewMatrix.tier")}
+            {tier.tier}
           </span>
           <h3 className="text-sm font-semibold">{tier.label}</h3>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {filteredTools.length} tool{filteredTools.length !== 1 ? 's' : ''}
+            {t("aiRiskTierOverviewMatrix.toolCount", {
+              count: filteredTools.length,
+            })}
           </span>
           <Icon className="h-5 w-5 text-muted-foreground" />
         </div>
@@ -104,7 +119,6 @@ function TierCard({
         {groups.map((group) => {
           const key = `${tier.tier}-${group.category}`;
           const isCollapsed = collapsed[key] ?? (tier.tier === 1 && !search);
-
           return (
             <CategoryGroup
               key={key}
@@ -119,7 +133,6 @@ function TierCard({
     </div>
   );
 }
-
 function CategoryGroup({
   category,
   tools,
@@ -127,7 +140,10 @@ function CategoryGroup({
   onToggle,
 }: {
   category: ToolCategory;
-  tools: Array<{ name: string; description: string }>;
+  tools: Array<{
+    name: string;
+    description: string;
+  }>;
   isCollapsed: boolean;
   onToggle: () => void;
 }) {
@@ -154,9 +170,7 @@ function CategoryGroup({
             <div key={tool.name} className="flex gap-2 text-xs leading-5 pl-5">
               <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
               <p>
-                <span className="font-medium">
-                  {formatToolName(tool.name)}
-                </span>
+                <span className="font-medium">{formatToolName(tool.name)}</span>
                 <span className="ml-1 text-muted-foreground">
                   — {tool.description}
                 </span>

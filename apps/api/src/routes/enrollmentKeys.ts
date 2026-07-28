@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { zValidator } from "@hono/zod-validator";
+import { zValidator } from '../lib/validation';
 import { z } from "zod";
 import { and, eq, sql, desc, inArray, lt, isNull, or, asc } from "drizzle-orm";
 import { customAlphabet } from "nanoid";
@@ -17,6 +17,7 @@ import {
 import { userRateLimit } from "../middleware/userRateLimit";
 import { randomBytes } from "crypto";
 import { createAuditLogAsync } from "../services/auditService";
+import { ANONYMOUS_ACTOR_ID } from "../services/auditEvents";
 import { PERMISSIONS } from "../services/permissions";
 import { hashEnrollmentKey, hashEnrollmentKeyCandidates } from "../services/enrollmentKeySecurity";
 import {
@@ -30,9 +31,23 @@ import {
   serveWindowsBootstrapExe,
 } from "../services/installerBuilder";
 import {
+  InstallerFilenameHostError,
+  windowsFilenameApiHost,
+} from "../services/installerFilenameHost";
+import {
   issueBootstrapTokenForKey,
   BootstrapTokenIssuanceError,
 } from "../services/installerBootstrapTokenIssuance";
+import { assertTtlWithinCap, clampTtlToCap } from "../services/enrollmentDefaults";
+import { captureException } from "../services/sentry";
+
+// NOTE (BL4CK fork): upstream's INSTALLER_SIGN_USER_LIMIT /
+// INSTALLER_SIGN_KEY_LIMIT / INSTALLER_SIGN_WINDOW_SECONDS signing-spend caps
+// and its `ensureBuffer` helper are deliberately NOT carried here. They existed
+// to bound the per-request macOS app-bundle re-signing cost; this fork is
+// Windows-only and serves STATIC, CI-signed MSI/EXE bytes, so there is no
+// per-download signing spend to cap and no nullable platform buffer to narrow.
+
 export const enrollmentKeyRoutes = new Hono();
 
 // ============================================
@@ -267,6 +282,12 @@ export async function redeemShortCode(
 
     const rawKey = generateEnrollmentKey();
     const tokenHash = hashEnrollmentKey(rawKey);
+    // Clamp (never reject — no interactive caller here) the child's default
+    // TTL to the partner cap (fix round 3, #2776): the cap bounds KEY
+    // LIFETIME, not just interactively-chosen input, so this MCP-invite
+    // redemption path must not hand out a child key longer-lived than the
+    // partner allows just because it uses the server-constant default.
+    const cappedTtlMinutes = await clampTtlToCap(parent.orgId, CHILD_ENROLLMENT_KEY_TTL_MINUTES);
 
     const [child] = await db
       .insert(enrollmentKeys)
@@ -276,8 +297,16 @@ export async function redeemShortCode(
         name: `${parent.name} (invite download)`,
         key: tokenHash,
         keySecretHash: parent.keySecretHash,
+        // BL4CK fork: upstream ships `maxUsage: 1` here (single-use child key).
+        // We deliberately do NOT take that. Fork installer enrollment keys must
+        // be REUSABLE — CHILD_ENROLLMENT_KEY_MAX_USAGE defaults to null, which
+        // the redemption guard in routes/agents/enrollment.ts treats as
+        // UNLIMITED. Do not "fix" this back to 1.
+        //
+        // The upstream partner cap taken on the next line is orthogonal: it
+        // bounds EXPIRY only and never reads or writes maxUsage.
         maxUsage: CHILD_ENROLLMENT_KEY_MAX_USAGE,
-        expiresAt: freshChildExpiresAt(),
+        expiresAt: freshChildExpiresAt(cappedTtlMinutes),
         createdBy: null,
         installerPlatform: parent.installerPlatform,
       })
@@ -380,6 +409,26 @@ export async function mintChildEnrollmentKey(
     orgId = org.id;
   }
 
+  // Clamp (never reject — this is a non-interactive helper with no HTTP
+  // request to surface a 400 to) the requested lifetime to the partner cap
+  // (fix round 3, #2776). This function is an exported, general-purpose
+  // helper — its only current caller (send_deployment_invites) hardcodes a
+  // 7-day server constant, but leaving the bound here (rather than trusting
+  // every caller to remember it) is what stops the next caller that threads
+  // a truly dynamic value through `expiresInSeconds` from reopening the
+  // exact escalation this whole plan exists to close.
+  // FLOOR, not ceil, with a 1-minute floor (fix round 4, #2776): the minute
+  // conversion feeds `expiresAt` directly, so rounding UP would LENGTHEN a
+  // sub-minute lifetime (90s -> 120s) in the very function this cap exists to
+  // bound. Rounding down can only shorten, which is the fail-closed direction;
+  // the max(1, ...) keeps a 1-59s request from collapsing to an
+  // already-expired key.
+  const rawTtlMinutes = Math.max(
+    1,
+    Math.floor((input.expiresInSeconds ?? CHILD_ENROLLMENT_KEY_TTL_MINUTES * 60) / 60),
+  );
+  const cappedTtlMinutes = await clampTtlToCap(orgId, rawTtlMinutes);
+
   let siteId = input.siteId;
   if (!siteId) {
     const [site] = await db
@@ -397,10 +446,7 @@ export async function mintChildEnrollmentKey(
   const rawKey = generateEnrollmentKey();
   const keyHash = hashEnrollmentKey(rawKey);
   const shortCode = await allocateShortCode();
-  const expiresAt = new Date(
-    Date.now() +
-      (input.expiresInSeconds ?? CHILD_ENROLLMENT_KEY_TTL_MINUTES * 60) * 1000,
-  );
+  const expiresAt = new Date(Date.now() + cappedTtlMinutes * 60 * 1000);
 
   const [row] = await db
     .insert(enrollmentKeys)
@@ -637,6 +683,25 @@ enrollmentKeyRoutes.post(
       return c.json({ error: "orgId is required" }, 400);
     }
 
+    // Reject (never clamp) a caller-supplied TTL above the partner cap
+    // (fix round 1, #2776 task 3.4). This route has TWO paths to an expiry —
+    // `ttlMinutes` and an explicit `expiresAt` — and createEnrollmentKeySchema's
+    // refine guarantees only one is ever set. Both must be checked: capping
+    // only `ttlMinutes` would leave `expiresAt` as a wide-open bypass (a
+    // parent enrollment key is itself an enrollment credential). For the
+    // `expiresAt` path there's no ttlMinutes to check directly, so the implied
+    // duration from now is computed and checked against the same cap; Math.ceil
+    // rounds UP so a request timed to land exactly at the cap is never
+    // rejected by wall-clock rounding, while a value that's genuinely over the
+    // cap is never rounded down into passing.
+    const impliedTtlMinutes = data.ttlMinutes !== undefined
+      ? data.ttlMinutes
+      : data.expiresAt !== undefined
+        ? Math.ceil((new Date(data.expiresAt).getTime() - Date.now()) / 60_000)
+        : undefined;
+    const capError = await assertTtlWithinCap(orgId, impliedTtlMinutes);
+    if (capError) return c.json({ error: capError }, 400);
+
     // Verify siteId belongs to the target org (if provided)
     if (data.siteId) {
       const [site] = await db
@@ -837,6 +902,21 @@ enrollmentKeyRoutes.post(
       return c.json({ error: "Access denied" }, 403);
     }
 
+    // Reject (never clamp) a caller-supplied expiresAt above the partner cap
+    // (fix round 2, #2776 task 3.4). rotateEnrollmentKeySchema has no
+    // ttlMinutes field — only expiresAt — so there is only one path to gate
+    // here. Rotation re-mints the key value via generateEnrollmentKey(), so
+    // leaving this uncapped would let a caller bound by a short cap create a
+    // key at the cap and immediately rotate it past it — a complete bypass
+    // of the ceiling. An omitted expiresAt falls back to the existing key's
+    // own (already-validated) expiresAt below, which is not a newly-chosen
+    // value, so there's nothing to check in that case.
+    const impliedTtlMinutes = data.expiresAt !== undefined
+      ? Math.ceil((new Date(data.expiresAt).getTime() - Date.now()) / 60_000)
+      : undefined;
+    const capError = await assertTtlWithinCap(existingKey.orgId, impliedTtlMinutes);
+    if (capError) return c.json({ error: capError }, 400);
+
     const rawKey = generateEnrollmentKey();
     const keyHash = hashEnrollmentKey(rawKey);
     const expiresAt = data.expiresAt
@@ -980,6 +1060,15 @@ enrollmentKeyRoutes.get(
       return c.json({ error: "Access denied" }, 403);
     }
 
+    // NOTE (BL4CK fork): upstream calls assertTtlWithinCap(orgId, childTtlMinutes)
+    // here. This route has no caller-supplied TTL — the download is FIXED at
+    // INSTALLER_FIXED_TTL_MINUTES (365 days), and any `ttlMinutes` in the query
+    // is accepted-and-ignored for backward compatibility. Feeding the fixed
+    // 525_600 into assertTtlWithinCap would hard-400 EVERY installer download
+    // for any partner whose enrollment-link cap is lower, so the call is omitted
+    // rather than passed a value it was never meant to police. The ad-hoc
+    // installer-LINK route below still enforces the cap on its explicit input.
+
     // Verify key is still usable
     if (parentKey.expiresAt && new Date(parentKey.expiresAt) < new Date()) {
       return c.json({ error: "Enrollment key has expired" }, 410);
@@ -1024,13 +1113,36 @@ enrollmentKeyRoutes.get(
     // mints the child key lazily on consume (mirrors the macOS path above).
     // ----------------------------------------------------------------
     if (platform === "windows") {
+      // Encode the filename host BEFORE issuing a bootstrap token, so a URL
+      // that can never enroll (non-https, host not expressible in a Windows
+      // filename) fails loudly with the reason instead of serving an MSI
+      // that silently installs unenrolled — and doesn't burn a token (#2341).
+      let apiHost: string;
+      try {
+        apiHost = windowsFilenameApiHost(serverUrl);
+      } catch (err) {
+        if (err instanceof InstallerFilenameHostError) {
+          return c.json({ error: err.message }, 400);
+        }
+        throw err;
+      }
+
       let issued;
       try {
         issued = await issueBootstrapTokenForKey({
           parentEnrollmentKeyId: parentKey.id,
           createdByUserId: auth.user.id,
+          // BL4CK fork: the installer download is a FIXED product contract —
+          // INSTALLER_FIXED_MAX_DEVICES (1000) devices, INSTALLER_FIXED_TTL_MINUTES
+          // (525_600 = 365 days). Upstream passes the caller-supplied
+          // childMaxUsage/childTtlMinutes here; this route deliberately exposes
+          // no such controls (the query values are accepted and ignored).
           maxUsage: bootstrapTokenMaxUsage,
           ttlMinutes: bootstrapTokenTtlMinutes,
+          // Skip the partner TTL clamp: these 365 days are baked into signed
+          // media we hand the customer, so a partner lowering their enrollment
+          // link cap must not retroactively shorten an already-shipped installer.
+          bypassPartnerTtlCap: true,
           installerPlatform: "windows",
         });
       } catch (err) {
@@ -1041,8 +1153,6 @@ enrollmentKeyRoutes.get(
         }
         throw err;
       }
-
-      const apiHost = new URL(serverUrl).host;
 
       // EXE: silent double-click installer (bl4ck-setup.exe) that embeds the MSI
       // and enrolls from its own (TOKEN@HOST) filename.
@@ -1076,8 +1186,18 @@ enrollmentKeyRoutes.get(
         msi = await fetchRegularMsi();
       } catch (err) {
         console.error("[installer] failed to fetch signed MSI:", err);
+        captureException(err, c);
         return c.json({ error: "MSI not available" }, 503);
       }
+
+      // Build the response BEFORE the audit write — serveWindowsBootstrapMsi
+      // throws on a non-encoded host (defense in depth, #2341), and the audit
+      // trail must not record a download that never happened.
+      const response = serveWindowsBootstrapMsi(c, {
+        msi,
+        token: issued.token,
+        apiHost,
+      });
 
       writeEnrollmentKeyAudit(c, auth, {
         orgId: parentKey.orgId,
@@ -1092,7 +1212,7 @@ enrollmentKeyRoutes.get(
         },
       });
 
-      return serveWindowsBootstrapMsi(c, { msi, token: issued.token, apiHost });
+      return response;
     }
 
     // Only Windows is supported; macOS/Linux installers were removed.
@@ -1106,6 +1226,7 @@ enrollmentKeyRoutes.get(
 
 const bootstrapTokenBodySchema = z.object({
   maxUsage: z.number().int().min(1).max(1000).default(1),
+  ttlMinutes: z.number().int().min(1).max(MAX_TTL_MINUTES).optional(),
 }).strict();
 
 enrollmentKeyRoutes.post(
@@ -1122,7 +1243,7 @@ enrollmentKeyRoutes.post(
   async (c) => {
     const auth = c.get("auth");
     const { id: keyId } = c.req.valid("param");
-    const { maxUsage } = c.req.valid("json");
+    const { maxUsage, ttlMinutes } = c.req.valid("json");
 
     const [parent] = await db
       .select()
@@ -1139,6 +1260,20 @@ enrollmentKeyRoutes.post(
       return c.json({ error: "Access denied" }, 403);
     }
 
+    // Reject (never clamp) a caller-supplied TTL above the partner cap.
+    const capError = await assertTtlWithinCap(parent.orgId, ttlMinutes);
+    if (capError) return c.json({ error: capError }, 400);
+
+    if (parentKeyTooCloseToExpiry(parent.expiresAt)) {
+      return c.json(
+        {
+          error:
+            "Parent enrollment key expires too soon to build an installer — regenerate the key with a longer TTL",
+        },
+        410,
+      );
+    }
+
     try {
       const {
         id: tokenId,
@@ -1148,6 +1283,7 @@ enrollmentKeyRoutes.post(
         parentEnrollmentKeyId: parent.id,
         createdByUserId: auth.user.id,
         maxUsage,
+        ttlMinutes,
       });
 
       writeEnrollmentKeyAudit(c, auth, {
@@ -1210,6 +1346,10 @@ enrollmentKeyRoutes.post(
       return c.json({ error: "Access denied" }, 403);
     }
 
+    // Reject (never clamp) a caller-supplied TTL above the partner cap.
+    const capError = await assertTtlWithinCap(parentKey.orgId, childTtlMinutes);
+    if (capError) return c.json({ error: capError }, 400);
+
     // Verify key is still usable
     if (parentKey.expiresAt && new Date(parentKey.expiresAt) < new Date()) {
       return c.json({ error: "Enrollment key has expired" }, 410);
@@ -1241,7 +1381,31 @@ enrollmentKeyRoutes.post(
       );
     }
 
-    // Generate a child enrollment key with a fresh TTL independent of parent
+    // Generate a child enrollment key with a fresh TTL independent of parent.
+    //
+    // Upstream's macOS PKG-reachability pre-flight is dropped: this fork is
+    // Windows-only and installerLinkSchema accepts `platform: z.enum(["windows"])`,
+    // so the branch is unreachable dead code here.
+    //
+    // The partner cap bounds KEY LIFETIME (#2776 fix round 3), so an EXPLICIT
+    // operator-supplied childTtlMinutes is clamped — assertTtlWithinCap above
+    // already 400s a clearly over-cap value, and the clamp catches the rest.
+    //
+    // BL4CK fork divergence: when the operator supplies NO ttlMinutes we fall
+    // back to INSTALLER_FIXED_TTL_MINUTES (365 days) UNCLAMPED, not upstream's
+    // clamped CHILD_ENROLLMENT_KEY_TTL_MINUTES (24h). The fork's product promise
+    // is a long-lived, reusable installer link; running the fixed value through
+    // clampTtlToCap would let a partner cap silently truncate every default link
+    // to hours. The cap remains authoritative over anything explicitly asked for.
+    //
+    // The child's TTL is FRESH from mint time, never the parent's remaining
+    // lifetime — otherwise late-in-life parents produce DOA installers.
+    const childExpiresAt = freshChildExpiresAt(
+      childTtlMinutes !== undefined
+        ? await clampTtlToCap(parentKey.orgId, childTtlMinutes)
+        : INSTALLER_FIXED_TTL_MINUTES,
+    );
+
     const rawChildKey = generateEnrollmentKey();
     const childKeyHash = hashEnrollmentKey(rawChildKey);
     const shortCode = await allocateShortCode();
@@ -1255,7 +1419,7 @@ enrollmentKeyRoutes.post(
         key: childKeyHash,
         keySecretHash: parentKey.keySecretHash,
         maxUsage: childMaxUsage,
-        expiresAt: freshChildExpiresAt(childTtlMinutes),
+        expiresAt: childExpiresAt,
         createdBy: auth.user.id,
         shortCode,
         installerPlatform: platform,
@@ -1478,6 +1642,14 @@ async function serveInstaller(
       410,
     );
   }
+  if (parentKeyTooCloseToExpiry(keyRow.expiresAt)) {
+    // Public/unauthenticated path — no parent-key detail (name, id) in the
+    // response, matching the other rejection messages in this function.
+    return c.json(
+      { error: "This download link is expiring too soon to build an installer" },
+      410,
+    );
+  }
   if (!keyRow.siteId) {
     return c.json({ error: "Invalid enrollment key configuration" }, 400);
   }
@@ -1494,6 +1666,20 @@ async function serveInstaller(
   // No per-customer signing and no child key created here.
   // ----------------------------------------------------------------
   if (platform === "windows") {
+    // Encode the filename host BEFORE issuing a bootstrap token, so a URL
+    // that can never enroll (non-https, host not expressible in a Windows
+    // filename) fails loudly with the reason instead of serving an MSI
+    // that silently installs unenrolled — and doesn't burn a token (#2341).
+    let apiHost: string;
+    try {
+      apiHost = windowsFilenameApiHost(serverUrl);
+    } catch (err) {
+      if (err instanceof InstallerFilenameHostError) {
+        return c.json({ error: err.message }, 400);
+      }
+      throw err;
+    }
+
     let issued;
     try {
       issued = await issueBootstrapTokenForKey({
@@ -1503,6 +1689,12 @@ async function serveInstaller(
         // insert with `invalid input syntax for type uuid: ""` (500 on /s/:code).
         createdByUserId: keyRow.createdBy ?? null,
         maxUsage: 1,
+        // Short-link downloads carry no per-request picker (the link was
+        // generated once, by an admin who already chose a TTL for the CHILD
+        // key at /installer-link time). There is no ttlMinutes in scope here
+        // to forward, so the bootstrap token deliberately takes the 24h base
+        // rather than inheriting a stale selection. Deliberate — not an
+        // oversight (#2775).
         installerPlatform: "windows",
       });
     } catch (err) {
@@ -1519,14 +1711,22 @@ async function serveInstaller(
       msi = await fetchRegularMsi();
     } catch (err) {
       console.error("[public-download] Failed to fetch MSI:", err);
+      captureException(err, c);
       return c.json({ error: "MSI not available" }, 503);
     }
 
-    const apiHost = new URL(serverUrl).host;
+    // Build the response BEFORE the audit write — serveWindowsBootstrapMsi
+    // throws on a non-encoded host (defense in depth, #2341), and the audit
+    // trail must not record a download that never happened.
+    const response = serveWindowsBootstrapMsi(c, {
+      msi,
+      token: issued.token,
+      apiHost,
+    });
 
     createAuditLogAsync({
       orgId: keyRow.orgId,
-      actorId: "public",
+      actorId: ANONYMOUS_ACTOR_ID,
       action: "enrollment_key.public_download",
       resourceType: "enrollment_key",
       resourceId: keyRow.id,
@@ -1537,7 +1737,7 @@ async function serveInstaller(
       result: "success",
     });
 
-    return serveWindowsBootstrapMsi(c, { msi, token: issued.token, apiHost });
+    return response;
   }
 
   // Only Windows installers are supported.
@@ -1683,6 +1883,13 @@ publicShortLinkRoutes.get("/:code", async (c) => {
     // if the short-link row is near its own expiry.
     const rawToken = generateEnrollmentKey();
     const tokenHash = hashEnrollmentKey(rawToken);
+    // Clamp (never reject — public, unauthenticated redemption path with no
+    // interactive caller) the child's default TTL to the partner cap (fix
+    // round 3, #2776): the cap bounds KEY LIFETIME, not just interactively-
+    // chosen input, so this short-link download must not hand out a child
+    // key longer-lived than the partner allows just because it uses the
+    // server-constant default.
+    const cappedTtlMinutes = await clampTtlToCap(row.orgId, CHILD_ENROLLMENT_KEY_TTL_MINUTES);
 
     const [downloadKey] = await db
       .insert(enrollmentKeys)
@@ -1692,8 +1899,16 @@ publicShortLinkRoutes.get("/:code", async (c) => {
         name: `${row.name} (short-link download)`,
         key: tokenHash,
         keySecretHash: row.keySecretHash,
+        // BL4CK fork: upstream ships `maxUsage: 1` here (single-use child key).
+        // We deliberately do NOT take that. Fork installer enrollment keys must
+        // be REUSABLE — CHILD_ENROLLMENT_KEY_MAX_USAGE defaults to null, which
+        // the redemption guard in routes/agents/enrollment.ts treats as
+        // UNLIMITED. Do not "fix" this back to 1.
+        //
+        // The upstream partner cap taken on the next line is orthogonal: it
+        // bounds EXPIRY only and never reads or writes maxUsage.
         maxUsage: CHILD_ENROLLMENT_KEY_MAX_USAGE,
-        expiresAt: freshChildExpiresAt(),
+        expiresAt: freshChildExpiresAt(cappedTtlMinutes),
         createdBy: null,
         installerPlatform: row.installerPlatform,
       })

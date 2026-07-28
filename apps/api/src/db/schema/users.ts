@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean, jsonb, pgEnum, customType, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, boolean, jsonb, pgEnum, customType, primaryKey, integer } from 'drizzle-orm/pg-core';
 import { partners, organizations } from './orgs';
 
 // Postgres `bytea` mapped to a Node Buffer. postgres.js returns bytea columns
@@ -60,6 +60,21 @@ export const users = pgTable('users', {
   // var at API startup, gates the cross-tenant /admin/* endpoints (e.g.
   // suspend-for-abuse). Intentionally lives outside the partner role system.
   isPlatformAdmin: boolean('is_platform_admin').notNull().default(false),
+  // Durable authentication-state epochs (core-auth hardening PR 1). Advanced by
+  // services/authLifecycle.ts inside the same transaction as the mutation that
+  // invalidates prior credentials. Access/refresh JWTs carry auth_epoch +
+  // mfa_epoch; a stale claim is rejected in authMiddleware / on /refresh.
+  authEpoch: integer('auth_epoch').notNull().default(1),
+  mfaEpoch: integer('mfa_epoch').notNull().default(1),
+  emailEpoch: integer('email_epoch').notNull().default(1),
+  // SR2-17: the address the user has ASKED to move to. users.email remains the
+  // verified, authoritative identity (login, password reset, CF Access and SSO
+  // all match on it and MUST NOT match this) until a purpose='email_change'
+  // verification token proves control of this address. Cleared on commit and on
+  // cancellation. Deliberately not unique — see the migration.
+  pendingEmail: varchar('pending_email', { length: 255 }),
+  pendingEmailRequestedAt: timestamp('pending_email_requested_at', { withTimezone: true }),
+  passwordResetEpoch: integer('password_reset_epoch').notNull().default(1),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull()
 });

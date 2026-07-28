@@ -1,11 +1,22 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import DeviceList, { type Device } from './DeviceList';
 import { COLUMN_IDS } from './columnVisibility';
+import {
+  DECOMMISSION_BLOCKED_BULK_ACTIONS,
+  INTENTIONALLY_UNGATED_BULK_ACTIONS,
+} from './bulkActionGating';
 
 vi.mock('../../stores/auth', () => ({
   fetchWithAuth: vi.fn(),
+  registerOrgIdProvider: vi.fn(),
+}));
+// Fleet view by default so the Organization column (fleet-only) is available
+// to the column/sort tests; individual tests flip this to org scope.
+const orgScopeState = { currentOrgId: null as string | null, allOrgs: true };
+vi.mock('@/stores/orgStore', () => ({
+  useOrgStore: (selector: (s: typeof orgScopeState) => unknown) => selector(orgScopeState),
 }));
 vi.mock('../remote/ConnectDesktopButton', () => ({
   default: () => null,
@@ -401,6 +412,19 @@ describe('DeviceList — sortable columns (every column sorts on header click)',
     expect(rowOrder(container)).toEqual(['host-zeta', 'host-mid', 'host-acme']);
   });
 
+  it('hides the Organization column entirely in single-org scope (it would repeat the header org)', () => {
+    orgScopeState.currentOrgId = 'org-1';
+    orgScopeState.allOrgs = false;
+    try {
+      render(<DeviceList devices={[baseDevice]} />);
+      expect(screen.queryByTitle('Sort by organization')).toBeNull();
+      expect(screen.queryByText('Acme')).toBeNull();
+    } finally {
+      orgScopeState.currentOrgId = null;
+      orgScopeState.allOrgs = true;
+    }
+  });
+
   it('sorts devices with numeric collation (host-2 before host-10)', () => {
     const devices: Device[] = [
       { ...baseDevice, id: 'b1b1b1b1-0000-0000-0000-000000000001', hostname: 'host-10' },
@@ -706,6 +730,38 @@ describe('DeviceList — sortable columns (every column sorts on header click)',
     expect(cell.textContent).toContain(glyph);
     expect(screen.getByLabelText(label)).toBeInTheDocument();
   });
+
+  it('renders the Server column with the hostname of agentServerUrl (#2288)', () => {
+    seedColumns('serverUrl');
+    const device: Device = {
+      ...baseDevice,
+      id: 'd8d8d8d8-0000-0000-0000-000000000001',
+      hostname: 'host-server',
+      agentServerUrl: 'https://old.example.com:8443',
+    };
+
+    render(<DeviceList devices={[device]} />);
+
+    const cell = screen.getByTestId('device-d8d8d8d8-0000-0000-0000-000000000001-server-url');
+    // Hostname only in the cell; the full URL lives in the title tooltip.
+    expect(cell).toHaveTextContent('old.example.com');
+    expect(cell).toHaveAttribute('title', 'https://old.example.com:8443');
+  });
+
+  it('renders a dash in the Server column when agentServerUrl is missing or malformed (#2288)', () => {
+    seedColumns('serverUrl');
+    const devices: Device[] = [
+      { ...baseDevice, id: 'd9d9d9d9-0000-0000-0000-000000000001', hostname: 'host-null', agentServerUrl: null },
+      { ...baseDevice, id: 'd9d9d9d9-0000-0000-0000-000000000002', hostname: 'host-bad', agentServerUrl: 'not a url' },
+    ];
+
+    render(<DeviceList devices={devices} />);
+
+    // Em-dash dash cell for both the null and the unparseable URL — asserted
+    // exactly so the cell never leaks a raw/blank value.
+    expect(screen.getByTestId('device-d9d9d9d9-0000-0000-0000-000000000001-server-url').textContent).toBe('—');
+    expect(screen.getByTestId('device-d9d9d9d9-0000-0000-0000-000000000002-server-url').textContent).toBe('—');
+  });
 });
 
 describe('DeviceList — pending reboot badge', () => {
@@ -748,5 +804,558 @@ describe('DeviceList — pending reboot badge', () => {
     render(<DeviceList devices={[device]} />);
 
     expect(screen.queryByTestId(`device-${device.id}-pending-reboot-badge`)).toBeNull();
+  });
+});
+
+describe('DeviceList — linked multi-boot profiles (#2138)', () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+  });
+
+  const winId = '61111111-1111-1111-1111-111111111111';
+  const linId = '62222222-2222-2222-2222-222222222222';
+  const plainId = '63333333-3333-3333-3333-333333333333';
+
+  const mkLinked = (over: Partial<Device>): Device => ({
+    ...baseDevice,
+    linkGroupId: 'group-1',
+    ...over,
+  });
+
+  const winOnline = () =>
+    mkLinked({ id: winId, hostname: 'bootbox', status: 'online', os: 'windows' });
+  const linOffline = () =>
+    mkLinked({
+      id: linId,
+      hostname: 'bootbox',
+      status: 'offline',
+      os: 'linux',
+      osVersion: 'ubuntu 24.04',
+      agentVersion: '0.66.0',
+    });
+
+  it('renders the offline sibling as an expected-offline strip beneath the online member', () => {
+    render(<DeviceList devices={[winOnline(), linOffline()]} />);
+
+    const strip = screen.getByTestId(`device-${linId}-inactive-strip`);
+    expect(strip).toBeInTheDocument();
+    expect(strip.textContent).toContain('Expected offline');
+    expect(strip.textContent).toContain('inactive');
+    expect(strip.textContent).toContain('Agent v0.66.0');
+    // The sibling no longer renders as a full row: its checkbox is gone.
+    expect(screen.queryByLabelText('Select bootbox')).not.toBeNull();
+    // Only the anchor row's checkbox exists (strip rows carry no checkbox).
+    expect(screen.getAllByLabelText('Select bootbox')).toHaveLength(1);
+  });
+
+  it('navigates to the strip device on click (strips stay clickable)', () => {
+    const onSelect = vi.fn();
+    render(<DeviceList devices={[winOnline(), linOffline()]} onSelect={onSelect} />);
+
+    fireEvent.click(screen.getByTestId(`device-${linId}-inactive-strip`));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0]![0].id).toBe(linId);
+  });
+
+  it('excludes strip devices from select-all (strips are not selectable rows)', () => {
+    const onBulkAction = vi.fn();
+    render(
+      <DeviceList
+        devices={[winOnline(), linOffline(), { ...baseDevice, id: plainId, hostname: 'plain' }]}
+        onBulkAction={onBulkAction}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText('Select all devices on this page'));
+    fireEvent.click(screen.getByRole('button', { name: /bulk actions/i }));
+    fireEvent.click(screen.getByText('Reboot Selected'));
+
+    expect(onBulkAction).toHaveBeenCalledTimes(1);
+    const selected = onBulkAction.mock.calls[0]![1] as Device[];
+    expect(selected.map((d) => d.id).sort()).toEqual([winId, plainId].sort());
+  });
+
+  it('marks all-offline group members with the left-edge group bar and no strips', () => {
+    const winOff = mkLinked({ id: winId, hostname: 'bootbox', status: 'offline' });
+    const linOff = linOffline();
+    render(<DeviceList devices={[winOff, linOff]} />);
+
+    expect(screen.getByTestId(`device-${winId}-group-bar`)).toBeInTheDocument();
+    expect(screen.getByTestId(`device-${linId}-group-bar`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`device-${linId}-inactive-strip`)).toBeNull();
+  });
+
+  it('renders full rows with no markers when two members are online (no conflict state)', () => {
+    const winOn = winOnline();
+    const linOn = mkLinked({ id: linId, hostname: 'bootbox', status: 'online', os: 'linux' });
+    render(<DeviceList devices={[winOn, linOn]} />);
+
+    expect(screen.queryByTestId(`device-${linId}-inactive-strip`)).toBeNull();
+    expect(screen.queryByTestId(`device-${winId}-group-bar`)).toBeNull();
+    expect(screen.getAllByLabelText('Select bootbox')).toHaveLength(2);
+  });
+
+  it('flattens the list when the "Collapse linked inactive profiles" toggle is turned off', () => {
+    render(<DeviceList devices={[winOnline(), linOffline()]} />);
+
+    expect(screen.getByTestId(`device-${linId}-inactive-strip`)).toBeInTheDocument();
+
+    const toggle = screen.getByTestId('collapse-linked-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByTestId(`device-${linId}-inactive-strip`)).toBeNull();
+    expect(screen.getAllByLabelText('Select bootbox')).toHaveLength(2);
+  });
+
+  it('hides the toggle entirely when no device is linked', () => {
+    render(<DeviceList devices={[baseDevice]} />);
+    expect(screen.queryByTestId('collapse-linked-toggle')).toBeNull();
+  });
+});
+
+// #2251 — the default view hides decommissioned devices; the "X of Y devices"
+// count line (rendered above the table) must say so and offer the existing
+// unhide mechanism (the Decommissioned status filter, applied upstream via
+// onShowDecommissioned).
+describe('DeviceList — hidden-decommissioned hint (#2251)', () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+  });
+
+  const decomDevice: Device = {
+    ...baseDevice,
+    id: '99999999-9999-9999-9999-999999999999',
+    hostname: 'host-decom',
+    status: 'decommissioned',
+  };
+
+  it('shows the hidden count and calls onShowDecommissioned when "show" is clicked', () => {
+    const onShow = vi.fn();
+    render(
+      <DeviceList
+        devices={[baseDevice, decomDevice]}
+        onShowDecommissioned={onShow}
+      />
+    );
+
+    const hint = screen.getByTestId('decommissioned-hidden-hint');
+    expect(hint).toHaveTextContent('1 decommissioned hidden');
+
+    fireEvent.click(screen.getByTestId('decommissioned-hidden-show'));
+    expect(onShow).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the count-line total consistent with the hidden rows (excludes decommissioned)', () => {
+    render(
+      <DeviceList
+        devices={[baseDevice, decomDevice]}
+        onShowDecommissioned={vi.fn()}
+      />
+    );
+
+    // 1 visible of 1 non-decommissioned — the hidden row is called out by the
+    // hint instead of silently vanishing from the denominator.
+    expect(screen.getByText(/1 of 1 devices/)).toBeInTheDocument();
+  });
+
+  it('renders no hint when decommissioned devices are already visible (includeDecommissioned)', () => {
+    render(
+      <DeviceList
+        devices={[baseDevice, decomDevice]}
+        includeDecommissioned
+        onShowDecommissioned={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId('decommissioned-hidden-hint')).toBeNull();
+    // Denominator includes the now-visible decommissioned row.
+    expect(screen.getByText(/2 of 2 devices/)).toBeInTheDocument();
+  });
+
+  it('renders no hint when there are no decommissioned devices', () => {
+    render(<DeviceList devices={[baseDevice]} onShowDecommissioned={vi.fn()} />);
+    expect(screen.queryByTestId('decommissioned-hidden-hint')).toBeNull();
+  });
+
+  it('renders no hint when no onShowDecommissioned handler is wired (standalone render)', () => {
+    render(<DeviceList devices={[baseDevice, decomDevice]} />);
+    expect(screen.queryByTestId('decommissioned-hidden-hint')).toBeNull();
+  });
+});
+
+describe('DeviceList — vm_host guest nesting (#2308)', () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+  });
+
+  const hostId = '71111111-1111-1111-1111-111111111111';
+  const vm1Id = '72222222-2222-2222-2222-222222222222';
+  const vm2Id = '73333333-3333-3333-3333-333333333333';
+
+  const mkVm = (over: Partial<Device>): Device => ({
+    ...baseDevice,
+    linkGroupId: 'vm-group-1',
+    status: 'online',
+    ...over,
+  });
+
+  const hostDev = () =>
+    mkVm({ id: hostId, hostname: 'hv-01', linkGroupRole: 'host' });
+  const guest1 = () =>
+    mkVm({ id: vm1Id, hostname: 'vm-web', os: 'linux', linkGroupRole: 'guest' });
+  const guest2 = () =>
+    mkVm({ id: vm2Id, hostname: 'vm-db', os: 'linux', linkGroupRole: 'guest' });
+
+  it('renders guests as full selectable rows nested beneath the host', () => {
+    render(<DeviceList devices={[guest1(), hostDev(), guest2()]} />);
+
+    // Guests keep their own checkboxes — fully managed rows, not strips.
+    expect(screen.getByLabelText('Select hv-01')).toBeInTheDocument();
+    expect(screen.getByLabelText('Select vm-web')).toBeInTheDocument();
+    expect(screen.getByLabelText('Select vm-db')).toBeInTheDocument();
+    // Nesting affordances: toggle on the host, glyphs on the guests.
+    expect(screen.getByTestId(`device-${hostId}-vm-toggle`)).toBeInTheDocument();
+    expect(screen.getByTestId(`device-${vm1Id}-vm-guest-glyph`)).toBeInTheDocument();
+    expect(screen.getByTestId(`device-${vm2Id}-vm-guest-glyph`)).toBeInTheDocument();
+    // No multiboot treatment leaks in.
+    expect(screen.queryByTestId(`device-${vm1Id}-inactive-strip`)).toBeNull();
+    expect(screen.queryByTestId(`device-${hostId}-group-bar`)).toBeNull();
+  });
+
+  it('collapses guests behind a summary strip and expands them again', () => {
+    render(<DeviceList devices={[hostDev(), guest1(), guest2()]} />);
+
+    const toggle = screen.getByTestId(`device-${hostId}-vm-toggle`);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(toggle);
+    // Guests are hidden; a summary strip stands in.
+    expect(screen.queryByLabelText('Select vm-web')).toBeNull();
+    expect(screen.queryByLabelText('Select vm-db')).toBeNull();
+    const strip = screen.getByTestId(`device-${hostId}-vm-collapsed-strip`);
+    expect(strip.textContent).toContain('2 guest VMs hidden');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    // Clicking the strip expands again.
+    fireEvent.click(strip);
+    expect(screen.getByLabelText('Select vm-web')).toBeInTheDocument();
+    expect(screen.queryByTestId(`device-${hostId}-vm-collapsed-strip`)).toBeNull();
+  });
+
+  it('excludes collapsed (hidden) guests from select-all', () => {
+    const onBulkAction = vi.fn();
+    render(<DeviceList devices={[hostDev(), guest1(), guest2()]} onBulkAction={onBulkAction} />);
+
+    fireEvent.click(screen.getByTestId(`device-${hostId}-vm-toggle`));
+    fireEvent.click(screen.getByLabelText('Select all devices on this page'));
+    fireEvent.click(screen.getByRole('button', { name: /bulk actions/i }));
+    fireEvent.click(screen.getByText('Reboot Selected'));
+
+    expect(onBulkAction).toHaveBeenCalledTimes(1);
+    const selected = onBulkAction.mock.calls[0]![1] as Device[];
+    expect(selected.map((d) => d.id)).toEqual([hostId]);
+  });
+
+  it('offers the "Link as VM host + guests" bulk action when 2+ devices are selected', () => {
+    const onBulkAction = vi.fn();
+    const plain = { ...baseDevice, id: '74444444-4444-4444-4444-444444444444', hostname: 'plain-b' };
+    render(<DeviceList devices={[baseDevice, plain]} onBulkAction={onBulkAction} />);
+
+    fireEvent.click(screen.getByLabelText('Select all devices on this page'));
+    fireEvent.click(screen.getByRole('button', { name: /bulk actions/i }));
+    fireEvent.click(screen.getByTestId('bulk-link-vm-host'));
+
+    expect(onBulkAction).toHaveBeenCalledTimes(1);
+    expect(onBulkAction.mock.calls[0]![0]).toBe('link-vm-host');
+    expect((onBulkAction.mock.calls[0]![1] as Device[]).map((d) => d.id).sort()).toEqual(
+      [baseDevice.id, plain.id].sort(),
+    );
+  });
+
+  it('renders guests as plain ungrouped rows when the host is not on the page', () => {
+    render(<DeviceList devices={[guest1(), guest2()]} />);
+
+    expect(screen.queryByTestId(`device-${vm1Id}-vm-guest-glyph`)).toBeNull();
+    expect(screen.queryByTestId(`device-${vm2Id}-vm-guest-glyph`)).toBeNull();
+    expect(screen.getByLabelText('Select vm-web')).toBeInTheDocument();
+    expect(screen.getByLabelText('Select vm-db')).toBeInTheDocument();
+  });
+});
+
+describe('DeviceList — row-menu action gating (#2426)', () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+  });
+
+  const openRowMenu = () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Device actions' }));
+  };
+
+  const runScriptBtn = () => screen.getByRole('button', { name: /run script/i });
+
+  // The headline bug: a decommissioned device is agent-less and can NEVER claim
+  // a queued command. It is the one status the API genuinely rejects
+  // (commands.ts, scriptExecution.ts:118). #2315's "show decommissioned" toggle
+  // made these rows trivially reachable from the list.
+  it('disables Run Script for a decommissioned device, with a tooltip saying why', () => {
+    const onAction = vi.fn();
+    const device: Device = { ...baseDevice, status: 'decommissioned' };
+    render(<DeviceList devices={[device]} onAction={onAction} includeDecommissioned />);
+    openRowMenu();
+
+    expect(runScriptBtn()).toBeDisabled();
+    expect(runScriptBtn()).toHaveAttribute('title', 'Device is decommissioned');
+    fireEvent.click(runScriptBtn());
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  // REGRESSION GUARD. Run Script is a QUEUED command: the API inserts a pending
+  // device_commands row and the agent claims it on its next poll, so running a
+  // script against an offline machine works — it executes on reconnect. An
+  // earlier cut of this fix gated Run Script on `!== "online"` (copying the
+  // live-session siblings, on the strength of a code comment that turned out to
+  // be false) and would have silently REMOVED that capability. This test fails
+  // if anyone re-introduces that gate.
+  it('keeps Run Script ENABLED for an offline device — the command queues and runs on reconnect', () => {
+    const onAction = vi.fn();
+    const device: Device = { ...baseDevice, status: 'offline' };
+    render(<DeviceList devices={[device]} onAction={onAction} />);
+    openRowMenu();
+
+    expect(runScriptBtn()).toBeEnabled();
+    expect(runScriptBtn()).not.toHaveAttribute('title');
+    fireEvent.click(runScriptBtn());
+    expect(onAction).toHaveBeenCalledWith('run-script', device);
+  });
+
+  // Same argument for the other non-online, non-decommissioned states: the agent
+  // may be unreachable right now, but the command is still deliverable later.
+  it.each(['maintenance', 'quarantined', 'updating', 'pending'] as const)(
+    'keeps Run Script enabled for a %s device (queued command, not a live session)',
+    (status) => {
+      const onAction = vi.fn();
+      const device: Device = { ...baseDevice, status };
+      render(<DeviceList devices={[device]} onAction={onAction} />);
+      openRowMenu();
+
+      expect(runScriptBtn()).toBeEnabled();
+      fireEvent.click(runScriptBtn());
+      expect(onAction).toHaveBeenCalledWith('run-script', device);
+    },
+  );
+
+  it('emits run-script for an online device', () => {
+    const onAction = vi.fn();
+    render(<DeviceList devices={[baseDevice]} onAction={onAction} />);
+    openRowMenu();
+
+    expect(runScriptBtn()).toBeEnabled();
+    fireEvent.click(runScriptBtn());
+    expect(onAction).toHaveBeenCalledWith('run-script', baseDevice);
+  });
+
+  // Remote Terminal really IS a live session (terminalWs rejects anything but
+  // online), so its `!== "online"` gate is correct and applies to every
+  // non-online status.
+  //
+  // The per-status tooltip map is exercised across ALL six non-online statuses:
+  // it maps each to a distinct string, so a transposed entry (quarantined →
+  // "Device is updating") would otherwise ship silently.
+  it.each([
+    ['offline', 'Device is offline'],
+    ['maintenance', 'Device is in maintenance mode'],
+    ['decommissioned', 'Device is decommissioned'],
+    ['quarantined', 'Device is quarantined'],
+    ['updating', 'Device is updating'],
+    ['pending', 'Device is pending enrollment'],
+  ] as const)(
+    'disables Remote Terminal for a %s device with the status-accurate tooltip',
+    (status, expectedTitle) => {
+      render(
+        <DeviceList devices={[{ ...baseDevice, status }]} includeDecommissioned />,
+      );
+      openRowMenu();
+
+      const btn = screen.getByRole('button', { name: /remote terminal/i });
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', expectedTitle);
+    },
+  );
+
+  // Reboot is a QUEUED command, not a live session: list view and grid view
+  // (DeviceCard) both gate it with isCommandQueueable, so decommissioned is the
+  // only status that disables it — an offline device keeps Reboot enabled and
+  // the command runs on reconnect.
+  it.each(['offline', 'maintenance', 'quarantined', 'updating', 'pending'] as const)(
+    'keeps Reboot enabled for a %s device and dispatches (runs on reconnect)',
+    (status) => {
+      const onAction = vi.fn();
+      const device: Device = { ...baseDevice, status };
+      render(<DeviceList devices={[device]} onAction={onAction} />);
+      openRowMenu();
+
+      const btn = screen.getByRole('button', { name: /^reboot$/i });
+      expect(btn).toBeEnabled();
+      expect(btn).not.toHaveAttribute('title');
+      fireEvent.click(btn);
+      expect(onAction).toHaveBeenCalledWith('reboot', device);
+    },
+  );
+
+  it('disables Reboot only for a decommissioned device, and it does not dispatch', () => {
+    const onAction = vi.fn();
+    render(
+      <DeviceList
+        devices={[{ ...baseDevice, status: 'decommissioned' }]}
+        onAction={onAction}
+        includeDecommissioned
+      />,
+    );
+    openRowMenu();
+
+    const btn = screen.getByRole('button', { name: /^reboot$/i });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Device is decommissioned');
+    fireEvent.click(btn);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  // Guards the other direction for the live-session gate: without this, setting
+  // Remote Terminal to permanently disabled passes the whole suite, because the
+  // only other assertion about it covers non-online statuses.
+  it('keeps Remote Terminal enabled and dispatching for an online device', () => {
+    const onAction = vi.fn();
+    render(<DeviceList devices={[baseDevice]} onAction={onAction} />);
+    openRowMenu();
+
+    const btn = screen.getByRole('button', { name: /remote terminal/i });
+    expect(btn).toBeEnabled();
+    fireEvent.click(btn);
+    expect(onAction).toHaveBeenCalledWith('terminal', baseDevice);
+  });
+
+  // #2630 a11y: the disabled reason must be reachable without hover — see the
+  // matching suite in DeviceCard.gating.test.tsx for the rationale.
+  it('exposes the gate reason as visible text tied to the disabled action', () => {
+    render(<DeviceList devices={[{ ...baseDevice, status: 'offline' }]} />);
+    openRowMenu();
+
+    const el = screen.getByTestId(`device-${baseDevice.id}-action-gate-hint`);
+    expect(el).toHaveTextContent('Device is offline');
+    expect(screen.getByRole('button', { name: /remote terminal/i }))
+      .toHaveAttribute('aria-describedby', el.id);
+    // Reboot is enabled on offline, so it must NOT claim a disabled reason.
+    expect(screen.getByRole('button', { name: /^reboot$/i }))
+      .not.toHaveAttribute('aria-describedby');
+  });
+
+  it('renders no gate hint for an online device', () => {
+    render(<DeviceList devices={[baseDevice]} />);
+    openRowMenu();
+    expect(screen.queryByTestId(`device-${baseDevice.id}-action-gate-hint`)).toBeNull();
+  });
+
+  // Wake (Wake-on-LAN) is the deliberate exception — it exists precisely to
+  // target an offline device. Guards against a future "gate every row-menu
+  // action" sweep killing the one action that's only useful when offline.
+  it('leaves Wake enabled on an offline device, and renders it only when offline', () => {
+    render(<DeviceList devices={[{ ...baseDevice, status: 'offline' }]} />);
+    openRowMenu();
+    expect(screen.getByRole('button', { name: /^wake$/i })).toBeEnabled();
+
+    // Wake is offline-only by design — it must not appear on an online row.
+    cleanup();
+    render(<DeviceList devices={[baseDevice]} />);
+    openRowMenu();
+    expect(screen.queryByRole('button', { name: /^wake$/i })).toBeNull();
+  });
+});
+
+// #2465 CONTRACT: the bulk-action status gate lives in DevicesPage, but the
+// action strings it gates are emitted from HERE. Nothing else binds the two, so
+// a gate that names an action DeviceList no longer emits — or misses one it
+// newly does — degrades silently: DECOMMISSIONED devices quietly start receiving
+// commands the API refuses outright, and every behavioural test stays green,
+// because a gate's only failure mode is doing nothing.
+//
+// (Offline devices receiving queued commands is the INTENDED behaviour, not the
+// regression — they run on reconnect. That distinction is the whole of #2465.)
+//
+// This test enumerates the REAL bulk bar and forces every action it emits into
+// exactly one of the two policy sets. Add a bulk button without classifying it
+// and this fails, with the offending string named.
+describe('DeviceList — bulk actions are all classified by the status gate (#2465)', () => {
+  // Two online devices: the link-* items only render at selectedIds.size >= 2,
+  // so a 1-device selection would hide them from the enumeration.
+  const bulkDevices = (): Device[] => [
+    { ...baseDevice, id: '71111111-1111-1111-1111-111111111111', hostname: 'bulk-a' },
+    { ...baseDevice, id: '72222222-2222-2222-2222-222222222222', hostname: 'bulk-b' },
+  ];
+
+  const openBulkMenu = () => {
+    fireEvent.click(screen.getByLabelText('Select all devices on this page'));
+    fireEvent.click(screen.getByRole('button', { name: /bulk actions/i }));
+    return screen.getByTestId('bulk-actions-menu');
+  };
+
+  /**
+   * Clicking an item closes the menu and clears the selection, so each button is
+   * driven from a fresh render and identified by index within the live menu.
+   */
+  function emittedBulkActions(): string[] {
+    const probe = render(<DeviceList devices={bulkDevices()} onBulkAction={vi.fn()} />);
+    const buttonCount = within(openBulkMenu()).getAllByRole('button').length;
+    probe.unmount();
+    expect(buttonCount).toBeGreaterThan(0); // menu must actually render items
+
+    const emitted: string[] = [];
+    for (let i = 0; i < buttonCount; i++) {
+      const onBulkAction = vi.fn();
+      const view = render(<DeviceList devices={bulkDevices()} onBulkAction={onBulkAction} />);
+      const buttons = within(openBulkMenu()).getAllByRole('button');
+      fireEvent.click(buttons[i]!);
+      expect(onBulkAction).toHaveBeenCalledTimes(1);
+      emitted.push(onBulkAction.mock.calls[0]![0] as string);
+      view.unmount();
+    }
+    return emitted;
+  }
+
+  it('classifies every emitted bulk action as either decommission-gated or explicitly exempt', () => {
+    const emitted = emittedBulkActions();
+
+    const unclassified = emitted.filter(
+      action =>
+        !DECOMMISSION_BLOCKED_BULK_ACTIONS.has(action) && !INTENTIONALLY_UNGATED_BULK_ACTIONS.has(action),
+    );
+    expect(
+      unclassified,
+      `Unclassified bulk action(s): ${unclassified.join(', ')}. Add each to DECOMMISSION_BLOCKED_BULK_ACTIONS `
+        + '(it sends an agent command, which the API refuses for decommissioned devices) or to '
+        + 'INTENTIONALLY_UNGATED_BULK_ACTIONS (with a reason) in bulkActionGating.ts.',
+    ).toEqual([]);
+
+    // Sanity: the enumeration actually saw the two actions #2465 is about, so a
+    // silently-empty menu can't make this test vacuously pass.
+    expect(emitted).toContain('reboot');
+    expect(emitted).toContain('run-script');
+  });
+
+  it('keeps wake on the ungated side of the contract', () => {
+    // The exemption that most looks like an oversight to a future reader:
+    // Wake targets devices that are not running, by design. Pinned here at the
+    // policy level, and behaviourally in DevicesPage.test.tsx.
+    expect(emittedBulkActions()).toContain('wake');
+    expect(INTENTIONALLY_UNGATED_BULK_ACTIONS.has('wake')).toBe(true);
+    expect(DECOMMISSION_BLOCKED_BULK_ACTIONS.has('wake')).toBe(false);
+  });
+
+  it('never classifies an action as both gated and exempt', () => {
+    const both = [...DECOMMISSION_BLOCKED_BULK_ACTIONS].filter(a =>
+      INTENTIONALLY_UNGATED_BULK_ACTIONS.has(a),
+    );
+    expect(both).toEqual([]);
   });
 });

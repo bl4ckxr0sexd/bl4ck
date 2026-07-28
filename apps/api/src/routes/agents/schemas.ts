@@ -26,6 +26,10 @@ const desktopAccessReasonSchema = z.enum([
   'virtual_display_unavailable',
   'unsupported_os',
   'manual_install',
+  'no_display_session',
+  'wayland_unsupported',
+  'x11_connect_failed',
+  'x11_auth_failed',
 ]);
 
 export const enrollSchema = z.object({
@@ -154,6 +158,8 @@ export const heartbeatSchema = z.object({
   // recovers to monitoring — previously only watchdog FAILOVER heartbeats wrote
   // it, leaving the dashboard stale and the server re-sending watchdogUpgradeTo.
   watchdogVersion: z.string().max(20).optional().catch(undefined),
+  // #2288 — the control-plane base URL the agent used for this heartbeat.
+  serverUrl: z.string().max(512).optional().catch(undefined),
   ipHistoryUpdate: z.object({
     deviceId: z.string().optional().catch(undefined),
     currentIPs: z.array(ipEntrySchema).max(100).nullish().catch(undefined),
@@ -196,6 +202,24 @@ export const heartbeatSchema = z.object({
     timeRemainingMinutes: z.number().int().min(0).optional().catch(undefined),
     timeToFullMinutes: z.number().int().min(0).optional().catch(undefined),
   }).optional().catch(undefined),
+  // Agent's own Go runtime memory gauges (#2389). Informational — a bad value
+  // drops the whole object (.catch) rather than 400-ing the heartbeat.
+  // Persisted into device_metrics.custom_metrics so fleet-wide agent memory
+  // leaks are visible without shell access to the device.
+  agentRuntime: z.object({
+    heapAllocBytes: uint64Counter,
+    heapInuseBytes: uint64Counter,
+    heapReleasedBytes: uint64Counter,
+    sysBytes: uint64Counter,
+    numGc: z.number().int().min(0),
+    goroutines: z.number().int().min(0),
+    // Worker-pool wedge gauges (#2400): commands currently executing on the
+    // pool and how many are overdue past their in-flight watchdog tier.
+    // Per-field optional + .catch so agents predating #2400 (which omit
+    // them) don't lose the whole agentRuntime object.
+    commandsInFlight: z.number().int().min(0).optional().catch(undefined),
+    commandsOverdue: z.number().int().min(0).optional().catch(undefined),
+  }).optional().catch(undefined),
   role: z.enum(['agent', 'watchdog']).optional(),
   watchdogState: z.string().optional().catch(undefined),
   // Watchdog-only: 24h restart accounting for the main agent (#799 Layer B).
@@ -212,6 +236,11 @@ export const heartbeatSchema = z.object({
     kfmFolderStates: z.record(z.string(), z.string()).default({}),
     mountedLibraries: z.array(z.string().max(1024)).default([]),
     entitledLibraries: z.array(z.string().max(1024)).default([]),
+    // Cap mirrored by the agent (onedrivehelper_windows.go readDeviceState) —
+    // lowering it silently degrades reports from already-shipped agents. The
+    // field-level .catch([]) means a violating value (17+ UPNs, oversized
+    // string, non-array) drops ONLY the UPNs, not the whole device-state block.
+    signedInUpns: z.array(z.string().max(320)).max(16).default([]).catch([]),
     driftEntries: z.array(z.record(z.string(), z.unknown())).default([]),
   }).optional().catch(undefined),
 });
@@ -633,7 +662,15 @@ export const submitEventLogsSchema = z.object({
     category: z.enum(['security', 'hardware', 'application', 'system']),
     source: z.string().min(1),
     eventId: z.string().optional(),
-    message: z.string().min(1),
+    // The agent truncates every event message to 500 chars on all collector
+    // paths (eventlogs_{windows,darwin,linux}.go), but that cap is agent-side
+    // only — a compromised or older agent could POST arbitrarily large messages
+    // into device_event_logs, which carries a GIN trigram index (search) that
+    // bloats super-linearly in value size. Re-bound it server-side. 2000 (4x the
+    // agent truncation) leaves headroom for the one un-truncated darwin path
+    // (crash-report synthesized messages, eventlogs_darwin.go) and future
+    // collectors while still hard-bounding the abuse vector. (#2642)
+    message: z.string().min(1).max(2000),
     details: z.record(z.string(), z.any()).optional().refine(
       (val) => !val || JSON.stringify(val).length <= 65536,
       { message: 'Object too large (max 64KB)' }
@@ -651,7 +688,9 @@ export const changeTypeValues = [
   'startup',
   'network',
   'scheduled_task',
-  'user_account'
+  'user_account',
+  'hardware',
+  'os_version'
 ] as const;
 
 export const changeActionValues = [

@@ -69,17 +69,35 @@ services:
     platform: linux/amd64
     container_name: breeze-api
     restart: unless-stopped
+    # Keep the root filesystem writable while redis_password is environment-backed;
+    # standalone Compose supports only file-backed secrets for read-only services.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     environment:
       NODE_ENV: production
       API_PORT: 3001
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      # Production requires ONE of DATABASE_URL_APP / BREEZE_APP_DB_PASSWORD /
+      # POSTGRES_PASSWORD to configure the unprivileged request role (#2368).
+      # All three must be mapped here — the validator names POSTGRES_PASSWORD as
+      # a valid option, and compose only interpolates vars listed in this block,
+      # so omitting it makes that advice silently fail.
       DATABASE_URL_APP: ${DATABASE_URL_APP:-}
       BREEZE_APP_DB_PASSWORD: ${BREEZE_APP_DB_PASSWORD:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      PARTNER_API_CURSOR_SIGNING_KEY: ${PARTNER_API_CURSOR_SIGNING_KEY:?Set PARTNER_API_CURSOR_SIGNING_KEY in .env}
       AGENT_ENROLLMENT_SECRET: ${AGENT_ENROLLMENT_SECRET:?Set AGENT_ENROLLMENT_SECRET in .env}
+      # Backup control-plane URL pushed to agents via heartbeat (#2288);
+      # see docs/deploy/agent-server-url-migration.md
+      AGENT_BACKUP_SERVER_URL: ${AGENT_BACKUP_SERVER_URL:-}
       BREEZE_BOOTSTRAP_ADMIN_EMAIL: ${BREEZE_BOOTSTRAP_ADMIN_EMAIL:-}
       BREEZE_BOOTSTRAP_ADMIN_PASSWORD: ${BREEZE_BOOTSTRAP_ADMIN_PASSWORD:-}
       BREEZE_BOOTSTRAP_ADMIN_NAME: ${BREEZE_BOOTSTRAP_ADMIN_NAME:-}
@@ -95,8 +113,17 @@ services:
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?Set APP_ENCRYPTION_KEY in .env}
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY in .env}
       ENROLLMENT_KEY_PEPPER: ${ENROLLMENT_KEY_PEPPER:?Set ENROLLMENT_KEY_PEPPER in .env}
+      # Enrollment link / bootstrap token lifetimes + the expired-key sweep
+      # (#2775, #2776). Baked defaults rather than `:-}`: an unset var rendered
+      # as `VAR: ""` reaches the container SET to an empty string, which a
+      # `Number(process.env.X ?? default)` reader turns into 0 — a 0-minute TTL
+      # mints tokens that are already expired.
+      CHILD_ENROLLMENT_KEY_TTL_MINUTES: ${CHILD_ENROLLMENT_KEY_TTL_MINUTES:-1440}
+      INSTALLER_BOOTSTRAP_TOKEN_TTL_MINUTES: ${INSTALLER_BOOTSTRAP_TOKEN_TTL_MINUTES:-1440}
+      INSTALLER_PARENT_MIN_REMAINING_SECONDS: ${INSTALLER_PARENT_MIN_REMAINING_SECONDS:-60}
+      ENROLLMENT_KEY_CLEANUP_ENABLED: ${ENROLLMENT_KEY_CLEANUP_ENABLED:-true}
+      ENROLLMENT_KEY_PURGE_AFTER_DAYS: ${ENROLLMENT_KEY_PURGE_AFTER_DAYS:-7}
       MFA_RECOVERY_CODE_PEPPER: ${MFA_RECOVERY_CODE_PEPPER:?Set MFA_RECOVERY_CODE_PEPPER in .env}
-      TRANSFER_STORAGE_PATH: /data/transfers
       PATCH_REPORT_STORAGE_PATH: /data/patch-reports
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_JSON: "true"
@@ -117,6 +144,32 @@ services:
       # stays dark (env.ts defaults to ''). Threaded through compose so the feature
       # can be enabled from .env. Same gap class as IS_HOSTED above.
       CLIENT_AI_ENTRA_CLIENT_ID: ${CLIENT_AI_ENTRA_CLIENT_ID:-}
+      # Optional customer Graph-read onboarding. The executor is intentionally
+      # not part of this generic Compose stack: deploy it separately with a
+      # workload identity, private ingress, and controlled HTTPS egress.
+      M365_CUSTOMER_GRAPH_READ_ONBOARDING_ENABLED: ${M365_CUSTOMER_GRAPH_READ_ONBOARDING_ENABLED:-false}
+      M365_CUSTOMER_GRAPH_READ_ONBOARDING_ORG_IDS: ${M365_CUSTOMER_GRAPH_READ_ONBOARDING_ORG_IDS:-}
+      M365_CUSTOMER_GRAPH_READ_CLIENT_ID: ${M365_CUSTOMER_GRAPH_READ_CLIENT_ID:-}
+      M365_CUSTOMER_GRAPH_READ_CALLBACK_URL: ${M365_CUSTOMER_GRAPH_READ_CALLBACK_URL:-}
+      M365_CUSTOMER_GRAPH_READ_CREDENTIAL_VERSION: ${M365_CUSTOMER_GRAPH_READ_CREDENTIAL_VERSION:-}
+      M365_CUSTOMER_GRAPH_READ_VAULT_REF: ${M365_CUSTOMER_GRAPH_READ_VAULT_REF:-}
+      M365_GRAPH_READ_EXECUTOR_URL: ${M365_GRAPH_READ_EXECUTOR_URL:-}
+      M365_GRAPH_READ_EXECUTOR_AUDIENCE: ${M365_GRAPH_READ_EXECUTOR_AUDIENCE:-m365-graph-read-executor}
+      M365_GRAPH_READ_EXECUTOR_SIGNING_KID: ${M365_GRAPH_READ_EXECUTOR_SIGNING_KID:-}
+      M365_GRAPH_READ_EXECUTOR_SIGNING_PRIVATE_JWK_FILE: /run/secrets/m365_graph_read_executor_signing_private_jwk
+      # Optional customer Graph-actions (write) executor. Same isolation model
+      # as the Graph-read executor above: intentionally not part of this
+      # generic Compose stack — deploy it separately with a workload identity,
+      # private ingress, and controlled HTTPS egress. Disabled by default.
+      M365_GRAPH_ACTIONS_TOOLS_ENABLED: ${M365_GRAPH_ACTIONS_TOOLS_ENABLED:-false}
+      M365_GRAPH_ACTIONS_TOOLS_ORG_IDS: ${M365_GRAPH_ACTIONS_TOOLS_ORG_IDS:-}
+      M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID: ${M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID:-}
+      M365_CUSTOMER_GRAPH_ACTIONS_CREDENTIAL_VERSION: ${M365_CUSTOMER_GRAPH_ACTIONS_CREDENTIAL_VERSION:-}
+      M365_CUSTOMER_GRAPH_ACTIONS_VAULT_REF: ${M365_CUSTOMER_GRAPH_ACTIONS_VAULT_REF:-}
+      M365_GRAPH_ACTIONS_EXECUTOR_URL: ${M365_GRAPH_ACTIONS_EXECUTOR_URL:-}
+      M365_GRAPH_ACTIONS_EXECUTOR_AUDIENCE: ${M365_GRAPH_ACTIONS_EXECUTOR_AUDIENCE:-m365-graph-actions-executor}
+      M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_KID: ${M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_KID:-}
+      M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_FILE: /run/secrets/m365_graph_actions_executor_signing_private_jwk
       APP_VERSION: ${BREEZE_VERSION:?Set BREEZE_VERSION in .env}
       BREEZE_VERSION: ${BREEZE_VERSION:?Set BREEZE_VERSION in .env}
       BINARY_SOURCE: github
@@ -142,17 +195,55 @@ services:
       TURN_CREDENTIAL_TTL_SECONDS: ${TURN_CREDENTIAL_TTL_SECONDS:-600}
       TRUST_PROXY_HEADERS: "true"
       TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-172.30.0.11/32}"
+      # This reference stack is fronted by Cloudflare (cloudflared → Caddy), so
+      # CF-Connecting-IP is authoritative. Self-hosters NOT behind Cloudflare
+      # must leave this unset — see the base docker-compose.yml note.
+      TRUST_CF_CONNECTING_IP: "${TRUST_CF_CONNECTING_IP:-true}"
       PARTNER_HOOKS_URL: http://billing:3002/hooks
       BILLING_SERVICE_URL: http://billing:3002
       BILLING_SERVICE_API_KEY: ${BILLING_SERVICE_API_KEY:-}
       MSI_SIGNING_URL: ${MSI_SIGNING_URL:-}
       MSI_SIGNING_CF_ACCESS_ID: ${MSI_SIGNING_CF_ACCESS_ID:-}
       MSI_SIGNING_CF_ACCESS_SECRET: ${MSI_SIGNING_CF_ACCESS_SECRET:-}
+      # Signup-abuse-detection sweep (docs/superpowers/specs/security-auth/2026-07-11-signup-abuse-detection-design.md).
+      # Optional — empty/unmapped means ops alerting stays dark and per-signal
+      # thresholds fall back to config.ts defaults.
+      OPS_ALERT_WEBHOOK_URL: ${OPS_ALERT_WEBHOOK_URL:-}
+      OPS_ALERT_EMAIL: ${OPS_ALERT_EMAIL:-}
+      OPS_ALERT_LABEL: ${OPS_ALERT_LABEL:-}
+      ABUSE_SIGNAL_OVERRIDES: ${ABUSE_SIGNAL_OVERRIDES:-}
+      ABUSE_SCRIPT_INDICATORS: ${ABUSE_SCRIPT_INDICATORS:-}
+      # Native APNs push for the iOS app (all optional; unset = push disabled).
+      # All-or-none: setting ANY of these makes the four credentials required,
+      # so a half-configured relay fails at boot instead of silently at first
+      # send. Empty values are treated as unset.
+      APNS_AUTH_KEY: ${APNS_AUTH_KEY:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-}
+      # --- Additional API runtime settings (parity with deploy/.env.example) ---
+      # Documented in deploy/.env.example and read by the API but previously not
+      # threaded through this block, so setting them in .env was a silent no-op.
+      # `${VAR:-}` is non-regressive: empty is falsy to envFlag/envInt, which
+      # fall back to their in-code default. Enforced by
+      # apps/api/src/config/envComposeParity.test.ts.
+      IP_ALLOWLIST_ENFORCEMENT_MODE: ${IP_ALLOWLIST_ENFORCEMENT_MODE:-}
+      M365_GRAPH_READ_TOOLS_ENABLED: ${M365_GRAPH_READ_TOOLS_ENABLED:-}
+      M365_GRAPH_READ_TOOLS_ORG_IDS: ${M365_GRAPH_READ_TOOLS_ORG_IDS:-}
+      # Synthetic sign-up monitor endpoints (deploy/.env.example calls out that
+      # these MUST be mapped here for compose interpolation to reach the API).
+      SYNTHETIC_TEST_TOKEN: ${SYNTHETIC_TEST_TOKEN:-}
+      SYNTHETIC_TEST_IP_ALLOWLIST: ${SYNTHETIC_TEST_IP_ALLOWLIST:-}
     volumes:
       - api_data:/data
       - binaries:/data/binaries:ro
     secrets:
       - redis_password
+      - source: m365_graph_read_executor_signing_private_jwk
+        target: m365_graph_read_executor_signing_private_jwk
+      - source: m365_graph_actions_executor_signing_private_jwk
+        target: m365_graph_actions_executor_signing_private_jwk
     depends_on:
       binaries-init:
         condition: service_completed_successfully
@@ -335,3 +426,10 @@ volumes:
 secrets:
   redis_password:
     environment: REDIS_PASSWORD
+  # Standalone Compose bind-mounts file-backed secrets and ignores uid/gid/mode
+  # target attributes. /dev/null keeps dark deployments optional; when enabled,
+  # the source JWK must already have numeric owner 1001:1001 and mode 0400.
+  m365_graph_read_executor_signing_private_jwk:
+    file: ${M365_GRAPH_READ_EXECUTOR_SIGNING_PRIVATE_JWK_SOURCE_FILE:-/dev/null}
+  m365_graph_actions_executor_signing_private_jwk:
+    file: ${M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_SOURCE_FILE:-/dev/null}

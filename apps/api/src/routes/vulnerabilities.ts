@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../lib/validation';
 import { z } from 'zod';
 import { and, desc, eq, gt, ilike, inArray, lte, type SQL } from 'drizzle-orm';
 
@@ -14,7 +14,7 @@ import {
 } from '@breeze/shared';
 
 import { db, runOutsideDbContext, withSystemDbAccessContext } from '../db';
-import { deviceVulnerabilities, devices, vulnerabilities } from '../db/schema';
+import { deviceVulnerabilities, devices, vulnerabilities, vulnerabilitySources } from '../db/schema';
 import { authMiddleware, requireMfa, requirePermission, requireScope, type AuthContext } from '../middleware/auth';
 import { PERMISSIONS, type UserPermissions } from '../services/permissions';
 import { remediateVulnerabilities } from '../services/vulnerabilityRemediation';
@@ -75,6 +75,20 @@ const listQuerySchema = z.object({
   expiringWithinDays: expiringWithinDaysSchema.optional(),
 });
 
+// Fleet org narrowing: the web client auto-injects ?orgId= for the currently
+// selected organization (fetchWithAuth; /vulnerabilities is org-or-all in
+// routeScope.ts — reclassifying it silently stops the injection). Absent = all
+// accessible orgs. Access is enforced per-request via auth.canAccessOrg (403);
+// the eq() filter then narrows within the already-RLS-scoped set. Deliberately
+// NOT on listQuerySchema itself: /devices/:deviceId spreads its validated
+// query straight into listVulnerabilities ({...query}), so an orgId on the
+// shared schema would let a stale org selector blank out a cross-org device's
+// findings. The device routes scope via assertDeviceSiteAccess instead and
+// rely on zod stripping the unknown key (pinned by tests).
+const orgIdQuerySchema = z.string().uuid().optional();
+const fleetListQuerySchema = listQuerySchema.extend({ orgId: orgIdQuerySchema });
+const orgScopeQuerySchema = z.object({ orgId: orgIdQuerySchema });
+
 const deviceParamSchema = z.object({
   deviceId: z.string().uuid(),
 });
@@ -127,6 +141,7 @@ const softwareQuerySchema = z.object({
   kevOnly: boolQuerySchema.optional(),
   patchAvailable: boolQuerySchema.optional(),
   expiringWithinDays: expiringWithinDaysSchema.optional(),
+  orgId: orgIdQuerySchema,
 });
 
 const SOFTWARE_GROUP_CAP = 500;
@@ -422,12 +437,17 @@ async function listVulnerabilities(filters: {
   /** Site-axis narrowing: when set, only return findings for devices in these sites.
    *  Empty array = caller has no in-scope sites → return nothing (fail-closed). */
   allowedSiteIds?: string[];
+  /** Org narrowing (web org selector); access pre-checked via auth.canAccessOrg. */
+  orgId?: string;
 }) {
   const conditions: SQL[] = [];
   // 'all' means no status filter — return every status. Any other value is
   // treated as a specific status to match (open | patched | mitigated | accepted).
   if (filters.status !== 'all') {
     conditions.push(eq(deviceVulnerabilities.status, filters.status));
+  }
+  if (filters.orgId) {
+    conditions.push(eq(deviceVulnerabilities.orgId, filters.orgId));
   }
   if (filters.deviceId) {
     conditions.push(eq(deviceVulnerabilities.deviceId, filters.deviceId));
@@ -576,8 +596,12 @@ vulnerabilityRoutes.use('*', authMiddleware);
 vulnerabilityRoutes.use('*', requireScope('organization', 'partner', 'system'));
 vulnerabilityRoutes.use('*', requireVulnerabilityRead);
 
-vulnerabilityRoutes.get('/', zValidator('query', listQuerySchema), async (c) => {
+vulnerabilityRoutes.get('/', zValidator('query', fleetListQuerySchema), async (c) => {
+  const auth = c.get('auth');
   const query = c.req.valid('query');
+  if (query.orgId && !auth.canAccessOrg(query.orgId)) {
+    return c.json({ error: 'Access to this organization denied' }, 403);
+  }
   // Site-axis narrowing for the fleet view: per-device routes already gate via
   // assertDeviceSiteAccess; this fleet (all-devices) query must also restrict to
   // the caller's allowed sites. Mirrors the site-filter pattern in core.ts.
@@ -597,11 +621,16 @@ vulnerabilityRoutes.get('/', zValidator('query', listQuerySchema), async (c) => 
 // pseudo-group). Group cardinality is fleet-bounded; hard cap + hasMore
 // instead of pagination.
 vulnerabilityRoutes.get('/software', zValidator('query', softwareQuerySchema), async (c) => {
+  const auth = c.get('auth');
   const query = c.req.valid('query');
+  if (query.orgId && !auth.canAccessOrg(query.orgId)) {
+    return c.json({ error: 'Access to this organization denied' }, 403);
+  }
   const perms = c.get('permissions') as UserPermissions | undefined;
   const rows = await fetchFleetFindingRows({
     status: query.status,
     allowedSiteIds: perms?.allowedSiteIds,
+    orgId: query.orgId,
   });
   const filtered = filterFindings(rows, {
     status: query.status,
@@ -618,12 +647,17 @@ vulnerabilityRoutes.get('/software', zValidator('query', softwareQuerySchema), a
 });
 
 // Software-group drawer payload: group summary + per-CVE rollup + raw findings.
-vulnerabilityRoutes.get('/software/:groupKey', zValidator('param', groupKeyParamSchema), async (c) => {
+vulnerabilityRoutes.get('/software/:groupKey', zValidator('param', groupKeyParamSchema), zValidator('query', orgScopeQuerySchema), async (c) => {
+  const auth = c.get('auth');
   const { groupKey } = c.req.valid('param');
+  const { orgId } = c.req.valid('query');
+  if (orgId && !auth.canAccessOrg(orgId)) {
+    return c.json({ error: 'Access to this organization denied' }, 403);
+  }
   const perms = c.get('permissions') as UserPermissions | undefined;
   // status 'all' so the drawer can show accepted/mitigated findings alongside
   // open ones (reopen lives in the drawers).
-  const rows = await fetchFleetFindingRows({ status: 'all', allowedSiteIds: perms?.allowedSiteIds });
+  const rows = await fetchFleetFindingRows({ status: 'all', allowedSiteIds: perms?.allowedSiteIds, orgId });
   const detail = buildGroupDetail(groupKey, rows);
   if (!detail) {
     return c.json({ error: 'Group not found' }, 404);
@@ -635,11 +669,17 @@ vulnerabilityRoutes.get('/software/:groupKey', zValidator('param', groupKeyParam
 // feed three cards, accepted findings feed the expiring-soon card. Also carries
 // totalFindings/lastDetectedAt (computed from the same rows — no extra query)
 // so the empty states can tell a clean fleet from one that never produced data.
-vulnerabilityRoutes.get('/stats', async (c) => {
+vulnerabilityRoutes.get('/stats', zValidator('query', orgScopeQuerySchema), async (c) => {
+  const auth = c.get('auth');
+  const { orgId } = c.req.valid('query');
+  if (orgId && !auth.canAccessOrg(orgId)) {
+    return c.json({ error: 'Access to this organization denied' }, 403);
+  }
   const perms = c.get('permissions') as UserPermissions | undefined;
   const rows = await fetchFleetFindingRows({
     status: 'all',
     allowedSiteIds: perms?.allowedSiteIds,
+    orgId,
   });
   return c.json(computeStats(rows, new Date()));
 });
@@ -699,14 +739,19 @@ vulnerabilityRoutes.get(
 // otherwise shadow every static-first-segment GET route above it
 // (/software, /software/:groupKey, /stats, /devices/:deviceId,
 // /devices/:deviceId/software).
-vulnerabilityRoutes.get('/:cveId/devices', zValidator('param', cveIdParamSchema), async (c) => {
+vulnerabilityRoutes.get('/:cveId/devices', zValidator('param', cveIdParamSchema), zValidator('query', orgScopeQuerySchema), async (c) => {
+  const auth = c.get('auth');
   const { cveId } = c.req.valid('param');
+  const { orgId } = c.req.valid('query');
+  if (orgId && !auth.canAccessOrg(orgId)) {
+    return c.json({ error: 'Access to this organization denied' }, 403);
+  }
   const cve = await fetchCveCatalogRecord(cveId);
   if (!cve) {
     return c.json({ error: 'CVE not found' }, 404);
   }
   const perms = c.get('permissions') as UserPermissions | undefined;
-  const rows = await fetchFleetFindingRows({ status: 'all', allowedSiteIds: perms?.allowedSiteIds });
+  const rows = await fetchFleetFindingRows({ status: 'all', allowedSiteIds: perms?.allowedSiteIds, orgId });
   const target = cveId.toLowerCase();
   const findings = rows
     .filter((r) => r.cveId.toLowerCase() === target)
@@ -1056,6 +1101,31 @@ const syncSchema = z.object({
 
 vulnerabilitySyncRoutes.use('*', platformAdminMiddleware);
 vulnerabilitySyncRoutes.use('*', requireMfa());
+
+// Per-source sync health, including the malformed-CVE skip count of the last
+// successful run (#2427) — previously stdout-only. `vulnerability_sources` is
+// a global (non-tenant) catalog table with forced RLS and no tenant policies,
+// so the read must run under a system context, outside the request's ambient
+// org/partner db context.
+vulnerabilitySyncRoutes.get('/status', userRateLimit('vuln-sync-status', 120, 3600), async (c) => {
+  const sources = await runOutsideDbContext(() =>
+    withSystemDbAccessContext(() =>
+      db
+        .select({
+          source: vulnerabilitySources.source,
+          lastSuccessfulSyncAt: vulnerabilitySources.lastSuccessfulSyncAt,
+          lastSyncStatus: vulnerabilitySources.lastSyncStatus,
+          lastSyncError: vulnerabilitySources.lastSyncError,
+          lastSyncSkippedCount: vulnerabilitySources.lastSyncSkippedCount,
+          cursor: vulnerabilitySources.cursor,
+          updatedAt: vulnerabilitySources.updatedAt,
+        })
+        .from(vulnerabilitySources)
+        .orderBy(vulnerabilitySources.source)
+    )
+  );
+  return c.json({ sources });
+});
 
 vulnerabilitySyncRoutes.post(
   '/',

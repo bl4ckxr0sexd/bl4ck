@@ -39,9 +39,14 @@ import { userRoutes } from './users';
 const {
   sendInviteMock,
   sendEmailChangedMock,
+  sendVerificationEmailMock,
   createAuditLogAsyncMock,
   resolveUserAuditOrgIdMock,
   requireCurrentPasswordStepUpMock,
+  enforceExistingFactorStepUpMock,
+  userIsMfaProtectedMock,
+  getEffectiveMfaPolicyMock,
+  requestPendingEmailChangeMock,
   isPasswordAuthDisabledBySsoMock,
   hasSatisfiedMfaMock,
   captureExceptionMock,
@@ -49,6 +54,7 @@ const {
 } = vi.hoisted(() => ({
   sendInviteMock: vi.fn().mockResolvedValue(undefined),
   sendEmailChangedMock: vi.fn().mockResolvedValue(undefined),
+  sendVerificationEmailMock: vi.fn().mockResolvedValue(undefined),
   createAuditLogAsyncMock: vi.fn().mockResolvedValue(undefined),
   resolveUserAuditOrgIdMock: vi.fn().mockResolvedValue(null),
   captureExceptionMock: vi.fn(),
@@ -56,6 +62,20 @@ const {
   // Default: step-up succeeds (returns null). Tests override to return a
   // Response to simulate a wrong password / rate-limit / Redis-down outcome.
   requireCurrentPasswordStepUpMock: vi.fn().mockResolvedValue(null),
+  // SR2-18: default fresh-factor step-up passes (returns null — no-op for an
+  // account with no factor). Tests override to a 403 Response for a protected
+  // account lacking a fresh grant.
+  enforceExistingFactorStepUpMock: vi.fn().mockResolvedValue(null),
+  // SR2-18: default the account is NOT MFA-protected. Tests override to true.
+  userIsMfaProtectedMock: vi.fn().mockResolvedValue(false),
+  // SR2-18: default MFA policy is NOT required. Tests override to required.
+  getEffectiveMfaPolicyMock: vi.fn().mockResolvedValue({
+    required: false,
+    allowedMethods: { totp: true, sms: true, passkey: true },
+    source: { roleForceMfa: false, settingsRequireMfa: false, killSwitchOff: true }
+  }),
+  // SR2-17: default the pending-email service succeeds and returns a raw token.
+  requestPendingEmailChangeMock: vi.fn().mockResolvedValue({ rawToken: 'raw-token-mock', emailEpoch: 5 }),
   // Default: org does NOT enforce SSO.
   isPasswordAuthDisabledBySsoMock: vi.fn().mockResolvedValue(false),
   // Default: MFA is considered satisfied. Tests override to false.
@@ -135,6 +155,7 @@ vi.mock('../db/schema', () => ({
   roles: {},
   permissions: {},
   rolePermissions: {},
+  partners: { id: { __column: 'partners.id' }, settings: { __column: 'partners.settings' } },
   organizations: {},
   patchPolicies: {},
   alertRules: {},
@@ -147,6 +168,14 @@ vi.mock('../db/schema', () => ({
   peripheralPolicies: {},
   discoveredAssetTypeEnum: { enumValues: ['workstation', 'server', 'printer', 'unknown'] },
 }));
+
+vi.mock('drizzle-orm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('drizzle-orm')>();
+  return {
+    ...actual,
+    eq: vi.fn(actual.eq),
+  };
+});
 
 vi.mock('../middleware/auth', () => ({
   authMiddleware: vi.fn((c: any, next: any) => {
@@ -189,20 +218,22 @@ vi.mock('./auth/helpers', async (importOriginal) => {
   return {
     ...actual,
     resolveUserAuditOrgId: resolveUserAuditOrgIdMock,
-    requireCurrentPasswordStepUp: requireCurrentPasswordStepUpMock
+    requireCurrentPasswordStepUp: requireCurrentPasswordStepUpMock,
+    enforceExistingFactorStepUp: enforceExistingFactorStepUpMock,
+    userIsMfaProtected: userIsMfaProtectedMock
   };
 });
 
-vi.mock('../services/tokenRevocation', () => ({
-  revokeAllUserTokens: vi.fn().mockResolvedValue(undefined)
+vi.mock('../services/mfaPolicy', () => ({
+  getEffectiveMfaPolicy: getEffectiveMfaPolicyMock
 }));
 
-vi.mock('../services/userSuspension', () => ({
-  revokeUserAccess: vi.fn().mockResolvedValue({
-    grantsRevoked: 0,
-    refreshTokensRevoked: 0,
-    jtisRevoked: 0,
-  })
+vi.mock('../services/pendingEmail', () => ({
+  requestPendingEmailChange: requestPendingEmailChangeMock
+}));
+
+vi.mock('../services/tokenRevocation', () => ({
+  revokeAllUserTokens: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../services/remoteSessionTeardown', () => ({
@@ -210,17 +241,52 @@ vi.mock('../services/remoteSessionTeardown', () => ({
   TEARDOWN_FAILED: -1,
 }));
 
+// advanceUserEpochs/revokeAllRefreshFamilies stay REAL so tests can assert on
+// the tx-shaped `users`/`refresh_token_families` updates they issue.
+// runPostCommitCleanup is mocked so tests control the post-commit outcome
+// (redisOk/permissionCacheOk/oauthOk) without exercising the real Redis/OAuth
+// side effects it wraps.
+vi.mock('../services/authLifecycle', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/authLifecycle')>();
+  return {
+    ...actual,
+    runPostCommitCleanup: vi.fn().mockResolvedValue({
+      redisOk: true,
+      permissionCacheOk: true,
+      oauthOk: true,
+      oauthResult: { grantsRevoked: 0, refreshTokensRevoked: 0, jtisRevoked: 0 },
+    })
+  };
+});
+
 import { db, runOutsideDbContext, withSystemDbAccessContext } from '../db';
+import { eq } from 'drizzle-orm';
 import { clearPermissionCache, getUserPermissions } from '../services/permissions';
 import { authMiddleware } from '../middleware/auth';
-import { revokeAllUserTokens } from '../services/tokenRevocation';
-import { revokeUserAccess } from '../services/userSuspension';
+import { runPostCommitCleanup } from '../services/authLifecycle';
 import { terminateUserRemoteSessions } from '../services/remoteSessionTeardown';
 // Mocked above — imported to drive failure paths via mockResolvedValueOnce.
 import { writeAvatar, deleteAvatar, readAvatarBuffer } from '../services/avatarStorage';
 
 describe('user routes', () => {
   let app: Hono;
+
+  function authAsSystem() {
+    vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
+      c.set('auth', {
+        scope: 'system',
+        partnerId: null,
+        partnerOrgAccess: null,
+        orgId: null,
+        user: {
+          id: 'platform-admin',
+          email: 'platform@example.com',
+          isPlatformAdmin: true,
+        },
+      });
+      return next();
+    });
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -245,21 +311,33 @@ describe('user routes', () => {
       }))
     } as any);
     // Re-establish the step-up defaults each test: SSO off, MFA satisfied,
-    // password step-up passes.
+    // password step-up passes, fresh-factor step-up passes, account not
+    // MFA-protected, MFA policy not required, pending-email service succeeds.
     requireCurrentPasswordStepUpMock.mockResolvedValue(null);
+    enforceExistingFactorStepUpMock.mockResolvedValue(null);
+    userIsMfaProtectedMock.mockResolvedValue(false);
+    getEffectiveMfaPolicyMock.mockResolvedValue({
+      required: false,
+      allowedMethods: { totp: true, sms: true, passkey: true },
+      source: { roleForceMfa: false, settingsRequireMfa: false, killSwitchOff: true }
+    });
+    requestPendingEmailChangeMock.mockResolvedValue({ rawToken: 'raw-token-mock', emailEpoch: 5 });
     isPasswordAuthDisabledBySsoMock.mockResolvedValue(false);
     hasSatisfiedMfaMock.mockReturnValue(true);
     sendEmailChangedMock.mockResolvedValue(undefined);
+    sendVerificationEmailMock.mockResolvedValue(undefined);
     // Default: email service is configured. Tests override to null to exercise
     // the "not configured" warning path.
     getEmailServiceMock.mockReturnValue({
       sendInvite: sendInviteMock,
-      sendEmailChanged: sendEmailChangedMock
+      sendEmailChanged: sendEmailChangedMock,
+      sendVerificationEmail: sendVerificationEmailMock
     });
     vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
       c.set('auth', {
         scope: 'partner',
         partnerId: 'partner-123',
+        partnerOrgAccess: 'all',
         orgId: null,
         user: { id: 'user-123', email: 'test@example.com' }
       });
@@ -557,6 +635,212 @@ describe('user routes', () => {
       // Mocked getUserPermissions returns the admin wildcard grant.
       expect(body.permissions).toEqual([{ resource: '*', action: '*' }]);
     });
+
+    it('returns the authenticated partner default locale', async () => {
+      const user = {
+        id: 'user-123',
+        email: 'admin@example.com',
+        name: 'Admin',
+        avatarUrl: null,
+        status: 'active',
+        mfaEnabled: false,
+        isPlatformAdmin: false,
+        createdAt: new Date(),
+        lastLoginAt: new Date(),
+        setupCompletedAt: new Date(),
+        passwordChangedAt: new Date(),
+        preferences: {},
+      };
+      vi.mocked(db.select)
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([user]),
+            }),
+          }),
+        } as any)
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([{ settings: { language: 'pt-BR' } }]),
+            }),
+          }),
+        } as any);
+
+      // A client-supplied selector must not influence which partner is read.
+      const res = await app.request('/users/me?partnerId=other-partner', {
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ partnerDefaultLocale: 'pt-BR' });
+      expect(vi.mocked(db.select).mock.calls[1]?.[0]).toEqual({
+        settings: { __column: 'partners.settings' },
+      });
+      expect(eq).toHaveBeenCalledWith({ __column: 'partners.id' }, 'partner-123');
+      expect(eq).not.toHaveBeenCalledWith({ __column: 'partners.id' }, 'other-partner');
+    });
+
+    it.each([
+      ['missing partner row', []],
+      ['missing language', [{ settings: {} }]],
+      ['unsupported stored language', [{ settings: { language: 'fr' } }]],
+    ])('normalizes partner default locale to null for %s', async (_case, partnerRows) => {
+      const user = {
+        id: 'user-123',
+        email: 'admin@example.com',
+        name: 'Admin',
+        avatarUrl: null,
+        status: 'active',
+        mfaEnabled: false,
+        isPlatformAdmin: false,
+        createdAt: new Date(),
+        lastLoginAt: new Date(),
+        setupCompletedAt: new Date(),
+        passwordChangedAt: new Date(),
+        preferences: {},
+      };
+      vi.mocked(db.select)
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([user]),
+            }),
+          }),
+        } as any)
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue(partnerRows),
+            }),
+          }),
+        } as any);
+
+      const res = await app.request('/users/me', {
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ partnerDefaultLocale: null });
+    });
+
+    it('does not query partner settings when the authenticated context has no partner', async () => {
+      vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
+        c.set('auth', {
+          scope: 'organization',
+          partnerId: null,
+          orgId: 'org-1',
+          user: { id: 'user-123', email: 'admin@example.com' },
+        });
+        return next();
+      });
+      vi.mocked(db.select).mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{
+              id: 'user-123',
+              email: 'admin@example.com',
+              preferences: {},
+            }]),
+          }),
+        }),
+      } as any);
+
+      const res = await app.request('/users/me?partnerId=other-partner');
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ partnerDefaultLocale: null });
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns the partner default locale for an org-scoped session via a system DB context', async () => {
+      // Regression test: org-scoped sessions get accessiblePartnerIds = []
+      // (computeAccessiblePartnerIds in middleware/auth.ts), so reading
+      // `partners` under the ambient (org-scoped) request context would be
+      // filtered to zero rows by RLS. The handler must escalate to a system
+      // context via runOutsideDbContext + withSystemDbAccessContext, exactly
+      // like removeMembershipForScope elsewhere in this file.
+      vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
+        c.set('auth', {
+          scope: 'organization',
+          partnerId: 'partner-123',
+          orgId: 'org-1',
+          user: { id: 'user-123', email: 'admin@example.com' },
+        });
+        return next();
+      });
+
+      const user = {
+        id: 'user-123',
+        email: 'admin@example.com',
+        name: 'Admin',
+        avatarUrl: null,
+        status: 'active',
+        mfaEnabled: false,
+        isPlatformAdmin: false,
+        createdAt: new Date(),
+        lastLoginAt: new Date(),
+        setupCompletedAt: new Date(),
+        passwordChangedAt: new Date(),
+        preferences: {},
+      };
+      vi.mocked(db.select)
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([user]),
+            }),
+          }),
+        } as any)
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([{ settings: { language: 'pt-BR' } }]),
+            }),
+          }),
+        } as any);
+
+      const res = await app.request('/users/me', {
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ partnerDefaultLocale: 'pt-BR' });
+      expect(eq).toHaveBeenCalledWith({ __column: 'partners.id' }, 'partner-123');
+      expect(runOutsideDbContext).toHaveBeenCalled();
+      expect(withSystemDbAccessContext).toHaveBeenCalled();
+    });
+
+    it('includes mfaMethod so the web can pick the register re-auth tier (#2707)', async () => {
+      vi.mocked(db.select).mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{
+              id: 'user-123',
+              email: 'admin@example.com',
+              name: 'Admin',
+              avatarUrl: null,
+              status: 'active',
+              mfaEnabled: true,
+              mfaMethod: 'totp',
+              isPlatformAdmin: false,
+              createdAt: new Date(),
+              lastLoginAt: new Date(),
+              setupCompletedAt: new Date(),
+              passwordChangedAt: new Date(),
+              preferences: {}
+            }])
+          })
+        })
+      } as any);
+
+      const res = await app.request('/users/me', {
+        headers: { Authorization: 'Bearer token' }
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { mfaMethod?: unknown };
+      expect(body.mfaMethod).toBe('totp');
+    });
   });
 
   describe('PATCH /users/me validation', () => {
@@ -626,6 +910,64 @@ describe('user routes', () => {
       const body = await res.json();
       expect(body.error).toMatch(message);
     });
+
+    it('rejects an invalid locale preference', async () => {
+      const res = await app.request('/users/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({ preferences: { locale: 'klingon' } })
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe(
+        'Invalid locale value. Must be en, pt-BR, es-419, fr-FR, fr-CA, de-DE, or it-IT.'
+      );
+    });
+
+    it.each(['es-419', 'fr-FR', 'fr-CA', 'de-DE', 'it-IT'] as const)(
+      'accepts and merges the %s locale preference',
+      async (locale) => {
+        const existingPreferences = { theme: 'dark' };
+        const mergedPreferences = { ...existingPreferences, locale };
+        vi.mocked(db.select).mockReturnValue({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([{
+                email: 'test@example.com',
+                passwordHash: 'hash',
+                preferences: existingPreferences,
+              }]),
+            }),
+          }),
+        } as any);
+        const setMock = vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{
+              id: 'user-123',
+              email: 'test@example.com',
+              name: 'Test User',
+              avatarUrl: null,
+              status: 'active',
+              mfaEnabled: false,
+              preferences: mergedPreferences,
+            }]),
+          }),
+        });
+        vi.mocked(db.update).mockReturnValue({ set: setMock } as any);
+
+        const res = await app.request('/users/me', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+          body: JSON.stringify({ preferences: { locale } }),
+        });
+
+        expect(res.status).toBe(200);
+        expect(setMock).toHaveBeenCalledWith(expect.objectContaining({
+          preferences: mergedPreferences,
+        }));
+        expect(await res.json()).toMatchObject({ preferences: { locale } });
+      },
+    );
 
     it('merges partial preference updates instead of clobbering existing keys', async () => {
       const existingPreferences = {
@@ -854,11 +1196,16 @@ describe('user routes', () => {
     });
   });
 
-  describe('PATCH /users/me email-change step-up (ATO hardening)', () => {
-    // Account-takeover step-up: changing the account email requires re-proving
-    // identity. Mirrors change-password — SSO-enforced orgs are blocked (managed
-    // at the IdP), local-password users must supply currentPassword, passwordless
-    // users must have satisfied MFA. On success the OLD address is notified.
+  describe('PATCH /users/me email change → PENDING address (SR2-17, SR2-18)', () => {
+    // SR2-17/18: an authenticated email change must NOT move the live identity
+    // (users.email) until the new address is PROVEN. The request records a
+    // pending address behind a recovery-grade step-up (password + a fresh
+    // existing-factor grant for MFA-protected accounts) and mints an
+    // email_change verification token. The commit (Task 8) does the swap +
+    // sign-out. requestPendingEmailChange is mocked here (unit-tested in
+    // services/pendingEmail.test.ts); these tests own the ROUTE contract.
+    const GRANT = '11111111-1111-4111-8111-111111111111';
+
     const selectNode = (rows: unknown[]) => ({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
@@ -867,25 +1214,28 @@ describe('user routes', () => {
       })
     });
 
-    const updateReturning = (row: Record<string, unknown>) => {
+    // SET payloads passed to the single profile db.update. The killer assertion
+    // for SR2-17 is that `email` is NEVER among them.
+    let updateSetCalls: Array<Record<string, unknown>> = [];
+    const mockUpdate = (row: Record<string, unknown>) => {
+      updateSetCalls = [];
       vi.mocked(db.update).mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([row])
-          })
-        })
+        set: (values: Record<string, unknown>) => {
+          updateSetCalls.push(values);
+          return {
+            where: () => ({ returning: () => Promise.resolve([row]) })
+          };
+        }
       } as any);
     };
 
-    // First select = self load ({ email, passwordHash }); second select (only
-    // reached past the step-up gate) = email-uniqueness check.
-    const mockSelfAndUniqueness = (
-      self: { email: string; passwordHash: string | null },
-      uniqueness: unknown[] = []
-    ) => {
-      vi.mocked(db.select)
-        .mockReturnValueOnce(selectNode([self]) as any)
-        .mockReturnValue(selectNode(uniqueness) as any);
+    // The route selects the caller's own row exactly ONCE (self load). There is
+    // deliberately no second uniqueness select — that would be an enumeration
+    // oracle (SR2 property 3).
+    const mockSelf = (self: { email: string; passwordHash: string | null; partnerId?: string }) => {
+      vi.mocked(db.select).mockReturnValue(
+        selectNode([{ preferences: null, partnerId: 'partner-abc', ...self }]) as any
+      );
     };
 
     const orgScopeAuth = () => {
@@ -900,9 +1250,11 @@ describe('user routes', () => {
       });
     };
 
-    const updatedRow = (email: string) => ({
+    // The row the profile write returns. `email` is the OLD (unchanged) address —
+    // the write never touches it.
+    const updatedRow = () => ({
       id: 'user-123',
-      email,
+      email: 'old@example.com',
       name: 'Test User',
       avatarUrl: null,
       status: 'active',
@@ -910,216 +1262,248 @@ describe('user routes', () => {
       preferences: null
     });
 
-    it('case 1: email change with NO currentPassword ⇒ 400, email not updated', async () => {
-      orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('new@example.com'));
-
-      const res = await app.request('/users/me', {
+    const patchMe = (payload: Record<string, unknown>) =>
+      app.request('/users/me', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'new@example.com' })
+        body: JSON.stringify(payload)
       });
 
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toMatch(/current password is required/i);
-      expect(vi.mocked(db.update)).not.toHaveBeenCalled();
-      expect(requireCurrentPasswordStepUpMock).not.toHaveBeenCalled();
-      expect(sendEmailChangedMock).not.toHaveBeenCalled();
-    });
-
-    it('case 2: email change with correct currentPassword ⇒ 200, audited, old address notified', async () => {
+    it('SR2-17: does NOT move users.email; records a pending address instead', async () => {
       orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('new@example.com'));
-      requireCurrentPasswordStepUpMock.mockResolvedValueOnce(null);
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash', partnerId: 'p1' });
+      mockUpdate(updatedRow());
 
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'new@example.com', currentPassword: 'correct-horse' })
-      });
+      const res = await patchMe({ email: 'new@corp.com', currentPassword: 'pw' });
 
       expect(res.status).toBe(200);
-      expect(requireCurrentPasswordStepUpMock).toHaveBeenCalledWith(
+      const body = await res.json();
+      expect(body.email).toBe('old@example.com'); // unchanged!
+      expect(body.pendingEmail).toBe('new@corp.com');
+      expect(body.verificationSent).toBe(true);
+      // The killer assertion: no db.update ever set `email`.
+      expect(updateSetCalls.length).toBeGreaterThan(0);
+      expect(updateSetCalls.every((s) => !('email' in s))).toBe(true);
+      // The pending write was delegated to the service, scoped to the user's
+      // OWN partner (read off the row, not the null org-scope token).
+      expect(requestPendingEmailChangeMock).toHaveBeenCalledWith({
+        userId: 'user-123',
+        partnerId: 'p1',
+        newEmail: 'new@corp.com'
+      });
+    });
+
+    it('SR2-17: does NOT sign the user out at initiation (no revoke, no post-commit cleanup)', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
+
+      expect(res.status).toBe(200);
+      // The email_epoch bump lives inside the (mocked) pending-email service; the
+      // ROUTE must not run the sign-out machinery: no transaction (families
+      // revoke), no post-commit OAuth/Redis sweep.
+      expect(requestPendingEmailChangeMock).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(db.transaction)).not.toHaveBeenCalled();
+      expect(runPostCommitCleanup).not.toHaveBeenCalled();
+    });
+
+    it('SR2-17: no enumeration oracle — the route makes NO cross-account uniqueness probe', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+
+      const res = await patchMe({ email: 'someone-elses@corp.com', currentPassword: 'pw' });
+
+      expect(res.status).toBe(200);
+      // Exactly ONE select (the self load). A second select would be the
+      // uniqueness probe whose 409 leaks that the address is taken — the
+      // response must be uniform whether or not it collides (collision fails
+      // closed at COMMIT as 23505, Task 8).
+      expect(vi.mocked(db.select)).toHaveBeenCalledTimes(1);
+    });
+
+    it('SR2-18: an MFA-protected user with NO fresh step-up grant is refused (nothing written)', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+      userIsMfaProtectedMock.mockResolvedValue(true);
+      enforceExistingFactorStepUpMock.mockImplementationOnce(async (c: any) =>
+        c.json({ error: 'existing_factor_step_up_required', stepUpUrl: '/auth/mfa/step-up' }, 403)
+      );
+
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' }); // no grant
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ error: 'existing_factor_step_up_required' });
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
+      expect(vi.mocked(db.update)).not.toHaveBeenCalled();
+    });
+
+    it('SR2-18: an MFA-protected user WITH a valid fresh grant succeeds (grant consumed)', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+      userIsMfaProtectedMock.mockResolvedValue(true);
+      enforceExistingFactorStepUpMock.mockResolvedValue(null); // fresh grant validates + consumes
+
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw', stepUpGrantId: GRANT });
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).pendingEmail).toBe('new@example.com');
+      expect(enforceExistingFactorStepUpMock).toHaveBeenCalledWith(
         expect.anything(),
-        'user-123',
-        'correct-horse',
-        'email-change:pwd'
-      );
-      // Dedicated email-change audit fired with stepUp === 'password'.
-      expect(createAuditLogAsyncMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'user.email.change',
-          resourceId: 'user-123',
-          orgId: 'org-1',
-          details: expect.objectContaining({
-            previousEmail: 'old@example.com',
-            newEmail: 'new@example.com',
-            stepUp: 'password'
-          })
-        })
-      );
-      // Both audits: the generic profile-update + the dedicated email-change.
-      const actions = createAuditLogAsyncMock.mock.calls.map((c: any[]) => c[0].action);
-      expect(actions).toContain('user.profile.update');
-      expect(actions).toContain('user.email.change');
-      // Notify the OLD address.
-      expect(sendEmailChangedMock).toHaveBeenCalledWith(
-        expect.objectContaining({ to: 'old@example.com', newEmail: 'new@example.com' })
+        expect.anything(),
+        GRANT,
+        { consume: true }
       );
     });
 
-    it('case 3: email change with wrong password ⇒ 401, not updated, no email-change audit/notice', async () => {
+    it('SR2-18: a forced-enrollment user (policy required, unenrolled) cannot move the recovery address', async () => {
       orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('new@example.com'));
-      // Simulate a wrong-password step-up: helper returns a 401 Response.
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+      getEffectiveMfaPolicyMock.mockResolvedValue({
+        required: true,
+        allowedMethods: { totp: true, sms: true, passkey: true },
+        source: { roleForceMfa: true, settingsRequireMfa: false, killSwitchOff: true }
+      });
+      userIsMfaProtectedMock.mockResolvedValue(false);
+
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ error: 'mfa_enrollment_required' });
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
+      expect(vi.mocked(db.update)).not.toHaveBeenCalled();
+    });
+
+    it('SR2-18: a passwordless, factor-less account is refused outright (no vacuous mfa=true pass)', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: null });
+      mockUpdate(updatedRow());
+      userIsMfaProtectedMock.mockResolvedValue(false);
+      getEffectiveMfaPolicyMock.mockResolvedValue({
+        required: false,
+        allowedMethods: { totp: true, sms: true, passkey: true },
+        source: { roleForceMfa: false, settingsRequireMfa: false, killSwitchOff: true }
+      });
+
+      const res = await patchMe({ email: 'new@example.com' });
+
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toMatch(/cannot change its email/i);
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
+      expect(vi.mocked(db.update)).not.toHaveBeenCalled();
+    });
+
+    it('SR2-18: a passwordless MFA-PROTECTED account with a grant succeeds and audits stepUp=mfa', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: null });
+      mockUpdate(updatedRow());
+      userIsMfaProtectedMock.mockResolvedValue(true);
+      enforceExistingFactorStepUpMock.mockResolvedValue(null);
+
+      const res = await patchMe({ email: 'new@example.com', stepUpGrantId: GRANT });
+
+      expect(res.status).toBe(200);
+      const requested = createAuditLogAsyncMock.mock.calls
+        .map((c: any[]) => c[0])
+        .find((a: any) => a.action === 'user.email.change.requested');
+      expect(requested.details).toMatchObject({ stepUp: 'mfa', pendingEmail: 'new@example.com' });
+    });
+
+    it('local-password user WITHOUT currentPassword ⇒ 400, nothing written', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+
+      const res = await patchMe({ email: 'new@example.com' });
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/current password is required/i);
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
+      expect(vi.mocked(db.update)).not.toHaveBeenCalled();
+    });
+
+    it('local-password user with WRONG password ⇒ 401, nothing written', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
       requireCurrentPasswordStepUpMock.mockImplementationOnce(async (c: any) =>
         c.json({ error: 'Invalid credentials' }, 401)
       );
 
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'new@example.com', currentPassword: 'wrong' })
-      });
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'wrong' });
 
       expect(res.status).toBe(401);
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
       expect(vi.mocked(db.update)).not.toHaveBeenCalled();
-      const actions = createAuditLogAsyncMock.mock.calls.map((c: any[]) => c[0].action);
-      expect(actions).not.toContain('user.email.change');
-      expect(sendEmailChangedMock).not.toHaveBeenCalled();
     });
 
-    it('case 4a: passwordless user WITHOUT satisfied MFA ⇒ 403, not updated', async () => {
+    it('SSO-enforced org ⇒ 403, nothing written', async () => {
       orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: null });
-      updateReturning(updatedRow('new@example.com'));
-      hasSatisfiedMfaMock.mockReturnValue(false);
-
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'new@example.com' })
-      });
-
-      expect(res.status).toBe(403);
-      const body = await res.json();
-      expect(body.error).toMatch(/mfa/i);
-      expect(vi.mocked(db.update)).not.toHaveBeenCalled();
-      // Passwordless → password step-up must not be attempted.
-      expect(requireCurrentPasswordStepUpMock).not.toHaveBeenCalled();
-      expect(sendEmailChangedMock).not.toHaveBeenCalled();
-    });
-
-    it('case 4b: passwordless user WITH satisfied MFA ⇒ 200, audited stepUp === mfa', async () => {
-      orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: null });
-      updateReturning(updatedRow('new@example.com'));
-      hasSatisfiedMfaMock.mockReturnValue(true);
-
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'new@example.com' })
-      });
-
-      expect(res.status).toBe(200);
-      expect(requireCurrentPasswordStepUpMock).not.toHaveBeenCalled();
-      expect(createAuditLogAsyncMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'user.email.change',
-          orgId: 'org-1',
-          details: expect.objectContaining({
-            previousEmail: 'old@example.com',
-            newEmail: 'new@example.com',
-            stepUp: 'mfa'
-          })
-        })
-      );
-      expect(sendEmailChangedMock).toHaveBeenCalledWith(
-        expect.objectContaining({ to: 'old@example.com', newEmail: 'new@example.com' })
-      );
-    });
-
-    it('case 5: enforce-SSO org ⇒ 403, email not updated', async () => {
-      orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('new@example.com'));
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
       isPasswordAuthDisabledBySsoMock.mockResolvedValue(true);
 
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'new@example.com', currentPassword: 'correct-horse' })
-      });
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
 
       expect(res.status).toBe(403);
-      const body = await res.json();
-      expect(body.error).toMatch(/sso/i);
+      expect((await res.json()).error).toMatch(/sso/i);
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
       expect(vi.mocked(db.update)).not.toHaveBeenCalled();
-      expect(requireCurrentPasswordStepUpMock).not.toHaveBeenCalled();
-      expect(sendEmailChangedMock).not.toHaveBeenCalled();
     });
 
-    it('case 6: name-only change ⇒ 200, no step-up invoked, audited as user.profile.update', async () => {
+    it('notifies the OLD address that a change was REQUESTED and sends verification to the NEW address', async () => {
       orgScopeAuth();
-      // Only the self-load select runs for a name-only change.
-      vi.mocked(db.select).mockReturnValue(
-        selectNode([{ email: 'old@example.com', passwordHash: 'hash' }]) as any
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
+
+      expect(res.status).toBe(200);
+      // Security notice to the OLD (still-authoritative) address, pending:true.
+      expect(sendEmailChangedMock).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'old@example.com', newEmail: 'new@example.com', pending: true })
       );
-      updateReturning({
-        id: 'user-123',
-        email: 'old@example.com',
-        name: 'Renamed',
-        avatarUrl: null,
-        status: 'active',
-        mfaEnabled: false,
-        preferences: null
-      });
-
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ name: 'Renamed' })
-      });
-
-      expect(res.status).toBe(200);
-      expect(requireCurrentPasswordStepUpMock).not.toHaveBeenCalled();
-      expect(isPasswordAuthDisabledBySsoMock).not.toHaveBeenCalled();
-      expect(sendEmailChangedMock).not.toHaveBeenCalled();
-      const actions = createAuditLogAsyncMock.mock.calls.map((c: any[]) => c[0].action);
-      expect(actions).toContain('user.profile.update');
-      expect(actions).not.toContain('user.email.change');
+      // Verification link to the NEW address, carrying the minted token.
+      expect(sendVerificationEmailMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'new@example.com',
+          verificationUrl: expect.stringContaining('raw-token-mock')
+        })
+      );
     });
 
-    it('case 7: same-email "change" ⇒ no step-up required, 200', async () => {
+    it('audits user.email.change.requested with {previousEmail, pendingEmail, stepUp} and NO revocation fields', async () => {
       orgScopeAuth();
-      // body.email === current email (after normalization) → not a real change.
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('old@example.com'));
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
 
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'OLD@example.com' })
-      });
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
 
       expect(res.status).toBe(200);
-      // No real email change → no step-up gate, no notification, no dedicated audit.
-      expect(requireCurrentPasswordStepUpMock).not.toHaveBeenCalled();
-      expect(isPasswordAuthDisabledBySsoMock).not.toHaveBeenCalled();
-      expect(sendEmailChangedMock).not.toHaveBeenCalled();
-      const actions = createAuditLogAsyncMock.mock.calls.map((c: any[]) => c[0].action);
+      const calls = createAuditLogAsyncMock.mock.calls.map((c: any[]) => c[0]);
+      const actions = calls.map((a) => a.action);
+      expect(actions).toContain('user.profile.update');
+      expect(actions).toContain('user.email.change.requested');
+      // The old committed-change action must NOT fire at initiation.
       expect(actions).not.toContain('user.email.change');
+      const requested = calls.find((a) => a.action === 'user.email.change.requested');
+      expect(requested.details).toMatchObject({
+        previousEmail: 'old@example.com',
+        pendingEmail: 'new@example.com',
+        stepUp: 'password'
+      });
+      // Nothing is revoked at initiation — those fields belong to the commit.
+      expect(requested.details).not.toHaveProperty('sessionsRevoked');
+      expect(requested.details).not.toHaveProperty('oauthGrantsRevokedOk');
     });
 
-    it('case 8: PARTNER-scope email change resolves an attribution org for both audits', async () => {
-      // Partner-scope caller: auth.orgId === null, so the audit org must be
-      // resolved from the user's membership via resolveUserAuditOrgId — for the
-      // dedicated email-change audit too, not just the profile-update.
+    it('PARTNER-scope request resolves an attribution org for the requested audit', async () => {
+      // Partner-scope caller: auth.orgId === null → resolve via resolveUserAuditOrgId.
       vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
         c.set('auth', {
           scope: 'partner',
@@ -1129,80 +1513,77 @@ describe('user routes', () => {
         });
         return next();
       });
-      resolveUserAuditOrgIdMock.mockResolvedValueOnce('resolved-org-x');
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('new@example.com'));
-      requireCurrentPasswordStepUpMock.mockResolvedValueOnce(null);
+      resolveUserAuditOrgIdMock.mockResolvedValue('resolved-org-x');
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
 
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ email: 'new@example.com', currentPassword: 'correct-horse' })
-      });
+      const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
 
       expect(res.status).toBe(200);
       expect(resolveUserAuditOrgIdMock).toHaveBeenCalledWith('user-123');
-      expect(createAuditLogAsyncMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'user.email.change',
-          orgId: 'resolved-org-x',
-          details: expect.objectContaining({
-            previousEmail: 'old@example.com',
-            newEmail: 'new@example.com',
-            stepUp: 'password'
-          })
-        })
-      );
+      const requested = createAuditLogAsyncMock.mock.calls
+        .map((c: any[]) => c[0])
+        .find((a: any) => a.action === 'user.email.change.requested');
+      expect(requested.orgId).toBe('resolved-org-x');
     });
 
-    it('case 9: MIXED name+email change ⇒ profile.update lists BOTH fields AND email.change also fires', async () => {
+    it('name-only PATCH still works and records NO pending change, NO step-up', async () => {
       orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning({
-        id: 'user-123',
-        email: 'new@example.com',
-        name: 'New',
-        avatarUrl: null,
-        status: 'active',
-        mfaEnabled: false,
-        preferences: null
-      });
-      // Org scope, step-up passes (null).
-      requireCurrentPasswordStepUpMock.mockResolvedValueOnce(null);
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate({ ...updatedRow(), name: 'Renamed' });
 
-      const res = await app.request('/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-        body: JSON.stringify({ name: 'New', email: 'new@example.com', currentPassword: 'correct' })
-      });
+      const res = await patchMe({ name: 'Renamed' });
+
+      expect(res.status).toBe(200);
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
+      expect(requireCurrentPasswordStepUpMock).not.toHaveBeenCalled();
+      expect(getEffectiveMfaPolicyMock).not.toHaveBeenCalled();
+      const actions = createAuditLogAsyncMock.mock.calls.map((c: any[]) => c[0].action);
+      expect(actions).toContain('user.profile.update');
+      expect(actions).not.toContain('user.email.change.requested');
+    });
+
+    it('same-address PATCH ⇒ 200, no pending change, no step-up gate', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+
+      const res = await patchMe({ email: 'OLD@example.com' });
+
+      expect(res.status).toBe(200);
+      expect(requestPendingEmailChangeMock).not.toHaveBeenCalled();
+      expect(getEffectiveMfaPolicyMock).not.toHaveBeenCalled();
+      expect(isPasswordAuthDisabledBySsoMock).not.toHaveBeenCalled();
+    });
+
+    it('mixed name+email: profile.update lists only WRITTEN fields (name); the pending email is on the requested audit', async () => {
+      orgScopeAuth();
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate({ ...updatedRow(), name: 'New' });
+
+      const res = await patchMe({ name: 'New', email: 'new@example.com', currentPassword: 'pw' });
 
       expect(res.status).toBe(200);
       const calls = createAuditLogAsyncMock.mock.calls.map((c: any[]) => c[0]);
       const profileUpdate = calls.find((a) => a.action === 'user.profile.update');
-      expect(profileUpdate).toBeDefined();
-      expect(profileUpdate.details.changedFields).toEqual(
-        expect.arrayContaining(['name', 'email'])
-      );
-      const actions = calls.map((a) => a.action);
-      expect(actions).toContain('user.email.change');
+      expect(profileUpdate.details.changedFields).toContain('name');
+      // email is NOT a committed field change, so it must not appear here.
+      expect(profileUpdate.details.changedFields).not.toContain('email');
+      expect(calls.map((a) => a.action)).toContain('user.email.change.requested');
     });
 
-    it('case 10a: email service NOT configured ⇒ warns, does not attempt send, still 200', async () => {
+    it('email service NOT configured ⇒ warns, records the pending change, still 200', async () => {
       orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('new@example.com'));
-      requireCurrentPasswordStepUpMock.mockResolvedValueOnce(null);
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
       getEmailServiceMock.mockReturnValue(null);
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       try {
-        const res = await app.request('/users/me', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-          body: JSON.stringify({ email: 'new@example.com', currentPassword: 'correct-horse' })
-        });
-
+        const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
         expect(res.status).toBe(200);
+        expect((await res.json()).pendingEmail).toBe('new@example.com');
+        expect(sendVerificationEmailMock).not.toHaveBeenCalled();
         expect(sendEmailChangedMock).not.toHaveBeenCalled();
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringContaining('Email service not configured')
@@ -1212,28 +1593,19 @@ describe('user routes', () => {
       }
     });
 
-    it('case 10b: sendEmailChanged throws ⇒ console.error + captureException, request still 200', async () => {
+    it('fails closed ⇒ 500 when the pending-email write throws (0-row / RLS), no verification sent', async () => {
       orgScopeAuth();
-      mockSelfAndUniqueness({ email: 'old@example.com', passwordHash: 'hash' });
-      updateReturning(updatedRow('new@example.com'));
-      requireCurrentPasswordStepUpMock.mockResolvedValueOnce(null);
-      const boom = new Error('smtp down');
-      sendEmailChangedMock.mockRejectedValueOnce(boom);
+      mockSelf({ email: 'old@example.com', passwordHash: 'hash' });
+      mockUpdate(updatedRow());
+      requestPendingEmailChangeMock.mockRejectedValueOnce(
+        new Error('requestPendingEmailChange: pending email write matched 0 rows for user-123')
+      );
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       try {
-        const res = await app.request('/users/me', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
-          body: JSON.stringify({ email: 'new@example.com', currentPassword: 'correct-horse' })
-        });
-
-        expect(res.status).toBe(200);
-        expect(errorSpy).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to send email-change security notice'),
-          boom
-        );
-        expect(captureExceptionMock).toHaveBeenCalledWith(boom);
+        const res = await patchMe({ email: 'new@example.com', currentPassword: 'pw' });
+        expect(res.status).toBe(500);
+        expect(sendVerificationEmailMock).not.toHaveBeenCalled();
       } finally {
         errorSpy.mockRestore();
       }
@@ -1241,6 +1613,106 @@ describe('user routes', () => {
   });
 
   describe('PATCH /users/:id (admin update)', () => {
+    it.each([
+      { field: 'name', value: 'Cross-tenant rename' },
+      { field: 'status', value: 'disabled' },
+    ])('rejects organization-scoped global identity update for $field before lookup', async ({ field, value }) => {
+      vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
+        c.set('auth', {
+          scope: 'organization',
+          partnerId: null,
+          partnerOrgAccess: null,
+          orgId: 'org-a',
+          user: { id: 'org-admin', email: 'admin-a@example.com' },
+        });
+        return next();
+      });
+
+      const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({ [field]: value }),
+      });
+
+      expect(res.status).toBe(403);
+      expect(db.select).not.toHaveBeenCalled();
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(runPostCommitCleanup).not.toHaveBeenCalled();
+    });
+
+    it.each(['selected', 'all'] as const)(
+      'rejects a partner admin with orgAccess=%s before any global identity lookup or side effect',
+      async (partnerOrgAccess) => {
+        vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
+          c.set('auth', {
+            scope: 'partner',
+            partnerId: 'partner-123',
+            partnerOrgAccess,
+            orgId: null,
+            user: { id: 'partner-admin', email: 'admin@example.com' },
+          });
+          return next();
+        });
+
+        const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+          body: JSON.stringify({ name: 'Cross-partner rename' }),
+        });
+
+        expect(res.status).toBe(403);
+        expect(db.select).not.toHaveBeenCalled();
+        expect(db.transaction).not.toHaveBeenCalled();
+        expect(withSystemDbAccessContext).not.toHaveBeenCalled();
+        expect(runPostCommitCleanup).not.toHaveBeenCalled();
+      }
+    );
+
+    it('allows system authority to update a global identity', async () => {
+      authAsSystem();
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{
+              id: '11111111-1111-1111-1111-111111111111',
+              email: 'u@example.com',
+              name: 'User',
+              status: 'active',
+            }]),
+          }),
+        }),
+      } as any);
+      vi.mocked(db.transaction).mockImplementationOnce(async (fn: any) => fn({
+        update: vi.fn(() => ({
+          set: vi.fn(() => ({
+            where: vi.fn(() => ({
+              returning: vi.fn().mockResolvedValue([{
+                id: '11111111-1111-1111-1111-111111111111',
+                email: 'u@example.com',
+                name: 'Renamed by platform admin',
+                status: 'active',
+              }]),
+            })),
+          })),
+        })),
+      }));
+
+      const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({ name: 'Renamed by platform admin' }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        id: '11111111-1111-1111-1111-111111111111',
+        name: 'Renamed by platform admin',
+      });
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      expect(runPostCommitCleanup).not.toHaveBeenCalled();
+    });
+
     it('rejects unknown top-level fields including roleId (strict schema)', async () => {
       // The Edit dialog historically sent { email, name, roleId } and roleId was
       // silently dropped because updateUserSchema lacked .strict(). After the
@@ -1260,6 +1732,69 @@ describe('user routes', () => {
         body: JSON.stringify({ name: 'New Name', mysteryField: 'oops' })
       });
       expect(res.status).toBe(400);
+    });
+
+    // Task 9: the status update, the auth-epoch advance, and the durable
+    // refresh-family revoke must all land in the SAME db.transaction, with
+    // the lifecycle service's post-commit cleanup running exactly once after
+    // it commits (epoch).
+    it('advances the auth epoch and revokes refresh-token families in the same transaction, then runs post-commit cleanup (epoch)', async () => {
+      authAsSystem();
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([
+              {
+                id: '11111111-1111-1111-1111-111111111111',
+                email: 'u@example.com',
+                name: 'User',
+                status: 'active',
+              },
+            ]),
+          }),
+        }),
+      } as any);
+
+      // Minimal `tx` stub: routes .returning() by the SET shape.
+      // advanceUserEpochs sets `authEpoch`; anything else is the main users
+      // update. revokeAllRefreshFamilies never calls .returning().
+      const capturedUpdates: Array<Record<string, unknown>> = [];
+      const txUpdate = vi.fn((_table: any) => ({
+        set: (values: Record<string, unknown>) => {
+          capturedUpdates.push(values);
+          return {
+            where: () => ({
+              returning: () =>
+                'authEpoch' in values
+                  ? Promise.resolve([{ authEpoch: 1, mfaEpoch: 0, emailEpoch: 0, passwordResetEpoch: 0 }])
+                  : Promise.resolve([
+                      {
+                        id: '11111111-1111-1111-1111-111111111111',
+                        email: 'u@example.com',
+                        name: 'User',
+                        status: 'disabled',
+                      },
+                    ])
+            })
+          };
+        }
+      }));
+      vi.mocked(db.transaction).mockImplementationOnce(async (fn: any) => fn({ update: txUpdate }));
+
+      const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({ status: 'disabled' })
+      });
+
+      expect(res.status).toBe(200);
+      // advanceUserEpochs-shaped update on `users` (auth_epoch increment).
+      expect(capturedUpdates.some((v) => 'authEpoch' in v)).toBe(true);
+      // revokeAllRefreshFamilies-shaped update on `refresh_token_families`
+      // (revoked_at/revoked_reason via COALESCE).
+      expect(capturedUpdates.some((v) => 'revokedReason' in v)).toBe(true);
+      expect(runPostCommitCleanup).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
+      expect(runPostCommitCleanup).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1389,16 +1924,53 @@ describe('user routes', () => {
     });
   });
 
-  describe('DELETE /users/:id (Task 14: JWT revocation on removal)', () => {
-    it('removes a partner user and revokes their JWTs', async () => {
-      // partner_users delete returns a row → 200, and we expect Redis revoke
-      // to fire so the ex-member's ≤15min-TTL access token stops granting
-      // partner-scoped reads/writes on the very next request.
-      vi.mocked(db.delete).mockReturnValueOnce({
+  describe('DELETE /users/:id (Task 9/14: epoch bump + refresh-family revoke + post-commit cleanup on removal)', () => {
+    // removeMembershipForScope now runs the membership delete + orphan
+    // neutralization + advanceUserEpochs + revokeAllRefreshFamilies in ONE
+    // db.transaction (system context). Build a minimal `tx` stub: `select`
+    // backs the orphan check (hasOtherMembership controls whether it finds a
+    // remaining link and short-circuits neutralize), `update` captures every
+    // `.set()` call's values so tests can assert the epoch/family-revoke
+    // shapes fired, and routes .returning() by whether the values look like
+    // an epoch bump (mirrors advanceUserEpochs' real SET shape).
+    function mockRemoveMembershipTx(opts: { deletedRows: Array<{ id: string }>; hasOtherMembership?: boolean }) {
+      const { deletedRows, hasOtherMembership = true } = opts;
+      const capturedUpdates: Array<Record<string, unknown>> = [];
+      const txDelete = vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'link-1' }])
+          returning: vi.fn().mockResolvedValue(deletedRows)
         })
-      } as any);
+      });
+      const txSelect = vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue(hasOtherMembership ? [{ id: 'other-link' }] : [])
+          })
+        })
+      });
+      const txUpdate = vi.fn((_table: any) => ({
+        set: (values: Record<string, unknown>) => {
+          capturedUpdates.push(values);
+          return {
+            where: () => {
+              const ret: any = Promise.resolve(undefined);
+              ret.returning = () =>
+                values && 'authEpoch' in values
+                  ? Promise.resolve([{ authEpoch: 1, mfaEpoch: 0, emailEpoch: 0, passwordResetEpoch: 0 }])
+                  : Promise.resolve([]);
+              return ret;
+            }
+          };
+        }
+      }));
+      vi.mocked(db.transaction).mockImplementation(async (fn: any) =>
+        fn({ delete: txDelete, select: txSelect, update: txUpdate })
+      );
+      return { txDelete, txSelect, txUpdate, capturedUpdates };
+    }
+
+    it('removes a partner user, advances their epoch + revokes refresh families in-tx, then runs post-commit cleanup', async () => {
+      const { capturedUpdates } = mockRemoveMembershipTx({ deletedRows: [{ id: 'link-1' }] });
 
       const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
         method: 'DELETE',
@@ -1406,20 +1978,16 @@ describe('user routes', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(revokeAllUserTokens).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
-      expect(revokeAllUserTokens).toHaveBeenCalledTimes(1);
-      // OAuth grants/refresh tokens (e.g. MCP) must also be revoked so a
-      // removed user's refresh token can't keep minting access tokens.
-      expect(revokeUserAccess).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
-      expect(clearPermissionCache).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
+      // advanceUserEpochs-shaped update (auth_epoch increment).
+      expect(capturedUpdates.some((v) => 'authEpoch' in v)).toBe(true);
+      // revokeAllRefreshFamilies-shaped update (revoked_at/revoked_reason).
+      expect(capturedUpdates.some((v) => 'revokedReason' in v)).toBe(true);
+      expect(runPostCommitCleanup).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
+      expect(runPostCommitCleanup).toHaveBeenCalledTimes(1);
     });
 
-    it('does not revoke JWTs when no row was deleted (404)', async () => {
-      vi.mocked(db.delete).mockReturnValueOnce({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([])
-        })
-      } as any);
+    it('does not run post-commit cleanup when no row was deleted (404)', async () => {
+      mockRemoveMembershipTx({ deletedRows: [] });
 
       const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
         method: 'DELETE',
@@ -1427,19 +1995,16 @@ describe('user routes', () => {
       });
 
       expect(res.status).toBe(404);
-      expect(revokeAllUserTokens).not.toHaveBeenCalled();
+      expect(runPostCommitCleanup).not.toHaveBeenCalled();
     });
 
-    it('still 200s when token revocation fails (best-effort)', async () => {
-      // Redis outage during revoke — the partner_users row already deleted,
-      // we must not roll the response back. The ≤15min-TTL natural expiry
-      // is the fallback. Operator visibility comes from the log line.
-      vi.mocked(revokeAllUserTokens).mockRejectedValueOnce(new Error('redis down'));
-      vi.mocked(db.delete).mockReturnValueOnce({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'link-1' }])
-        })
-      } as any);
+    it('still 200s even when post-commit cleanup reports a partial failure (best-effort, never throws)', async () => {
+      vi.mocked(runPostCommitCleanup).mockResolvedValueOnce({
+        redisOk: false,
+        permissionCacheOk: true,
+        oauthOk: true
+      });
+      mockRemoveMembershipTx({ deletedRows: [{ id: 'link-1' }] });
 
       const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
         method: 'DELETE',
@@ -1447,32 +2012,9 @@ describe('user routes', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(revokeAllUserTokens).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
     });
 
-    it('still 200s (partner branch) when OAuth grant revocation fails (best-effort)', async () => {
-      // revokeUserAccess (OAuth grants/refresh tokens) is best-effort: a failure
-      // here (e.g. OAuth store down) must NOT roll back the already-deleted
-      // partner_users row. The .catch in DELETE /:id isolates it, mirroring the
-      // revokeAllUserTokens best-effort case above.
-      vi.mocked(revokeUserAccess).mockRejectedValueOnce(new Error('oauth store down'));
-      vi.mocked(db.delete).mockReturnValueOnce({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'link-1' }])
-        })
-      } as any);
-
-      const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
-        method: 'DELETE',
-        headers: { Authorization: 'Bearer token' }
-      });
-
-      expect(res.status).toBe(200);
-      expect(revokeAllUserTokens).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
-      expect(revokeUserAccess).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
-    });
-
-    it('removes an organization user and revokes their JWTs', async () => {
+    it('removes an organization user, advances their epoch + revokes refresh families, then runs post-commit cleanup', async () => {
       // Same shape for organization-scope removals — org-scoped JWTs also
       // carry an accessibleOrgIds claim that must be invalidated.
       vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
@@ -1485,11 +2027,7 @@ describe('user routes', () => {
         return next();
       });
 
-      vi.mocked(db.delete).mockReturnValueOnce({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'link-2' }])
-        })
-      } as any);
+      const { capturedUpdates } = mockRemoveMembershipTx({ deletedRows: [{ id: 'link-2' }] });
 
       const res = await app.request('/users/22222222-2222-2222-2222-222222222222', {
         method: 'DELETE',
@@ -1497,89 +2035,195 @@ describe('user routes', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(revokeAllUserTokens).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222');
-      expect(revokeAllUserTokens).toHaveBeenCalledTimes(1);
-      expect(revokeUserAccess).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222');
+      expect(capturedUpdates.some((v) => 'authEpoch' in v)).toBe(true);
+      expect(capturedUpdates.some((v) => 'revokedReason' in v)).toBe(true);
+      expect(runPostCommitCleanup).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222');
+      expect(runPostCommitCleanup).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('POST /users/:id/mfa/reset (admin recovery: clear factor + invalidate assurance)', () => {
+    const TARGET = '11111111-1111-1111-1111-111111111111';
+
+    // getScopedUser (partner scope) reads partnerUsers ⋈ users ⋈ roles; return a
+    // membership so the target resolves inside the caller's tenant.
+    function mockScopedUser(found: boolean) {
+      return {
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue(
+                  found ? [{ id: TARGET, email: 'target@example.com', name: 'Target', status: 'active', roleId: 'r1', roleName: 'Tech' }] : []
+                )
+              })
+            })
+          })
+        })
+      } as any;
+    }
+
+    // The MFA-state probe: select({mfaEnabled,mfaMethod}).from(users).where().limit(1).
+    function mockMfaState(row: { mfaEnabled: boolean; mfaMethod: string | null } | null) {
+      return {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue(row ? [row] : [])
+          })
+        })
+      } as any;
+    }
+
+    // tx stub for invalidateMfaAssuranceAfterFactorChange: the clear update takes
+    // no .returning(); advanceUserEpochs({mfa}) sets `mfaEpoch` and RETURNs the
+    // epoch row; revokeAllRefreshFamilies sets revoked_at/revoked_reason.
+    function mockFactorChangeTx() {
+      const capturedUpdates: Array<Record<string, unknown>> = [];
+      const txUpdate = vi.fn((_table: any) => ({
+        set: (values: Record<string, unknown>) => {
+          capturedUpdates.push(values);
+          return {
+            where: () => {
+              const ret: any = Promise.resolve(undefined);
+              ret.returning = () =>
+                values && 'mfaEpoch' in values
+                  ? Promise.resolve([{ authEpoch: 0, mfaEpoch: 7, emailEpoch: 0, passwordResetEpoch: 0 }])
+                  : Promise.resolve([]);
+              return ret;
+            }
+          };
+        }
+      }));
+      vi.mocked(db.transaction).mockImplementation(async (fn: any) => fn({ update: txUpdate }));
+      return { capturedUpdates };
+    }
+
+    it('clears the factor, bumps mfa_epoch + revokes families in-tx (system context), then post-commit cleanup', async () => {
+      vi.mocked(db.select)
+        .mockReturnValueOnce(mockScopedUser(true))
+        .mockReturnValueOnce(mockMfaState({ mfaEnabled: true, mfaMethod: 'totp' }));
+      const { capturedUpdates } = mockFactorChangeTx();
+
+      const res = await app.request(`/users/${TARGET}/mfa/reset`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(200);
+      // Cross-user write went through the system-context escape.
+      expect(runOutsideDbContext).toHaveBeenCalled();
+      expect(withSystemDbAccessContext).toHaveBeenCalled();
+      // Factor cleared (mfaEnabled:false) + mfa_epoch bumped + families revoked.
+      expect(capturedUpdates.some((v) => v.mfaEnabled === false && v.mfaSecret === null)).toBe(true);
+      expect(capturedUpdates.some((v) => 'mfaEpoch' in v)).toBe(true);
+      expect(capturedUpdates.some((v) => 'revokedReason' in v)).toBe(true);
+      expect(runPostCommitCleanup).toHaveBeenCalledWith(TARGET);
+      // Audit records the admin action against the target.
+      expect(createAuditLogAsyncMock).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'user.mfa_reset', resourceId: TARGET, actorId: 'user-123' })
+      );
     });
 
-    it('still 200s (org branch) when OAuth grant revocation fails (best-effort)', async () => {
-      // Org-scope removal: same best-effort isolation for revokeUserAccess. The
-      // organization_users row is already deleted; an OAuth-store failure must
-      // not roll the response back.
+    it('refuses to reset the caller’s own MFA (must use self-service disable)', async () => {
       vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
-        c.set('auth', {
-          scope: 'organization',
-          partnerId: null,
-          orgId: 'org-456',
-          user: { id: 'user-123', email: 'test@example.com' }
-        });
+        c.set('auth', { scope: 'partner', partnerId: 'partner-123', orgId: null, user: { id: TARGET, email: 'target@example.com' } });
         return next();
       });
-      vi.mocked(revokeUserAccess).mockRejectedValueOnce(new Error('oauth store down'));
-      vi.mocked(db.delete).mockReturnValueOnce({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'link-2' }])
-        })
-      } as any);
 
-      const res = await app.request('/users/22222222-2222-2222-2222-222222222222', {
-        method: 'DELETE',
+      const res = await app.request(`/users/${TARGET}/mfa/reset`, {
+        method: 'POST',
         headers: { Authorization: 'Bearer token' }
       });
 
-      expect(res.status).toBe(200);
-      expect(revokeAllUserTokens).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222');
-      expect(revokeUserAccess).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222');
+      expect(res.status).toBe(400);
+      expect(vi.mocked(db.transaction)).not.toHaveBeenCalled();
+    });
+
+    it('404s for a target outside the caller’s tenant (no cross-tenant reset)', async () => {
+      vi.mocked(db.select).mockReturnValueOnce(mockScopedUser(false));
+
+      const res = await app.request(`/users/${TARGET}/mfa/reset`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(404);
+      expect(vi.mocked(db.transaction)).not.toHaveBeenCalled();
+    });
+
+    it('400s when the target has no MFA enabled (nothing to reset)', async () => {
+      vi.mocked(db.select)
+        .mockReturnValueOnce(mockScopedUser(true))
+        .mockReturnValueOnce(mockMfaState({ mfaEnabled: false, mfaMethod: null }));
+
+      const res = await app.request(`/users/${TARGET}/mfa/reset`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' }
+      });
+
+      expect(res.status).toBe(400);
+      expect(vi.mocked(db.transaction)).not.toHaveBeenCalled();
     });
   });
 
   describe('PATCH /users/:id remote session teardown on deactivation', () => {
     const teardownMock = vi.mocked(terminateUserRemoteSessions);
 
-    // getScopedUser (partner scope) → select().from().innerJoin().innerJoin().where().limit()
-    // returns the existing record. Then update(users).set().where().returning()
-    // returns the updated row. Seed both so the becameInactive branch runs.
+    beforeEach(() => authAsSystem());
+
+    // The status PATCH mutation now runs update(users) + advanceUserEpochs +
+    // revokeAllRefreshFamilies in ONE db.transaction. Build a minimal `tx`
+    // stub whose `update` routes .returning() by the SET shape: an
+    // advanceUserEpochs call sets `authEpoch`, so anything else is the main
+    // users update and gets `updatedRow`. revokeAllRefreshFamilies never
+    // calls .returning() so its result is unused.
+    function mockPatchTx(updatedRow: { id: string; email: string; name: string; status: string } | null) {
+      const capturedUpdates: Array<Record<string, unknown>> = [];
+      const txUpdate = vi.fn((_table: any) => ({
+        set: (values: Record<string, unknown>) => {
+          capturedUpdates.push(values);
+          return {
+            where: () => ({
+              returning: () =>
+                'authEpoch' in values
+                  ? Promise.resolve([{ authEpoch: 1, mfaEpoch: 0, emailEpoch: 0, passwordResetEpoch: 0 }])
+                  : Promise.resolve(updatedRow ? [updatedRow] : [])
+            })
+          };
+        }
+      }));
+      vi.mocked(db.transaction).mockImplementationOnce(async (fn: any) => fn({ update: txUpdate }));
+      return { txUpdate, capturedUpdates };
+    }
+
+    // The system-authority identity lookup returns the existing record.
+    // seedPatch also wires the transaction to
+    // return the post-mutation row so the becameInactive branch runs.
     function seedPatch(
       recordStatus: 'active' | 'invited' | 'disabled',
       updatedStatus: 'active' | 'invited' | 'disabled',
     ) {
       vi.mocked(db.select).mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            innerJoin: vi.fn().mockReturnValue({
-              where: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue([
-                  {
-                    id: '11111111-1111-1111-1111-111111111111',
-                    email: 'u@example.com',
-                    name: 'User',
-                    status: recordStatus,
-                    roleId: 'role-1',
-                    roleName: 'Admin',
-                    orgAccess: 'all',
-                    orgIds: null,
-                  },
-                ]),
-              }),
-            }),
-          }),
-        }),
-      } as any);
-
-      vi.mocked(db.update).mockReturnValueOnce({
-        set: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([
+            limit: vi.fn().mockResolvedValue([
               {
                 id: '11111111-1111-1111-1111-111111111111',
                 email: 'u@example.com',
                 name: 'User',
-                status: updatedStatus,
+                status: recordStatus,
               },
             ]),
           }),
         }),
       } as any);
+
+      return mockPatchTx({
+        id: '11111111-1111-1111-1111-111111111111',
+        email: 'u@example.com',
+        name: 'User',
+        status: updatedStatus,
+      });
     }
 
     function patchStatus(status: string) {
@@ -1613,40 +2257,24 @@ describe('user routes', () => {
     it('does NOT tear down sessions on a no-op update (name only, still active)', async () => {
       vi.mocked(db.select).mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            innerJoin: vi.fn().mockReturnValue({
-              where: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue([
-                  {
-                    id: '11111111-1111-1111-1111-111111111111',
-                    email: 'u@example.com',
-                    name: 'User',
-                    status: 'active',
-                    roleId: 'role-1',
-                    roleName: 'Admin',
-                    orgAccess: 'all',
-                    orgIds: null,
-                  },
-                ]),
-              }),
-            }),
-          }),
-        }),
-      } as any);
-      vi.mocked(db.update).mockReturnValueOnce({
-        set: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([
+            limit: vi.fn().mockResolvedValue([
               {
                 id: '11111111-1111-1111-1111-111111111111',
                 email: 'u@example.com',
-                name: 'Renamed',
+                name: 'User',
                 status: 'active',
               },
             ]),
           }),
         }),
       } as any);
+      const { capturedUpdates } = mockPatchTx({
+        id: '11111111-1111-1111-1111-111111111111',
+        email: 'u@example.com',
+        name: 'Renamed',
+        status: 'active',
+      });
 
       const res = await app.request('/users/11111111-1111-1111-1111-111111111111', {
         method: 'PATCH',
@@ -1656,6 +2284,12 @@ describe('user routes', () => {
 
       expect(res.status).toBe(200);
       expect(teardownMock).not.toHaveBeenCalled();
+      // A name-only edit is NOT an authentication-state change: it must not
+      // advance epochs (that would sign the user out everywhere), revoke
+      // refresh-token families, or run post-commit cleanup.
+      expect(capturedUpdates.some((v) => 'authEpoch' in v)).toBe(false);
+      expect(capturedUpdates.some((v) => 'revokedReason' in v)).toBe(false);
+      expect(runPostCommitCleanup).not.toHaveBeenCalled();
     });
 
     it('does NOT tear down sessions on a reactivation (disabled→active)', async () => {

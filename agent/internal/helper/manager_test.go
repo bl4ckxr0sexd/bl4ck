@@ -37,17 +37,17 @@ func TestApplyDisabledStopsRunningHelperAfterRestart(t *testing.T) {
 	removeAutoStartFunc = func() error { return nil }
 	stopHelperLegacyFunc = func() {}
 
-	mgr := New(context.Background(), "", nil, "")
+	mgr := New(context.Background(), nil, nil, "")
 	mgr.baseDir = tmpDir
 	mgr.sessionEnumerator = &mockEnumerator{
 		sessions: []SessionInfo{{Key: "501", Username: "alice", UID: 501}},
 	}
-	mgr.stopByPIDFunc = func(pid int) error {
+	mgr.stopIfOursFunc = func(pid int, binaryPath string) (bool, error) {
 		stopped++
 		if pid != 4242 {
-			t.Fatalf("stopByPID called with pid %d, want 4242", pid)
+			t.Fatalf("stopIfOurs called with pid %d, want 4242", pid)
 		}
-		return nil
+		return true, nil
 	}
 	mgr.isOurProcessFunc = func(pid int, binaryPath string) bool { return pid == 4242 }
 	mgr.sessions["501"] = newSessionState("501", tmpDir)
@@ -86,13 +86,13 @@ func TestApplyRestartsHelperOnConfigChangeWhenIdle(t *testing.T) {
 
 	stopped := 0
 	spawned := 0
-	mgr := New(context.Background(), "", nil, "")
+	mgr := New(context.Background(), nil, nil, "")
 	mgr.baseDir = tmpDir
 	mgr.sessionEnumerator = &mockEnumerator{
 		sessions: []SessionInfo{{Key: "501", Username: "alice", UID: 501}},
 	}
 	mgr.isOurProcessFunc = func(pid int, binaryPath string) bool { return pid == 4242 }
-	mgr.stopByPIDFunc = func(pid int) error { stopped++; return nil }
+	mgr.stopIfOursFunc = func(pid int, binaryPath string) (bool, error) { stopped++; return true, nil }
 	mgr.spawnFunc = func(sessionKey, binaryPath string, args ...string) (int, error) {
 		spawned++
 		_ = os.WriteFile(statusPath, []byte("version: 0.14.0\npid: 9001\n"), 0644)
@@ -146,13 +146,13 @@ func TestApplyDefersRestartWhileChatActive(t *testing.T) {
 
 	stopped := 0
 	spawned := 0
-	mgr := New(context.Background(), "", nil, "")
+	mgr := New(context.Background(), nil, nil, "")
 	mgr.baseDir = tmpDir
 	mgr.sessionEnumerator = &mockEnumerator{
 		sessions: []SessionInfo{{Key: "501", Username: "alice", UID: 501}},
 	}
 	mgr.isOurProcessFunc = func(pid int, binaryPath string) bool { return pid == os.Getpid() }
-	mgr.stopByPIDFunc = func(pid int) error { stopped++; return nil }
+	mgr.stopIfOursFunc = func(pid int, binaryPath string) (bool, error) { stopped++; return true, nil }
 	mgr.spawnFunc = func(sessionKey, binaryPath string, args ...string) (int, error) {
 		spawned++
 		return 9001, nil
@@ -193,7 +193,7 @@ func TestApplyEnabledSpawnsPerSession(t *testing.T) {
 	removeAutoStartFunc = func() error { return nil }
 	stopHelperLegacyFunc = func() {}
 
-	mgr := New(context.Background(), "", nil, "")
+	mgr := New(context.Background(), nil, nil, "")
 	mgr.baseDir = tmpDir
 	mgr.sessionEnumerator = &mockEnumerator{
 		sessions: []SessionInfo{
@@ -226,5 +226,83 @@ func TestApplyEnabledSpawnsPerSession(t *testing.T) {
 	}
 	if _, ok := spawned["502"]; !ok {
 		t.Fatal("missing spawn for session 502")
+	}
+}
+
+func TestApplyDisabledUninstalledIsStableNoOp(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	var removeCalls, uninstallCalls, stopLegacyCalls int
+	origRemove := removeAutoStartFunc
+	origUninstall := uninstallPackageFunc
+	origStopLegacy := stopHelperLegacyFunc
+	t.Cleanup(func() {
+		removeAutoStartFunc = origRemove
+		uninstallPackageFunc = origUninstall
+		stopHelperLegacyFunc = origStopLegacy
+	})
+	removeAutoStartFunc = func() error { removeCalls++; return nil }
+	uninstallPackageFunc = func() error { uninstallCalls++; return nil }
+	stopHelperLegacyFunc = func() { stopLegacyCalls++ }
+
+	mgr := New(context.Background(), nil, nil, "")
+	mgr.baseDir = tmpDir
+	mgr.binaryPath = filepath.Join(tmpDir, "breeze-helper") // absent → not installed
+	mgr.sessionEnumerator = &mockEnumerator{}
+	mgr.pendingHelperVersion = "1.2.3" // simulate bootstrap version arriving each tick
+
+	mgr.Apply(&Settings{Enabled: false})
+	mgr.Apply(&Settings{Enabled: false})
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "sessions")); !os.IsNotExist(err) {
+		t.Fatalf("sessions dir should never be created when disabled+uninstalled; err=%v", err)
+	}
+	if removeCalls != 0 || uninstallCalls != 0 || stopLegacyCalls != 0 {
+		t.Fatalf("expected zero cleanup churn, got remove=%d uninstall=%d stopLegacy=%d",
+			removeCalls, uninstallCalls, stopLegacyCalls)
+	}
+	if mgr.pendingHelperVersion != "1.2.3" {
+		t.Fatalf("pendingHelperVersion should survive disabled ticks, got %q", mgr.pendingHelperVersion)
+	}
+}
+
+func TestApplyDisabledInstalledCleansUpOnce(t *testing.T) {
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "breeze-helper")
+	if err := os.WriteFile(binPath, []byte("fake"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var uninstallCalls int
+	origRemove := removeAutoStartFunc
+	origUninstall := uninstallPackageFunc
+	origStopLegacy := stopHelperLegacyFunc
+	origTargets := migrationTargetsFunc
+	origPrepare := prepareSessionDirFunc
+	t.Cleanup(func() {
+		removeAutoStartFunc = origRemove
+		uninstallPackageFunc = origUninstall
+		stopHelperLegacyFunc = origStopLegacy
+		migrationTargetsFunc = origTargets
+		prepareSessionDirFunc = origPrepare
+	})
+	removeAutoStartFunc = func() error { return nil }
+	uninstallPackageFunc = func() error { uninstallCalls++; _ = os.Remove(binPath); return nil }
+	stopHelperLegacyFunc = func() {}
+	migrationTargetsFunc = func() ([]string, error) { return nil, nil }
+	prepareSessionDirFunc = func(path, sessionKey string) error { return nil }
+
+	mgr := New(context.Background(), nil, nil, "")
+	mgr.baseDir = tmpDir
+	mgr.binaryPath = binPath
+	mgr.sessionEnumerator = &mockEnumerator{}
+
+	mgr.Apply(&Settings{Enabled: false}) // installed → migrate once, then uninstall
+	if uninstallCalls != 1 {
+		t.Fatalf("first disabled tick should uninstall once, got %d", uninstallCalls)
+	}
+	mgr.Apply(&Settings{Enabled: false}) // now uninstalled → full no-op
+	if uninstallCalls != 1 {
+		t.Fatalf("second disabled tick should be a no-op, got %d uninstall calls", uninstallCalls)
 	}
 }

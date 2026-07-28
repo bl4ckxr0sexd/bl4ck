@@ -77,7 +77,7 @@ function renderLanding(args: {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Install Breeze</title>
+  <title>Install BL4CK</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <meta name="color-scheme" content="light">
@@ -117,13 +117,13 @@ function renderLanding(args: {
             <path d="M14 46C14 46 22 46 32 46C40 46 44 40 50 40C53 40 55 42 55 44C55 46 53 48 50 48C46 48 44 46 44 46" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </div>
-        <h1 class="brand-name">Breeze</h1>
+        <h1 class="brand-name">BL4CK</h1>
         <p class="brand-tag">Remote Monitoring &amp; Management</p>
       </div>
 
       <div class="card">
-        <h1>Install Breeze on this device</h1>
-        <p>Your IT administrator has invited you to install the Breeze agent. The installer will configure itself automatically. Your device password will be required.</p>
+        <h1>Install BL4CK on this device</h1>
+        <p>Your IT administrator has invited you to install the BL4CK agent. The installer will configure itself automatically. Your device password will be required.</p>
         <a href="${primaryHref}" class="btn-primary">${primaryLabel}</a>
         <div class="alts">
           <span class="alts-label">Different operating system?</span>

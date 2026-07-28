@@ -88,7 +88,7 @@ describe('DeviceEffectiveConfigTab baseline labeling', () => {
     // Real assigned policy still renders normally...
     await waitFor(() => expect(screen.getAllByText('Org Patch Policy').length).toBeGreaterThan(0));
     // ...and the baseline fall-through feature shows "BL4CK Defaults" as its source.
-    expect(screen.getAllByText(/Breeze Defaults/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/BL4CK Defaults/).length).toBeGreaterThan(0);
     // ...and is explicitly marked "Not enforced" so it never reads as configured.
     expect(screen.getByText('Not enforced')).toBeInTheDocument();
   });

@@ -11,6 +11,7 @@ vi.mock('../db/schema', () => ({
   devices: {
     id: 'devices.id',
     orgId: 'devices.orgId',
+    agentId: 'devices.agentId',
     agentTokenSuspendedAt: 'devices.agentTokenSuspendedAt',
     agentTokenSuspendedReason: 'devices.agentTokenSuspendedReason',
   },
@@ -29,11 +30,21 @@ vi.mock('./permissions', () => ({ clearPermissionCache: vi.fn(async () => undefi
 vi.mock('./tokenRevocation', () => ({ revokeAllUserTokens: vi.fn(async () => undefined) }));
 vi.mock('./tenantStatus', () => ({ invalidateAgentTenantCache: vi.fn(async () => undefined) }));
 
+// Finding #3(b): severAgentCredentialsForOrgIds dynamically imports agentWs to
+// sever live sockets. Default: no connected agents, so the disconnect branch is
+// skipped and the existing revoke/restore tests' db.select ordering is
+// untouched. Individual tests override getConnectedAgentIds to exercise it.
+vi.mock('../routes/agentWs', () => ({
+  disconnectAgent: vi.fn(),
+  getConnectedAgentIds: vi.fn(() => [] as string[]),
+}));
+
 vi.mock('drizzle-orm', () => ({
   and: vi.fn((...args) => ({ and: args })),
   eq: vi.fn((l, r) => ({ eq: [l, r] })),
   inArray: vi.fn((c, vals) => ({ inArray: [c, vals] })),
   isNull: vi.fn((c) => ({ isNull: c })),
+  isNotNull: vi.fn((c) => ({ isNotNull: c })),
   gt: vi.fn((l, r) => ({ gt: [l, r] })),
   or: vi.fn((...args) => ({ or: args })),
   sql: vi.fn(),
@@ -42,6 +53,7 @@ vi.mock('drizzle-orm', () => ({
 import { db } from '../db';
 import { apiKeys, devices, enrollmentKeys } from '../db/schema';
 import { invalidateAgentTenantCache } from './tenantStatus';
+import { disconnectAgent, getConnectedAgentIds } from '../routes/agentWs';
 import {
   revokeOrganizationTenantAccess,
   revokePartnerTenantAccess,
@@ -122,6 +134,30 @@ describe('tenantLifecycle — agent fleet severance', () => {
     expect(result.enrollmentKeysInvalidated).toBe(1);
   });
 
+  it('severs live agent WS sockets for connected devices in a suspended org (Finding #3b)', async () => {
+    queueSelect([{ userId: 'u1' }]); // organizationUsers
+    queueSelect([{ agentId: 'agent-live' }, { agentId: 'agent-offline' }]); // devices in org
+    // Only one of the two devices has a live socket right now.
+    vi.mocked(getConnectedAgentIds).mockReturnValueOnce(['agent-live']);
+
+    await revokeOrganizationTenantAccess('org-1');
+
+    // The connected agent's socket is force-closed immediately (containment is
+    // not deferred to its next auth gate); the offline device is left alone.
+    expect(disconnectAgent).toHaveBeenCalledTimes(1);
+    expect(disconnectAgent).toHaveBeenCalledWith('agent-live', 4001, 'Tenant suspended');
+  });
+
+  it('does not query devices or disconnect when no agents are connected', async () => {
+    queueSelect([{ userId: 'u1' }]); // organizationUsers
+    // getConnectedAgentIds defaults to [] — the disconnect branch is skipped
+    // entirely (no device SELECT is issued).
+    const result = await revokeOrganizationTenantAccess('org-1');
+
+    expect(disconnectAgent).not.toHaveBeenCalled();
+    expect(result.agentTokensSuspended).toBe(2);
+  });
+
   it('revokePartnerTenantAccess severs agents across every org under the partner', async () => {
     queueSelect([{ id: 'org-1' }, { id: 'org-2' }]); // organizations under partner
     queueSelect([{ userId: 'pu1' }]); // partnerUsers
@@ -176,5 +212,46 @@ describe('tenantLifecycle — agent fleet severance', () => {
 
     expect(updateLog.some((u) => u.table === devices)).toBe(true);
     expect(result.agentTokensRestored).toBe(3);
+  });
+
+  // #2774 — the offboarding drain must lock users out WITHOUT suspending
+  // agent tokens, or the queued self_uninstall is undeliverable by
+  // construction (the exact bug the drain state exists to fix).
+  describe('agentChannel: drain', () => {
+    it('revokeOrganizationTenantAccess keeps agent tokens but expires enrollment keys', async () => {
+      queueSelect([{ userId: 'u1' }]); // organizationUsers
+
+      const result = await revokeOrganizationTenantAccess('org-1', { agentChannel: 'drain' });
+
+      // No devices UPDATE: agent tokens stay valid for the drain window.
+      expect(updateLog.some((u) => u.table === devices)).toBe(false);
+      // Enrollment keys still expire — no NEW devices during a drain.
+      expect(updateLog.some((u) => u.table === enrollmentKeys)).toBe(true);
+      expect(invalidateAgentTenantCache).toHaveBeenCalledWith(['org-1']);
+      expect(result.agentTokensSuspended).toBe(0);
+      expect(result.enrollmentKeysInvalidated).toBe(1);
+    });
+
+    it('drain mode still severs live WS sockets (interactive channel must not survive)', async () => {
+      queueSelect([{ userId: 'u1' }]); // organizationUsers
+      queueSelect([{ agentId: 'agent-live' }]); // devices in org
+      vi.mocked(getConnectedAgentIds).mockReturnValueOnce(['agent-live']);
+
+      await revokeOrganizationTenantAccess('org-1', { agentChannel: 'drain' });
+
+      expect(disconnectAgent).toHaveBeenCalledWith('agent-live', 4001, 'Tenant offboarding');
+    });
+
+    it('revokePartnerTenantAccess drain mode keeps agent tokens across partner orgs', async () => {
+      queueSelect([{ id: 'org-1' }, { id: 'org-2' }]); // organizations under partner
+      queueSelect([{ userId: 'pu1' }]); // partnerUsers
+      queueSelect([{ userId: 'ou1' }]); // org memberships
+
+      const result = await revokePartnerTenantAccess('partner-1', { agentChannel: 'drain' });
+
+      expect(updateLog.some((u) => u.table === devices)).toBe(false);
+      expect(updateLog.some((u) => u.table === enrollmentKeys)).toBe(true);
+      expect(result.agentTokensSuspended).toBe(0);
+    });
   });
 });

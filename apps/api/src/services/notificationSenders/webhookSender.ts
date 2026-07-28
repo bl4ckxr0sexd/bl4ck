@@ -480,7 +480,7 @@ export async function testWebhook(config: WebhookConfig): Promise<SendResult> {
     alertId: 'test-alert-id',
     alertName: 'Test Alert',
     severity: 'info',
-    summary: 'This is a test notification from Breeze RMM',
+    summary: 'This is a test notification from BL4CK RMM',
     deviceId: 'test-device-id',
     deviceName: 'Test Device',
     orgId: 'test-org-id',

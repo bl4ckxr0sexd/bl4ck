@@ -4,6 +4,8 @@ import { configurationPolicies, configPolicyFeatureLinks, configPolicyAssignment
 import { eq, and, desc, isNull, isNotNull, inArray, SQL } from 'drizzle-orm';
 import type { AuthContext } from '../middleware/auth';
 import type { AiTool } from './aiTools';
+import { onedriveHelperInlineSettingsSchema } from '@breeze/shared/validators';
+import { sanitizeThrownToolError } from './aiToolErrors';
 import {
   resolveEffectiveConfig,
   previewEffectiveConfig,
@@ -19,6 +21,7 @@ import {
   listFeatureLinks,
   listAssignments,
   validateAssignmentTarget,
+  authorizeAssignmentTarget,
   canManagePartnerWidePolicies,
   policyAccessCondition,
   PARTNER_WIDE_WRITE_DENIED_MESSAGE,
@@ -33,6 +36,28 @@ function getOrgId(auth: AuthContext): string | null {
   return auth.orgId ?? auth.accessibleOrgIds?.[0] ?? null;
 }
 
+/**
+ * addFeatureLink/updateFeatureLink keep the feature link's inlineSettings JSONB
+ * as a compatibility/UI mirror alongside the normalized settings tables. For
+ * onedrive_helper, decomposeInlineSettings runs the raw input back through
+ * onedriveHelperInlineSettingsSchema.parse when writing the normalized row, so
+ * that row always carries schema defaults — but the JSONB mirror gets whatever
+ * was passed in. Without pre-normalizing here, the AI path would leave the
+ * mirror storing un-defaulted raw input while the normalized row (and every
+ * other write path) gets defaults filled in. Mirrors validateRingAutoApprove's
+ * shape (aiToolsPolicyPrereqs.ts).
+ */
+function validateOnedriveHelperInlineSettings(
+  raw: unknown
+): { value: unknown } | { error: string } {
+  const parsed = onedriveHelperInlineSettingsSchema.safeParse(raw);
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message ?? 'Invalid onedrive_helper inline settings.';
+    return { error: message };
+  }
+  return { value: parsed.data };
+}
+
 function safeHandler(
   toolName: string,
   fn: (input: Record<string, unknown>, auth: AuthContext) => Promise<string>
@@ -41,9 +66,10 @@ function safeHandler(
     try {
       return await fn(input, auth);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Internal error';
-      console.error(`[config-policy:${toolName}]`, message, err);
-      return JSON.stringify({ error: `Operation failed: ${message}` });
+      // Fail closed: `message` may be a raw driver string (#2603).
+      return JSON.stringify({
+        error: sanitizeThrownToolError(`config-policy:${toolName}`, err),
+      });
     }
   };
 }
@@ -250,6 +276,14 @@ export function registerConfigPolicyTools(aiTools: Map<string, AiTool>): void {
         return JSON.stringify({ error: targetValidation.error });
       }
 
+      // Site sub-axis (SR5-07): RLS does not enforce the site allowlist, so a
+      // site-restricted caller must be blocked from assigning to org/partner
+      // targets or to a site/group/device outside their allowed sites.
+      const siteAuth = await authorizeAssignmentTarget(auth, input.level as any, targetId);
+      if (!siteAuth.valid) {
+        return JSON.stringify({ error: siteAuth.error });
+      }
+
       // assignPolicy returns null (instead of throwing) on a duplicate — see
       // the comment on its onConflictDoNothing insert in configurationPolicy.ts
       // for why the raised-violation catch pattern doesn't work inside this
@@ -321,6 +355,14 @@ export function registerConfigPolicyTools(aiTools: Map<string, AiTool>): void {
       // under the partner. Same blast radius as assigning, so the same gate applies.
       if (assignment.policyOrgId === null && !canManagePartnerWidePolicies(auth)) {
         return JSON.stringify({ error: PARTNER_WIDE_WRITE_DENIED_MESSAGE });
+      }
+
+      // Site sub-axis (SR5-07): re-check against the stored target so a
+      // site-restricted caller can't remove an assignment reaching a site,
+      // group, or device outside their allowlist (RLS does not enforce site).
+      const siteAuth = await authorizeAssignmentTarget(auth, assignment.level as any, assignment.targetId);
+      if (!siteAuth.valid) {
+        return JSON.stringify({ error: siteAuth.error });
       }
 
       const deleted = await unassignPolicy(input.assignmentId as string, assignment.configPolicyId);
@@ -633,7 +675,7 @@ Inline settings shapes by feature type:
 - monitoring: { checkIntervalSeconds: 60, watches: [{ watchType: "service"|"process", name: "wuauserv", displayName?: "Windows Update", enabled: true, alertOnStop: true, alertAfterConsecutiveFailures: 2, alertSeverity: "critical"|"high"|"medium"|"low"|"info", cpuThresholdPercent?: 90, memoryThresholdMb?: 500, thresholdDurationSeconds: 300, autoRestart: false, maxRestartAttempts: 3, restartCooldownSeconds: 300 }], eventLogAlerts?: [{ name, category: "security"|"hardware"|"application"|"system", level: "warning"|"error"|"critical", sourcePattern?, messagePattern?, countThreshold: 1, windowMinutes: 15, severity: "high", enabled: true }] }
 - maintenance: { recurrence: "once"|"daily"|"weekly"|"monthly", windowStart?: "ISO-8601 (for once)", durationHours: 1-72, timezone: "America/New_York", suppressAlerts: true, suppressPatching: true, suppressAutomations: false, suppressScripts: false, notifyBeforeMinutes?: 15, notifyOnStart: true, notifyOnEnd: true }
 - automation: { items: [{ name, enabled: true, triggerType: "schedule"|"event"|"manual", cronExpression?: "0 2 * * *", timezone?: "America/New_York", eventType?: "device.offline"|"alert.triggered"|"compliance.failed"|"patch.available", actions: [{ type: "run_script"|"send_notification"|"create_alert"|"execute_command", scriptId?|channelId?|severity?|message?|command? }], onFailure: "stop"|"continue"|"notify" }] }
-- event_log: { retentionDays: 30, maxEventsPerCycle: 100, collectCategories: ["security","hardware","application","system"], minimumLevel: "info"|"warning"|"error"|"critical", collectionIntervalMinutes: 5, rateLimitPerHour: 12000 }
+- event_log: { retentionDays: 30, maxEventsPerCycle: 100, collectCategories: ["security","hardware","application","system"], minimumLevel: "info"|"warning"|"error"|"critical", collectionIntervalMinutes: 15, rateLimitPerHour: 12000 }
 - compliance: { items: [{ name, enforcementLevel: "monitor"|"warn"|"enforce", checkIntervalMinutes: 60, rules: [{ type: "required_software"|"prohibited_software"|"disk_space_minimum"|"os_version"|"registry_check"|"config_file_check", name?|minGb?|osType?|path?|valueName?|expectedValue?|minVersion? }] }] }
 - security: { realTimeProtection: true, behavioralMonitoring: true, cloudLookup: true, scheduledScans: true, scanHour: "2", scanMinute: "0", scanDayOfWeek: "*", scanDayOfMonth: "*", autoQuarantine: true, notifyUser: true, blockUntrustedUsb: false, exclusions: [] }
 - backup: { scheduleFrequency: "daily"|"weekly"|"monthly", scheduleTime: "02:00", scheduleDayOfWeek?: "tue", retentionPreset: "standard"|"extended"|"compliance"|"custom", retentionDays?: 30, retentionVersions?: 5, compression: true, encryption: true, paths: [], excludePatterns: [], notifyOnFailure: true, notifyOnSuccess: false, notifyOnMissed: true }
@@ -642,11 +684,13 @@ Inline settings shapes by feature type:
 - helper: { enabled: true, showOpenPortal: true, showDeviceInfo: true, showRequestSupport: true, portalUrl?: "" }
 - pam: inlineSettings {uacInterceptionEnabled: boolean} — Windows UAC elevation prompt capture (default false / opt-in: capture is OFF when no policy assigns this feature). PAM rules/approvals are managed separately in the /pam console, not via config policies.
 - vulnerability: inlineSettings {enabled: boolean} — per-device CVE correlation / vulnerability scanning (default false / opt-in: devices with no policy are NOT scanned). Findings appear in the /vulnerabilities console; correlation runs daily.
+- remote_access: { webrtcDesktop: true, vncRelay: false, remoteTools: true, clipboardHostToViewer: true, clipboardViewerToHost: true, enableProxy: false, defaultAllowedPorts: [80,443], autoEnableProxy: false, maxConcurrentTunnels: 5, idleTimeoutMinutes: 5, maxSessionDurationHours: 8, sessionPromptMode?: "off"|"notify"|"consent", consentUnavailableBehavior?: "proceed"|"block", notifyOnSessionEnd?: true, showActiveIndicator?: true, technicianIdentityLevel?: "name_email"|"name"|"generic" } — all fields optional; updates MERGE over the currently stored settings, so send only the fields to change. Unknown keys are stripped, never applied — use exactly these key names.
+- onedrive_helper: { silentAccountConfig?, filesOnDemand?, kfmSilentOptIn?, kfmFolders? (Desktop/Documents/Pictures), kfmBlockOptOut?, tenantAssociationId?, restartOnChange?, libraries?: [{ libraryId, displayName, targetingMode (everyone|graph_group|local_ad_group), groupId?, groupName?, siteUrl? }] }
 
 For link-only types, set featurePolicyId instead of inlineSettings:
 - software_policy: featurePolicyId → existing software policy UUID
 - peripheral_control: featurePolicyId → existing peripheral policy UUID
-- backup: can also use featurePolicyId → existing backup config UUID (for provider/credentials), combined with inlineSettings for schedule/retention
+- backup: featurePolicyId → backup PROFILE UUID (manage_backup_profiles — "what to protect"), combined with inlineSettings { schedule, retention, destinationConfigId? } (destination omitted = the device org's default destination). Legacy links with featurePolicyId → backup config UUID still work. Partner-wide policies may link partner-wide profiles; their destination always resolves per device org.
 - patch: can also use featurePolicyId → existing update ring UUID (for approval deferral), combined with inlineSettings for schedule/reboot`,
       input_schema: {
         type: 'object' as const,
@@ -660,7 +704,7 @@ For link-only types, set featurePolicyId instead of inlineSettings:
               'patch', 'alert_rule', 'backup', 'security', 'monitoring',
               'maintenance', 'compliance', 'automation', 'event_log',
               'software_policy', 'sensitive_data', 'peripheral_control',
-              'warranty', 'helper', 'remote_access', 'pam', 'vulnerability',
+              'warranty', 'helper', 'remote_access', 'pam', 'onedrive_helper', 'vulnerability',
             ],
             description: 'Feature type (required for add)',
           },
@@ -705,6 +749,13 @@ For link-only types, set featurePolicyId instead of inlineSettings:
           });
         }
 
+        let inlineSettings: unknown = input.inlineSettings;
+        if (featureType === 'onedrive_helper' && inlineSettings !== undefined && inlineSettings !== null) {
+          const validated = validateOnedriveHelperInlineSettings(inlineSettings);
+          if ('error' in validated) return JSON.stringify({ error: validated.error });
+          inlineSettings = validated.value;
+        }
+
         // addFeatureLink returns null (instead of throwing) on a duplicate —
         // see the comment on its onConflictDoNothing insert in
         // configurationPolicy.ts for why the raised-violation catch pattern
@@ -713,7 +764,7 @@ For link-only types, set featurePolicyId instead of inlineSettings:
           configPolicyId,
           featureType as any,
           (input.featurePolicyId as string) ?? null,
-          input.inlineSettings ?? null
+          inlineSettings ?? null
         );
         if (!link) {
           return JSON.stringify({ error: `Feature type "${featureType}" already exists on this policy. Use update action instead.` });
@@ -727,7 +778,23 @@ For link-only types, set featurePolicyId instead of inlineSettings:
 
         const updates: { featurePolicyId?: string | null; inlineSettings?: unknown } = {};
         if (input.featurePolicyId !== undefined) updates.featurePolicyId = input.featurePolicyId as string | null;
-        if (input.inlineSettings !== undefined) updates.inlineSettings = input.inlineSettings;
+        if (input.inlineSettings !== undefined) {
+          let inlineSettings: unknown = input.inlineSettings;
+          // update doesn't take featureType, so look up the existing link's
+          // type to know whether onedrive_helper's normalize-via-schema
+          // applies (same reasoning as the 'add' branch above).
+          const [existingLink] = await db
+            .select({ featureType: configPolicyFeatureLinks.featureType })
+            .from(configPolicyFeatureLinks)
+            .where(and(eq(configPolicyFeatureLinks.id, featureLinkId), eq(configPolicyFeatureLinks.configPolicyId, configPolicyId)))
+            .limit(1);
+          if (existingLink?.featureType === 'onedrive_helper' && inlineSettings !== null) {
+            const validated = validateOnedriveHelperInlineSettings(inlineSettings);
+            if ('error' in validated) return JSON.stringify({ error: validated.error });
+            inlineSettings = validated.value;
+          }
+          updates.inlineSettings = inlineSettings;
+        }
 
         const updated = await updateFeatureLink(featureLinkId, updates, configPolicyId);
         if (!updated) return JSON.stringify({ error: 'Feature link not found' });

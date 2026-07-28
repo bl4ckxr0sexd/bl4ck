@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   assignPolicyMock,
   validateAssignmentTargetMock,
+  authorizeAssignmentTargetMock,
   policyAccessConditionMock,
   canManagePartnerWidePoliciesMock,
   createConfigPolicyMock,
@@ -10,6 +11,9 @@ const {
 } = vi.hoisted(() => ({
   assignPolicyMock: vi.fn(),
   validateAssignmentTargetMock: vi.fn(),
+  // SR5-07 site sub-axis: default allow so existing (unrestricted) cases are
+  // unaffected; site-scope tests override to assert denial.
+  authorizeAssignmentTargetMock: vi.fn(async (): Promise<{ valid: boolean; error?: string }> => ({ valid: true })),
   policyAccessConditionMock: vi.fn(),
   canManagePartnerWidePoliciesMock: vi.fn(() => true),
   createConfigPolicyMock: vi.fn(),
@@ -65,6 +69,7 @@ vi.mock('./configurationPolicy', () => ({
   listFeatureLinks: vi.fn(),
   listAssignments: vi.fn(),
   validateAssignmentTarget: validateAssignmentTargetMock,
+  authorizeAssignmentTarget: authorizeAssignmentTargetMock,
   canManagePartnerWidePolicies: canManagePartnerWidePoliciesMock,
   policyAccessCondition: policyAccessConditionMock,
   PARTNER_WIDE_WRITE_DENIED_MESSAGE: 'partner-wide write denied',
@@ -72,7 +77,8 @@ vi.mock('./configurationPolicy', () => ({
 
 import { db } from '../db';
 import { registerConfigPolicyTools } from './aiToolsConfigPolicy';
-import { addFeatureLink, getConfigPolicy } from './configurationPolicy';
+import { addFeatureLink, getConfigPolicy, updateFeatureLink } from './configurationPolicy';
+import { onedriveHelperInlineSettingsSchema } from '@breeze/shared/validators';
 
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
 const POLICY_ID = '22222222-2222-2222-2222-222222222222';
@@ -127,6 +133,7 @@ describe('configuration policy AI tools', () => {
     vi.clearAllMocks();
     canManagePartnerWidePoliciesMock.mockReturnValue(true);
     policyAccessConditionMock.mockReturnValue(undefined);
+    authorizeAssignmentTargetMock.mockResolvedValue({ valid: true });
   });
 
   it('validates assignment target org before applying a policy', async () => {
@@ -191,6 +198,30 @@ describe('configuration policy AI tools', () => {
     });
   });
 
+  it('apply_configuration_policy denies a target outside the caller site access (SR5-07)', async () => {
+    vi.mocked(db.select).mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue([{ id: POLICY_ID, orgId: ORG_ID, partnerId: null, name: 'Policy 1' }]),
+        }),
+      }),
+    } as any);
+    validateAssignmentTargetMock.mockResolvedValue({ valid: true });
+    authorizeAssignmentTargetMock.mockResolvedValue({ valid: false, error: 'Target device is outside your site access' });
+
+    const tools = new Map<string, any>();
+    registerConfigPolicyTools(tools);
+
+    const output = await tools.get('apply_configuration_policy')!.handler({
+      configPolicyId: POLICY_ID,
+      level: 'device',
+      targetId: DEVICE_ID,
+    }, makeAuth());
+
+    expect(JSON.parse(output)).toEqual({ error: 'Target device is outside your site access' });
+    expect(assignPolicyMock).not.toHaveBeenCalled();
+  });
+
   // assignPolicy's insert (configurationPolicy.ts) uses onConflictDoNothing and
   // returns null instead of throwing on a duplicate — see the comment there.
   // Before the fix, this scenario surfaced as a raw PostgresError because the
@@ -225,7 +256,9 @@ describe('configuration policy AI tools', () => {
   // partner-wide policies with a 400; the AI path must mirror that rule from
   // the same shared constant (ORG_SCOPED_ONLY_FEATURE_TYPES, #2101) since
   // addFeatureLink itself doesn't know the policy's owner.
-  it('rejects adding an org-scoped-only feature (backup) to a partner-wide policy via manage_policy_feature_link', async () => {
+  it('rejects adding an org-scoped-only feature (onedrive_helper) to a partner-wide policy via manage_policy_feature_link', async () => {
+    // backup left ORG_SCOPED_ONLY_FEATURE_TYPES with the profiles model
+    // (spec 2026-07-13); onedrive_helper remains the org-locked exemplar.
     vi.mocked(getConfigPolicy).mockResolvedValue({
       id: POLICY_ID,
       orgId: null,
@@ -239,8 +272,8 @@ describe('configuration policy AI tools', () => {
     const output = await tools.get('manage_policy_feature_link')!.handler({
       action: 'add',
       configPolicyId: POLICY_ID,
-      featureType: 'backup',
-      inlineSettings: { scheduleFrequency: 'daily' },
+      featureType: 'onedrive_helper',
+      inlineSettings: { silentAccountConfig: true },
     }, makeAuth());
 
     expect(JSON.parse(output).error).toContain('not supported on partner-wide policies');
@@ -465,6 +498,31 @@ describe('configuration policy AI tools', () => {
     expect(unassignPolicyMock).not.toHaveBeenCalled();
   });
 
+  it('remove_configuration_policy_assignment denies removal of a target outside the caller site access (SR5-07)', async () => {
+    // Org-owned policy (policyOrgId non-null) so the partner-wide gate passes;
+    // the site sub-axis then blocks removal of a cross-site device assignment.
+    mockSelectRows([{
+      id: 'assignment-1',
+      configPolicyId: POLICY_ID,
+      policyName: 'Org Policy',
+      policyOrgId: ORG_ID,
+      level: 'device',
+      targetId: DEVICE_ID,
+    }]);
+    canManagePartnerWidePoliciesMock.mockReturnValue(true);
+    authorizeAssignmentTargetMock.mockResolvedValue({ valid: false, error: 'Target device is outside your site access' });
+
+    const tools = new Map<string, any>();
+    registerConfigPolicyTools(tools);
+
+    const output = await tools.get('remove_configuration_policy_assignment')!.handler({
+      assignmentId: 'assignment-1',
+    }, makeAuth());
+
+    expect(JSON.parse(output)).toEqual({ error: 'Target device is outside your site access' });
+    expect(unassignPolicyMock).not.toHaveBeenCalled();
+  });
+
   it('manage_configuration_policy create ownerScope=partner makes a partner-owned policy WITHOUT auto-assigning it (#2280 library model)', async () => {
     mockSelectRows([]); // duplicate-name check → none
     createConfigPolicyMock.mockResolvedValue({ id: POLICY_ID, orgId: null, partnerId: PARTNER_ID, name: 'All-Orgs Baseline' });
@@ -489,6 +547,101 @@ describe('configuration policy AI tools', () => {
     // seeded. The policy is applied later via explicit apply_configuration_policy
     // calls (#2280 library model), mirroring the HTTP create route.
     expect(assignPolicyMock).not.toHaveBeenCalled();
+  });
+
+  // Half-fix follow-up: addFeatureLink/updateFeatureLink keep inlineSettings as
+  // a JSONB mirror alongside the normalized settings tables. decomposeInlineSettings
+  // re-parses onedrive_helper input through the schema when writing the normalized
+  // row (so that row always has defaults), but previously the AI handler passed
+  // raw, un-defaulted input straight through — leaving the mirror out of sync
+  // with the normalized row. The handler must normalize via the schema first.
+  it('normalizes onedrive_helper inlineSettings via schema before add so the JSONB mirror carries defaults', async () => {
+    vi.mocked(getConfigPolicy).mockResolvedValue({
+      id: POLICY_ID,
+      orgId: ORG_ID,
+      partnerId: null,
+      name: 'Org policy',
+    } as any);
+    vi.mocked(addFeatureLink).mockResolvedValue({
+      id: 'link-1',
+      configPolicyId: POLICY_ID,
+      featureType: 'onedrive_helper',
+    } as any);
+
+    const tools = new Map<string, any>();
+    registerConfigPolicyTools(tools);
+
+    const raw = { kfmSilentOptIn: true, kfmFolders: ['Documents'] };
+    const output = await tools.get('manage_policy_feature_link')!.handler({
+      action: 'add',
+      configPolicyId: POLICY_ID,
+      featureType: 'onedrive_helper',
+      inlineSettings: raw,
+    }, makeAuth());
+
+    expect(JSON.parse(output).success).toBe(true);
+    expect(vi.mocked(addFeatureLink)).toHaveBeenCalledWith(
+      POLICY_ID,
+      'onedrive_helper',
+      null,
+      onedriveHelperInlineSettingsSchema.parse(raw)
+    );
+  });
+
+  it('rejects invalid onedrive_helper inlineSettings on add with a tool error, not a throw', async () => {
+    vi.mocked(getConfigPolicy).mockResolvedValue({
+      id: POLICY_ID,
+      orgId: ORG_ID,
+      partnerId: null,
+      name: 'Org policy',
+    } as any);
+
+    const tools = new Map<string, any>();
+    registerConfigPolicyTools(tools);
+
+    const output = await tools.get('manage_policy_feature_link')!.handler({
+      action: 'add',
+      configPolicyId: POLICY_ID,
+      featureType: 'onedrive_helper',
+      inlineSettings: { libraries: [{ libraryId: 'x', displayName: 'X', targetingMode: 'nonsense' }] },
+    }, makeAuth());
+
+    expect(typeof JSON.parse(output).error).toBe('string');
+    expect(vi.mocked(addFeatureLink)).not.toHaveBeenCalled();
+  });
+
+  it('normalizes onedrive_helper inlineSettings via schema before update by looking up the existing link featureType', async () => {
+    vi.mocked(getConfigPolicy).mockResolvedValue({
+      id: POLICY_ID,
+      orgId: ORG_ID,
+      partnerId: null,
+      name: 'Org policy',
+    } as any);
+    // existing-link featureType lookup inside the 'update' branch
+    mockSelectRows([{ featureType: 'onedrive_helper' }]);
+    vi.mocked(updateFeatureLink).mockResolvedValue({
+      id: 'link-1',
+      configPolicyId: POLICY_ID,
+      featureType: 'onedrive_helper',
+    } as any);
+
+    const tools = new Map<string, any>();
+    registerConfigPolicyTools(tools);
+
+    const raw = { kfmBlockOptOut: true };
+    const output = await tools.get('manage_policy_feature_link')!.handler({
+      action: 'update',
+      configPolicyId: POLICY_ID,
+      featureLinkId: 'link-1',
+      inlineSettings: raw,
+    }, makeAuth());
+
+    expect(JSON.parse(output).success).toBe(true);
+    expect(vi.mocked(updateFeatureLink)).toHaveBeenCalledWith(
+      'link-1',
+      { inlineSettings: onedriveHelperInlineSettingsSchema.parse(raw) },
+      POLICY_ID
+    );
   });
 
   it('manage_configuration_policy create ownerScope=partner is denied without partner-wide capability', async () => {

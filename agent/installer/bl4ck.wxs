@@ -40,8 +40,33 @@
          slightly slower build/decompress. Pairs with the stripped (-s -w) Go
          binaries built by the Makefile. -->
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <!-- Schedule="afterInstallExecute" is LOAD-BEARING — do not move it
+         earlier. The old product's uninstall (RemoveExistingProducts) runs
+         AFTER the new product's files/components are registered, so shared
+         component refcounts keep cmpCleanConfigOnUninstall alive and its
+         RemoveFile rows (secrets.yaml / agent.yaml) do NOT fire during an
+         upgrade. With an early schedule the old product uninstalls while
+         refcount is still 1 and every upgrade would DELETE THE ENROLLMENT
+         CREDENTIALS — and shipped old MSIs can't be changed, so this cannot
+         be mitigated package-side. The protection additionally requires the
+         old MSI to carry the same component GUID for
+         cmpCleanConfigOnUninstall ({D4E5F6A7-...} is hardcoded below, so
+         all shipped versions match). The VM upgrade test MUST assert that
+         secrets.yaml + agent.yaml survive the upgrade — that is the
+         empirical check of this refcount reasoning. The costs of the late
+         schedule (the old uninstall runs after our services/task are set up)
+         are compensated by RecoverBL4CKAfterUpgrade /
+         ReRegisterUserHelperTaskAfterUpgrade below.
+
+         AllowSameVersionUpgrades: ProductCode is auto-generated per build,
+         so two builds of the SAME version are unrelated products. Without
+         this flag, reinstalling a rebuilt same-version MSI (common with the
+         signing-service pipeline) installs SIDE-BY-SIDE: two ARP entries
+         both claiming the services, and the eventual uninstall of either
+         one rips the services out from under the survivor. -->
     <MajorUpgrade
       DowngradeErrorMessage="A newer version of BL4CK Agent is already installed."
+      AllowSameVersionUpgrades="yes"
       Schedule="afterInstallExecute" />
 
     <Launch Condition="VersionNT64" Message="BL4CK Agent requires 64-bit Windows." />
@@ -109,17 +134,46 @@
          dropped onto the box by another mechanism. Skipping the kill on
          REMOVE is fine because ServiceControl handles service shutdown on
          uninstall and the user-helper exits cleanly when its tray menu
-         exits. The taskkill /F is idempotent: `& exit /b 0` swallows the
-         "process not found" error so a fresh box with nothing to kill
-         still returns success (#944). Admin token (required by the MSI)
-         is sufficient for cross-session SeDebugPrivilege-backed
-         termination. Runs as an IMMEDIATE WixQuietExec64 (reads the fixed
-         WixQuietExec64CmdLine property), so it can still run before
-         InstallValidate — which is where a deferred CA could not go. taskkill's
-         non-zero "process not found" exit on a fresh box is swallowed by
-         Return="ignore" (#944). -->
+         exits. `& exit /b 0` swallows every per-step error so a fresh box
+         with nothing to disarm/stop/kill still returns success (#944).
+         Admin token (required by the MSI) is sufficient for cross-session
+         SeDebugPrivilege-backed termination. Runs as an IMMEDIATE
+         WixQuietExec64 (reads the fixed WixQuietExec64CmdLine property), so
+         it can still run before InstallValidate — which is where a deferred
+         CA could not go — and so the whole sequence stays console-flash free.
+
+         Command structure (each step best-effort, joined with single `&`):
+           1. `sc failure ... actions= ""` DISARMS the SCM recovery config
+              that a PREVIOUS install's ConfigureBL4CKFailureActions set
+              (restart/5000/...). Without this, taskkill'ing the service
+              processes makes the SCM RESURRECT them ~5s later — the old
+              exes re-lock the install folder mid-file-copy and the upgrade
+              stalls/fails. This only bites when a previous version was
+              installed, which is exactly the reported "hangs on upgrade"
+              shape. Failure actions are re-armed by
+              ConfigureBL4CKFailureActions (success), RecoverBL4CKAfterUpgrade
+              (upgrade), or RollbackServiceRecovery (failed install).
+           2. `sc stop` watchdog FIRST (so it cannot restart the agent),
+              then the agent — a clean SCM stop never triggers failure
+              actions, unlike a kill.
+           3. Wait ~3s only if Bl4ckAgent is still RUNNING/PENDING (fresh
+              boxes skip the wait entirely) so the stop can complete before
+              the fallback kill.
+           4. taskkill WITHOUT /T. /T kills the named process's whole child
+              tree — and when this MSI is deployed through BL4CK's own
+              script engine, msiexec/powershell run as DESCENDANTS of
+              bl4ck-agent.exe, so /T killed the very msiexec client
+              performing this install. Every process we actually need dead
+              is already named explicitly.
+
+         Immediate CAs impersonate the installing user, so on an interactive
+         double-click + UAC-consent install the filtered token may be denied
+         on all of these (same class as the old HardenProgramDataAcl bug) —
+         that's why PrepareServiceShutdown below repeats the disarm (both
+         services) + watchdog stop as a deferred LocalSystem action before
+         StopServices. -->
     <CustomAction Id="SetKillBL4CKCmd" Property="WixQuietExec64CmdLine"
-      Value="&quot;[System64Folder]taskkill.exe&quot; /F /T /IM bl4ck-agent.exe /IM bl4ck-user-helper.exe /IM bl4ck-watchdog.exe /IM bl4ck-desktop-helper.exe /IM bl4ck-backup.exe"
+      Value="&quot;[System64Folder]cmd.exe&quot; /c sc failure Bl4ckWatchdog reset= 0 actions= &quot;&quot; >nul 2>&amp;1 &amp; sc failure Bl4ckAgent reset= 0 actions= &quot;&quot; >nul 2>&amp;1 &amp; sc stop Bl4ckWatchdog >nul 2>&amp;1 &amp; sc stop Bl4ckAgent >nul 2>&amp;1 &amp; (sc query Bl4ckAgent | findstr &quot;PENDING RUNNING&quot; >nul 2>&amp;1 &amp;&amp; ping -n 4 127.0.0.1 >nul) &amp; taskkill /F /IM bl4ck-agent.exe /IM bl4ck-user-helper.exe /IM bl4ck-watchdog.exe /IM bl4ck-desktop-helper.exe /IM bl4ck-backup.exe >nul 2>&amp;1 &amp; exit /b 0"
       Execute="immediate" />
     <CustomAction
       Id="KillBL4CKProcesses"
@@ -127,6 +181,95 @@
       DllEntry="WixQuietExec64"
       Execute="immediate"
       Return="ignore" />
+
+    <!-- Deferred/LocalSystem twin of the disarm + watchdog-stop portion of
+         KillBL4CKProcesses (the agent stop itself is left to StopServices,
+         which waits properly). The immediate CA above can silently no-op on
+         UAC-filtered tokens; this one always runs with full rights, in the
+         execute script BEFORE StopServices, so:
+           - SCM failure actions are guaranteed disarmed before any process
+             of ours dies (no resurrection race), and
+           - the watchdog is already down when StopServices stops Bl4ckAgent
+             (StopServices stops the agent first per ServiceControl table
+             order — rows sort by Id, svcControlBl4ckAgent &lt;
+             svcControlWatchdog, so renaming those Ids can silently flip the
+             order — and a live watchdog restarting the agent in that window
+             blocks the file copy).
+         Runs on uninstall too — same watchdog race exists there. -->
+    <CustomAction Id="SetPrepareServiceShutdownCmd" Property="PrepareServiceShutdown"
+      Value="&quot;[System64Folder]cmd.exe&quot; /c sc failure Bl4ckWatchdog reset= 0 actions= &quot;&quot; >nul 2>&amp;1 &amp; sc failure Bl4ckAgent reset= 0 actions= &quot;&quot; >nul 2>&amp;1 &amp; sc stop Bl4ckWatchdog >nul 2>&amp;1 &amp; exit /b 0"
+      Execute="immediate" />
+    <CustomAction
+      Id="PrepareServiceShutdown"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <!-- If the install fails after PrepareServiceShutdown disarmed recovery,
+         restore the previous state: re-arm failure actions (values must stay
+         in sync with ConfigureBL4CKFailureActions below) and restart the
+         services MSI stopped, so a failed upgrade never leaves the box with
+         a dead agent AND no SCM auto-restart. -->
+    <CustomAction Id="SetRollbackServiceRecoveryCmd" Property="RollbackServiceRecovery"
+      Value="&quot;[System64Folder]cmd.exe&quot; /c sc failure Bl4ckAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000 >nul 2>&amp;1 &amp; sc failure Bl4ckWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000 >nul 2>&amp;1 &amp; sc start Bl4ckAgent >nul 2>&amp;1 &amp; sc start Bl4ckWatchdog >nul 2>&amp;1 &amp; ((sc query Bl4ckAgent | findstr &quot;RUNNING PENDING&quot; >nul 2>&amp;1) || echo %DATE% %TIME% RollbackServiceRecovery: Bl4ckAgent not running after install rollback > &quot;[ProgramDataBL4CKLogsDir]upgrade-recovery-last-error.txt&quot;) &amp; exit /b 0"
+      Execute="immediate" />
+    <CustomAction
+      Id="RollbackServiceRecovery"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="rollback"
+      Impersonate="no"
+      Return="ignore" />
+
+    <!-- With Schedule="afterInstallExecute", RemoveExistingProducts runs the
+         OLD product's uninstall AFTER our services are installed/started and
+         our task is registered. Old packages' ServiceControl uninstall-stop
+         events and their UnregisterUserHelperTask CA execute during that
+         nested uninstall and can leave the NEW services stopped and the NEW
+         scheduled task deleted (old MSIs run the freshly-installed copy of
+         remove-windows-task.ps1 — now that its TaskPath bug is fixed, the
+         unregister actually works, so this backstop is mandatory, not
+         paranoia). Stop-vs-delete asymmetry: the service COMPONENTS use
+         Guid="*", which WiX derives deterministically from install path +
+         keypath, so old and new products share the component GUID — during
+         REP the refcount held by the new product suppresses the old
+         ServiceControl Remove="uninstall" (service NOT deleted), while the
+         stop event can still fire. That's why `sc start` here is a
+         sufficient remedy (it cannot recreate a deleted service — VM
+         upgrade test must confirm services exist + RUNNING afterward).
+         These two CAs run after REP, upgrade-only, Return=ignore
+         (worst case they no-op against already-running services / an
+         existing task). Failure-action values must stay in sync with
+         ConfigureBL4CKFailureActions. If recovery still leaves Bl4ckAgent
+         not running, a sentinel line is written to
+         logs\upgrade-recovery-last-error.txt (best-effort; same convention
+         as the user-helper install sentinel) so the dead-agent cause is
+         diagnosable locally — otherwise the only signal would be
+         server-side offline alerting with zero context. -->
+    <CustomAction Id="SetRecoverBL4CKAfterUpgradeCmd" Property="RecoverBL4CKAfterUpgrade"
+      Value="&quot;[System64Folder]cmd.exe&quot; /c sc failure Bl4ckAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000 >nul 2>&amp;1 &amp; sc failure Bl4ckWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000 >nul 2>&amp;1 &amp; sc start Bl4ckAgent >nul 2>&amp;1 &amp; sc start Bl4ckWatchdog >nul 2>&amp;1 &amp; ((sc query Bl4ckAgent | findstr &quot;RUNNING PENDING&quot; >nul 2>&amp;1) || echo %DATE% %TIME% RecoverBL4CKAfterUpgrade: Bl4ckAgent not running after post-upgrade recovery > &quot;[ProgramDataBL4CKLogsDir]upgrade-recovery-last-error.txt&quot;) &amp; exit /b 0"
+      Execute="immediate" />
+    <CustomAction
+      Id="RecoverBL4CKAfterUpgrade"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <CustomAction Id="SetReRegisterUserHelperTaskAfterUpgradeCmd" Property="ReRegisterUserHelperTaskAfterUpgrade"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#filInstallWindowsPs1]&quot;"
+      Execute="immediate" />
+    <CustomAction
+      Id="ReRegisterUserHelperTaskAfterUpgrade"
+      BinaryRef="Wix4UtilCA_X64"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
     <!-- MUST be deferred + non-impersonated so it runs as LocalSystem.
          #609/#613 fixed the "folders don't exist yet" facet (added the mkdir
          guards) but left this Execute="immediate". Immediate CAs impersonate
@@ -171,7 +314,9 @@
          a slash-separated list of (actionType/delayMs) pairs. `Return="ignore"`
          (below) is what prevents a transient sc-error from rolling back the
          install — keep both the static ExeCommand and Return="ignore" in
-         sync if either is ever edited. -->
+         sync if either is ever edited. The same failure-action values are
+         duplicated in RollbackServiceRecovery and RecoverBL4CKAfterUpgrade
+         above — edit all three together. -->
     <CustomAction Id="SetConfigureBL4CKFailureActionsCmd" Property="ConfigureBL4CKFailureActions"
       Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;sc.exe failure Bl4ckAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000; sc.exe failure Bl4ckWatchdog reset= 86400 actions= restart/5000/restart/10000/restart/30000&quot;"
       Execute="immediate" />
@@ -428,6 +573,12 @@
            CA definition above and issue #944. -->
       <Custom Action="SetKillBL4CKCmd" Before="KillBL4CKProcesses" Condition="NOT REMOVE" />
       <Custom Action="KillBL4CKProcesses" Before="InstallValidate" Condition="NOT REMOVE" />
+      <!-- Rollback CA must be scheduled before the deferred actions whose
+           damage it undoes (rollback script is written in sequence order). -->
+      <Custom Action="SetRollbackServiceRecoveryCmd" Before="RollbackServiceRecovery" />
+      <Custom Action="RollbackServiceRecovery" Before="PrepareServiceShutdown" />
+      <Custom Action="SetPrepareServiceShutdownCmd" Before="PrepareServiceShutdown" />
+      <Custom Action="PrepareServiceShutdown" Before="StopServices" />
       <Custom Action="SetHardenProgramDataAclCmd" Before="HardenProgramDataAcl" Condition="NOT REMOVE" />
       <Custom Action="HardenProgramDataAcl" After="CreateFolders" Condition="NOT REMOVE" />
       <!-- Rollback rolls back the FIRST-install case only; on upgrade or
@@ -481,8 +632,21 @@
            downloaded file) — no immediate capture CA is needed. -->
       <Custom Action="SetBootstrapEnrollCmd" Before="BootstrapEnroll" Condition="NOT Installed AND NOT (SERVER_URL AND ENROLLMENT_KEY)" />
       <Custom Action="BootstrapEnroll" Before="InstallServices" Condition="NOT Installed AND NOT (SERVER_URL AND ENROLLMENT_KEY)" />
-      <Custom Action="SetUnregisterUserHelperTaskCmd" Before="UnregisterUserHelperTask" Condition="REMOVE=&quot;ALL&quot;" />
-      <Custom Action="UnregisterUserHelperTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+      <!-- Post-upgrade backstop: undo whatever the OLD product's nested
+           uninstall (REP, scheduled afterInstallExecute) did to the NEW
+           services and scheduled task. See CA definitions above. -->
+      <Custom Action="SetRecoverBL4CKAfterUpgradeCmd" Before="RecoverBL4CKAfterUpgrade" Condition="WIX_UPGRADE_DETECTED" />
+      <Custom Action="RecoverBL4CKAfterUpgrade" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
+      <Custom Action="SetReRegisterUserHelperTaskAfterUpgradeCmd" Before="ReRegisterUserHelperTaskAfterUpgrade" Condition="WIX_UPGRADE_DETECTED" />
+      <Custom Action="ReRegisterUserHelperTaskAfterUpgrade" After="RecoverBL4CKAfterUpgrade" Condition="WIX_UPGRADE_DETECTED" />
+      <!-- NOT UPGRADINGPRODUCTCODE: when THIS version is later the old
+           product being removed by a successor's RemoveExistingProducts,
+           skip task unregistration — the successor has already registered
+           the (shared-path) task and would have it yanked out from under it.
+           Real uninstalls (REMOVE=ALL without an upgrade in flight) still
+           clean up. -->
+      <Custom Action="SetUnregisterUserHelperTaskCmd" Before="UnregisterUserHelperTask" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="UnregisterUserHelperTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <Feature Id="MainFeature" Title="BL4CK Agent" Level="1">

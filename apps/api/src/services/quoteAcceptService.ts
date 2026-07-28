@@ -12,7 +12,15 @@ import { isQuoteExpired } from './quoteExpiry';
 import { emitInvoiceEvent } from './invoiceEvents';
 import { enqueueInvoicePdfRender } from '../jobs/invoiceWorker';
 import { buildContractSpecsFromQuote } from './quoteToContract';
-import { createContractWithLines } from './contractService';
+import { createContractWithLinesDetailed } from './contractService';
+import { stagePax8OrderFromQuote } from './quoteToPax8Order';
+import { captureException } from './sentry';
+import type { ContractBlockRenderData } from './contractTemplateRender';
+import {
+  assertContractRenderDataComplete,
+  buildContractHashParts,
+  createExecutedDocuments,
+} from './contractDocumentService';
 
 export interface AcceptQuoteParams {
   quoteId: string;
@@ -22,9 +30,27 @@ export interface AcceptQuoteParams {
   userAgent?: string | null;
   acceptanceTokenJti?: string | null;
   actorUserId?: string | null;
+  // Pre-fetched contract-block render data (pinned template versions), resolved
+  // by the route handler OUTSIDE this transaction — the dual-axis template rows
+  // are invisible to an org-scoped RLS context (see contractTemplateRender's
+  // loadContractBlockRenderData). Required whenever the quote embeds contract
+  // blocks; a missing/incomplete set hard-fails the accept (CONTRACT_RENDER_DATA_MISSING).
+  contractRenderData?: ContractBlockRenderData[];
 }
 
 type QuoteRow = typeof quotes.$inferSelect;
+
+export interface AcceptQuoteResult {
+  quote: QuoteRow;
+  acceptanceId: string;
+  invoiceId: string;
+  invoiceIssued: boolean;
+  contractIds: string[];
+  pax8OrderId: string | null;
+  // Executed contract_documents snapshot ids created for this accept (one per
+  // contract block); empty when the quote embeds no contract blocks.
+  contractDocumentIds: string[];
+}
 
 /**
  * Shared accept pipeline for both the portal and public paths. The CALLER is
@@ -45,7 +71,7 @@ type QuoteRow = typeof quotes.$inferSelect;
  */
 export async function acceptQuote(
   params: AcceptQuoteParams
-): Promise<{ quote: QuoteRow; acceptanceId: string; invoiceId: string; invoiceIssued: boolean; contractIds: string[] }> {
+): Promise<AcceptQuoteResult> {
   // FOR UPDATE: serialize concurrent accepts on the same quote (we're already in
   // the caller's transaction). Without the row lock two READ COMMITTED accepts
   // both pass the status guard and each create an invoice (atom-1/C2).
@@ -72,7 +98,22 @@ export async function acceptQuote(
     .where(eq(quoteLines.quoteId, quote.id))
     .orderBy(quoteLines.sortOrder);
 
-  const quoteSha256 = computeQuoteSha256(quote as any, blocks as any, lines as any);
+  // Accept date, resolved ONCE so the acceptance timestamps, the Phase-4 contract
+  // start date, the {{dates.effective}} auto variable, and the executed-document
+  // snapshot all agree. Date-only UTC for the contract/variable use.
+  const now = new Date();
+  const effectiveDate = now.toISOString().slice(0, 10);
+
+  // Contract legal snapshot (Task 15): a quote that embeds contract blocks must
+  // carry its pre-fetched render data. Guard BEFORE computing the hash / recording
+  // anything so a missing snapshot aborts the accept with nothing written. The
+  // contract parts (version sha + resolved variables) fold into the content hash,
+  // so a later template republish or manual-variable edit invalidates the signature.
+  assertContractRenderDataComplete(blocks, params.contractRenderData);
+  const contractRenderData = params.contractRenderData ?? [];
+  const contractParts = buildContractHashParts(blocks, contractRenderData, quote, effectiveDate);
+
+  const quoteSha256 = computeQuoteSha256(quote as any, blocks as any, lines as any, contractParts);
   const captured = await getAcceptanceProvider().capture({
     quoteId: quote.id,
     signerName: params.signerName,
@@ -81,8 +122,6 @@ export async function acceptQuote(
     userAgent: params.userAgent,
     acceptanceTokenJti: params.acceptanceTokenJti,
   });
-
-  const now = new Date();
 
   // 1. Record the acceptance.
   const [acceptance] = await db
@@ -224,7 +263,7 @@ export async function acceptQuote(
   // rolls back the whole accept. accept's SELECT ... FOR UPDATE convert guard
   // already makes this at-most-once. Quotes carry currency/terms snapshotted at
   // send, so the contract inherits the accepted terms.
-  const startDate = new Date().toISOString().slice(0, 10); // accept date, date-only UTC
+  const startDate = effectiveDate; // accept date, date-only UTC (shared with the snapshot)
   const contractSpecs = buildContractSpecsFromQuote(
     {
       orgId: quote.orgId,
@@ -234,6 +273,7 @@ export async function acceptQuote(
       terms: quote.terms ?? null,
     },
     lines.map((l) => ({
+      sourceQuoteLineId: l.id,
       recurrence: l.recurrence,
       customerVisible: l.customerVisible,
       name: l.name ?? null,
@@ -249,16 +289,68 @@ export async function acceptQuote(
   );
 
   const contractIds: string[] = [];
+  const contractLineLinks: Array<{ quoteLineId: string; contractLineId: string }> = [];
   for (const spec of contractSpecs) {
-    const contract = await createContractWithLines(spec);
-    contractIds.push(contract.id);
+    const created = await createContractWithLinesDetailed(spec);
+    contractIds.push(created.contract.id);
+    for (const line of created.lines) {
+      if (line.sourceQuoteLineId) {
+        contractLineLinks.push({
+          quoteLineId: line.sourceQuoteLineId,
+          contractLineId: line.id,
+        });
+      }
+    }
   }
+
+  // Task 15: freeze each contract block into an executed contract_documents row.
+  // Placed AFTER the Phase-4 loop (so contractIds exists to link the document to
+  // the first billing contract) and BEFORE the final re-select. Same transaction:
+  // a render/insert failure here rolls back the entire accept — an acceptance is
+  // never recorded without its legal snapshot. effectiveDate matches the value
+  // folded into quoteSha256's contract parts above.
+  const contractDocumentIds = await createExecutedDocuments(
+    quote,
+    acceptance!.id,
+    contractIds,
+    contractRenderData,
+    blocks,
+    effectiveDate,
+  );
+
+  // Phase 5: stage any Pax8-backed fulfillment in this exact transaction,
+  // alongside the Phase 4 contracts it references. Nothing is sent to Pax8
+  // here: customer acceptance records intent; a technician supplies the
+  // provisioning details and explicitly submits it later.
+  const pax8Staged = await stagePax8OrderFromQuote({
+    quoteId: quote.id,
+    orgId: quote.orgId,
+    partnerId: quote.partnerId,
+    contractIds,
+    contractLineLinks,
+    lines: lines.map((line) => ({
+      id: line.id,
+      catalogItemId: line.catalogItemId ?? null,
+      quantity: line.quantity,
+      recurrence: line.recurrence,
+      customerVisible: line.customerVisible,
+    })),
+    actorUserId: params.actorUserId ?? null,
+  });
 
   const [updated] = await db.select().from(quotes).where(eq(quotes.id, quote.id)).limit(1);
   // invoiceIssued mirrors the `oneTime.length > 0` branch above that flips the
   // invoice to status='sent' with a real number; a $0/no-one-time accept leaves
   // the invoice unissued. The caller emits lifecycle side effects post-commit.
-  return { quote: updated!, acceptanceId: acceptance!.id, invoiceId: invoice!.id, invoiceIssued: oneTime.length > 0, contractIds };
+  return {
+    quote: updated!,
+    acceptanceId: acceptance!.id,
+    invoiceId: invoice!.id,
+    invoiceIssued: oneTime.length > 0,
+    contractIds,
+    pax8OrderId: pax8Staged.orderId,
+    contractDocumentIds,
+  };
 }
 
 /**
@@ -286,5 +378,6 @@ export async function emitAcceptInvoiceIssued(
     await enqueueInvoicePdfRender(res.invoiceId);
   } catch (err) {
     console.error('[quoteAccept] enqueueInvoicePdfRender failed (accept already committed)', `invoiceId=${res.invoiceId}`, err instanceof Error ? err.message : err);
+    captureException(err instanceof Error ? err : new Error(String(err)));
   }
 }

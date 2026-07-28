@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Force a deterministic navigator.userAgent BEFORE importing the component,
@@ -357,7 +358,13 @@ describe('AddDeviceModal', () => {
       expect(fetchWithAuthMock).toHaveBeenCalledWith(
         '/devices/onboarding-token',
         // #1108: the request now carries a device count → maxUsage.
-        expect.objectContaining({ method: 'POST', body: JSON.stringify({ count: 1 }) })
+        // #2777: …and an explicit TTL (default 24h) with the JSON content type
+        // the route's strict validator requires.
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count: 1, ttlMinutes: 1440 }),
+        })
       );
     });
 
@@ -391,7 +398,11 @@ describe('AddDeviceModal', () => {
     await waitFor(() => {
       expect(fetchWithAuthMock).toHaveBeenLastCalledWith(
         '/devices/onboarding-token',
-        expect.objectContaining({ method: 'POST', body: JSON.stringify({ count: 5 }) })
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count: 5, ttlMinutes: 1440 }),
+        })
       );
     });
 
@@ -422,5 +433,236 @@ describe('AddDeviceModal', () => {
     expect(screen.getByText(/expires in about 1 hour/)).toBeDefined();
     // …and the old misleading hard-coded string is gone.
     expect(screen.queryByText(/expires in 24 hours/)).toBeNull();
+  });
+
+  it('sends the selected expiry on the CLI onboarding-token request', async () => {
+    fetchWithAuthMock.mockImplementation(async () =>
+      new Response(JSON.stringify({
+        token: 'enroll_abc', maxUsage: 1,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        enrollmentSecretMode: 'none', additionalSecretRequired: false,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+
+    render(<AddDeviceModal isOpen onClose={() => {}} />);
+    await userEvent.click(screen.getByTestId('tab-cli'));
+    await waitFor(() => expect(fetchWithAuthMock).toHaveBeenCalled());
+    fetchWithAuthMock.mockClear();
+
+    await userEvent.selectOptions(screen.getByTestId('cli-link-ttl'), '10080');
+    await userEvent.click(screen.getByTestId('cli-regenerate-token'));
+
+    await waitFor(() => expect(fetchWithAuthMock).toHaveBeenCalled());
+    const call = fetchWithAuthMock.mock.calls[0];
+    expect(String(call[0])).toBe('/devices/onboarding-token');
+    const init = call[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toMatchObject({ ttlMinutes: 10080 });
+    expect((init.headers as Record<string, string>)['Content-Type'])
+      .toBe('application/json');
+  });
+});
+
+describe('AddDeviceModal - resolved enrollment defaults (#2776)', () => {
+  const optionLabels = (testId: string): (string | null)[] =>
+    Array.from((screen.getByTestId(testId) as HTMLSelectElement).options).map(
+      (o) => o.textContent,
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setOrgStore();
+  });
+
+  // ------------------------------------------------------------------
+  // BL4CK fork: the INSTALLER tab has no device-count input and no
+  // link-expiry select. Upstream's #2776 suite drives both controls; here
+  // their absence IS the contract. Installer downloads and installer links
+  // are fixed server-side at 1000 devices / 365 days (see
+  // INSTALLER_FIXED_MAX_DEVICES / INSTALLER_FIXED_TTL_MINUTES in
+  // apps/api/src/routes/enrollmentKeys.ts), so the resolved partner/org
+  // defaults must NOT reach that tab at all. The CLI tab still honours them,
+  // and those upstream assertions are kept below.
+  // ------------------------------------------------------------------
+
+  it('exposes no device-count or link-expiry control on the installer tab', () => {
+    setOrgStore({
+      enrollmentDefaults: { ttlMinutes: 10080, deviceCount: 25, maxTtlMinutes: 43200 },
+    });
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId('link-ttl')).toBeNull();
+    expect(screen.queryByTestId('device-count')).toBeNull();
+    // The format toggle is the only installer-tab choice that remains.
+    expect(screen.getByTestId('installer-format-msi')).toBeDefined();
+    expect(screen.getByTestId('installer-format-exe')).toBeDefined();
+  });
+
+  it('never puts count or ttlMinutes on the installer download URL, whatever the resolved defaults say', async () => {
+    // A low partner cap must not shorten the fixed installer: the client sends
+    // nothing, so the server applies its fixed 1000-device / 365-day contract.
+    setOrgStore({
+      enrollmentDefaults: { ttlMinutes: 60, deviceCount: 1, maxTtlMinutes: 60 },
+    });
+
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/enrollment-keys') {
+        return makeJsonResponse({ id: 'key-fixed', key: 'raw' }, true, 201);
+      }
+      return makeJsonResponse(null, true);
+    });
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+
+    fireEvent.click(getDownloadButton());
+    await waitFor(() => {
+      expect(fetchWithAuthMock).toHaveBeenCalledTimes(2);
+    });
+
+    const downloadUrl = String(fetchWithAuthMock.mock.calls[1][0]);
+    expect(downloadUrl).toContain('/installer/windows');
+    expect(downloadUrl).not.toContain('ttlMinutes');
+    expect(downloadUrl).not.toContain('count=');
+  });
+
+  it('never puts count or ttlMinutes in the installer-link request body', async () => {
+    setOrgStore({
+      enrollmentDefaults: { ttlMinutes: 60, deviceCount: 1, maxTtlMinutes: 60 },
+    });
+
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/enrollment-keys') {
+        return makeJsonResponse({ id: 'key-link', key: 'raw' }, true, 201);
+      }
+      return makeJsonResponse({ shortUrl: 'https://x.test/s/abc' }, true);
+    });
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByText(/Generate Link/));
+
+    await waitFor(() => {
+      expect(fetchWithAuthMock).toHaveBeenCalledTimes(2);
+    });
+
+    const linkCall = fetchWithAuthMock.mock.calls[1];
+    expect(String(linkCall[0])).toContain('/installer-link');
+    const body = JSON.parse(String((linkCall[1] as RequestInit).body));
+    expect(body).toEqual({ platform: 'windows', format: 'msi' });
+  });
+
+  it('seeds the CLI tab from the resolved defaults', async () => {
+    setOrgStore({
+      enrollmentDefaults: { ttlMinutes: 10080, deviceCount: 25, maxTtlMinutes: 43200 },
+    });
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ token: 'cli-token', maxUsage: 25 }),
+    );
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('tab-cli'));
+
+    await waitFor(() => {
+      expect(screen.getByText('cli-token')).toBeDefined();
+    });
+
+    expect((screen.getByTestId('cli-link-ttl') as HTMLSelectElement).value).toBe('10080');
+    expect((screen.getByTestId('cli-device-count') as HTMLInputElement).value).toBe('25');
+    // 90 days and 1 year are above the 30-day cap and must not be offerable.
+    expect(optionLabels('cli-link-ttl')).toEqual(['1 hour', '24 hours', '7 days', '30 days']);
+
+    expect(fetchWithAuthMock).toHaveBeenCalledWith(
+      '/devices/onboarding-token',
+      expect.objectContaining({
+        body: JSON.stringify({ count: 25, ttlMinutes: 10080 }),
+      }),
+    );
+  });
+
+  it('falls back to the product defaults on the CLI tab when the store has not resolved them yet', async () => {
+    setOrgStore({ enrollmentDefaults: null });
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ token: 'cli-token', maxUsage: 1 }),
+    );
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('tab-cli'));
+
+    await waitFor(() => {
+      expect(screen.getByText('cli-token')).toBeDefined();
+    });
+
+    expect((screen.getByTestId('cli-link-ttl') as HTMLSelectElement).value).toBe('1440');
+    expect((screen.getByTestId('cli-device-count') as HTMLInputElement).value).toBe('1');
+    expect(optionLabels('cli-link-ttl')).toEqual([
+      '1 hour',
+      '24 hours',
+      '7 days',
+      '30 days',
+      '90 days',
+      '1 year',
+    ]);
+  });
+
+  it('clamps a CLI resolved default that sits above the cap instead of submitting a 400', async () => {
+    setOrgStore({
+      enrollmentDefaults: { ttlMinutes: 525600, deviceCount: 1, maxTtlMinutes: 10080 },
+    });
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ token: 'cli-token', maxUsage: 1 }),
+    );
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('tab-cli'));
+
+    await waitFor(() => {
+      expect(screen.getByText('cli-token')).toBeDefined();
+    });
+
+    expect((screen.getByTestId('cli-link-ttl') as HTMLSelectElement).value).toBe('10080');
+  });
+
+  it('renders a non-canonical CLI default as its own option so display matches what is submitted', async () => {
+    // 20000 is under the 43200 cap but is not a canonical option. Filtering it
+    // out would leave the select matching nothing - the browser shows "1 hour"
+    // while the request still carries 20000.
+    setOrgStore({
+      enrollmentDefaults: { ttlMinutes: 20000, deviceCount: 1, maxTtlMinutes: 43200 },
+    });
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ token: 'cli-token', maxUsage: 1 }),
+    );
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('tab-cli'));
+
+    await waitFor(() => {
+      expect(screen.getByText('cli-token')).toBeDefined();
+    });
+
+    expect((screen.getByTestId('cli-link-ttl') as HTMLSelectElement).value).toBe('20000');
+    expect(
+      [...(screen.getByTestId('cli-link-ttl') as HTMLSelectElement).options].map((o) => o.value),
+    ).toEqual(['60', '1440', '10080', '20000', '43200']);
+  });
+
+  it('offers the cap itself when it sits below every canonical option', async () => {
+    setOrgStore({
+      enrollmentDefaults: { ttlMinutes: 30, deviceCount: 1, maxTtlMinutes: 30 },
+    });
+    fetchWithAuthMock.mockResolvedValue(
+      makeJsonResponse({ token: 'cli-token', maxUsage: 1 }),
+    );
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('tab-cli'));
+
+    await waitFor(() => {
+      expect(screen.getByText('cli-token')).toBeDefined();
+    });
+
+    expect((screen.getByTestId('cli-link-ttl') as HTMLSelectElement).value).toBe('30');
+    expect(optionLabels('cli-link-ttl')).toEqual(['in about 30 minutes']);
   });
 });

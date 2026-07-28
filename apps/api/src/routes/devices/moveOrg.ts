@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import { devices, sites, organizations } from '../../db/schema';
@@ -17,7 +17,12 @@ import {
 } from './helpers';
 import { moveOrgSchema } from './schemas';
 import { writeRouteAudit } from '../../services/auditEvents';
-import { DEVICE_ORG_DENORMALIZED_TABLES, DEVICE_SITE_DENORMALIZED_TABLES } from './core';
+import {
+  getDeviceOrgDenormalizedTables,
+  getDeviceOrgMoveDeleteTables,
+  DEVICE_SITE_DENORMALIZED_TABLES,
+} from './core';
+import { dissolveLinkGroupIfBelowMinimum } from '../../services/deviceLinkGroups';
 import { disconnectAgent } from '../agentWs';
 import { captureException } from '../../services/sentry';
 
@@ -45,7 +50,7 @@ moveOrgRoutes.use('*', authMiddleware);
  * system scope can move a device across partner boundaries.
  *
  * RLS hazard: 64 device-scoped tables denormalize `org_id` for RLS perf
- * (see DEVICE_ORG_DENORMALIZED_TABLES). All of them MUST be rewritten in
+ * (see getDeviceOrgDenormalizedTables()). All of them MUST be rewritten in
  * the same transaction or pre-existing rows for this device will be
  * visible only to the OLD org and invisible to the NEW one. Tables that
  * denormalize org_id but have no device_id column (CUSTOM_ORG_REWRITE_TABLES)
@@ -129,6 +134,11 @@ moveOrgRoutes.post(
 
     // ----------- the actual move -----------
     let updated: typeof devices.$inferSelect | undefined;
+    // #2138/#2308 — whether the move dissolved the device's old link group
+    // (lone multiboot survivor unlinked, or a vm_host group left headless
+    // when its HOST moved, unlinking every guest). Recorded in the audit
+    // details so an un-grouped fleet is traceable to this move.
+    let linkGroupDissolved = false;
     try {
       await db.transaction(async (tx) => {
         // Flip the device row first so any concurrent agent heartbeat
@@ -138,24 +148,47 @@ moveOrgRoutes.post(
           .set({
             orgId: targetOrgId,
             siteId: targetSiteId,
+            // #2138 — a device leaving its org can no longer be a boot profile
+            // of a machine in the OLD org. Unlink it here; the composite FK
+            // (link_group_id, org_id) -> device_link_groups(id, org_id) would
+            // otherwise fail the org flip. The source group is dissolved below
+            // if it drops below the two-profile minimum (or, for vm_host
+            // groups, if this device WAS the host — #2308). Role travels with
+            // membership, so it clears too.
+            linkGroupId: null,
+            linkGroupRole: null,
             updatedAt: new Date(),
           })
           .where(eq(devices.id, deviceId))
           .returning();
         updated = row;
 
+        // #2138 — if the moved device left a link group with a single lone
+        // profile behind — or it was a vm_host group's HOST (#2308), leaving
+        // the group headless — that group is no longer meaningful: dissolve it.
+        if (device.linkGroupId) {
+          linkGroupDissolved = await dissolveLinkGroupIfBelowMinimum(tx, device.linkGroupId);
+        }
+
         // Rewrite the denormalized org_id on every device-scoped table.
         // Skipping any of these strands pre-existing rows under RLS.
-        for (const table of DEVICE_ORG_DENORMALIZED_TABLES) {
+        for (const table of getDeviceOrgDenormalizedTables()) {
           await tx.execute(
             sql`UPDATE ${sql.identifier(table)} SET org_id = ${targetOrgId}::uuid WHERE device_id = ${deviceId}::uuid`,
           );
         }
 
+        // Extension tables that must be DELETED (not re-stamped) on org-move: their rows
+        // FK a source/config row that stays in the old org, so rewriting org_id would
+        // corrupt cross-row consistency. See extension-api tenancy docs.
+        for (const table of getDeviceOrgMoveDeleteTables()) {
+          await tx.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE device_id = ${deviceId}`);
+        }
+
         // ticket_alert_links denormalizes org_id for RLS but has no
         // device_id column, so the generic loop above can't reach it —
         // rewrite via the alert join instead. Excluded from
-        // DEVICE_ORG_DENORMALIZED_TABLES; tracked in
+        // getDeviceOrgDenormalizedTables(); tracked in
         // CUSTOM_ORG_REWRITE_TABLES (core.ts).
         await tx.execute(
           sql`UPDATE ${sql.identifier('ticket_alert_links')} SET org_id = ${targetOrgId}::uuid WHERE alert_id IN (SELECT id FROM alerts WHERE device_id = ${deviceId}::uuid)`,
@@ -216,6 +249,13 @@ moveOrgRoutes.post(
       targetOrgId,
       sourceSiteId: device.siteId,
       targetSiteId,
+      // #2138/#2308 — a move can dissolve the device's old link group and
+      // unlink every remaining member (all guests, when a vm_host group's
+      // host moves). Without this the audit trail shows only "device moved"
+      // while sibling devices silently lost their grouping.
+      ...(device.linkGroupId
+        ? { linkGroupId: device.linkGroupId, linkGroupDissolved }
+        : {}),
     } as const;
 
     writeRouteAudit(c, {

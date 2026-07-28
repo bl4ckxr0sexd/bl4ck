@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { zValidator } from '@hono/zod-validator';
+import { zValidator } from '../../lib/validation';
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { db, runOutsideDbContext, withSystemDbAccessContext } from '../../db';
 import { invoices, invoiceStripePayments } from '../../db/schema';
@@ -10,9 +10,11 @@ import {
   buildWeakEtag,
   getPagination,
   isEtagFresh,
+  portalFinancialMutationGuard,
 } from './helpers';
-import { getCustomerInvoice, markViewed } from '../../services/invoiceService';
+import { getCustomerInvoice, markViewed, toCustomerInvoiceLine } from '../../services/invoiceService';
 import { getInvoicePdf, renderInvoicePdf } from '../../services/invoicePdf';
+import { portalBase } from '../../services/portalUrl';
 import { safeContentDispositionFilename } from '../../utils/httpHeaders';
 import { InvoiceServiceError } from '../../services/invoiceTypes';
 import { getPartnerStripeClient, PartnerStripeError } from '../../services/partnerStripe';
@@ -27,6 +29,7 @@ const settleSchema = z.object({ sessionId: z.string().trim().min(1).max(255) });
 const PAYABLE = new Set(['sent', 'partially_paid', 'overdue']);
 
 export const invoiceRoutes = new Hono();
+invoiceRoutes.use('*', portalFinancialMutationGuard);
 
 // GET /portal/invoices — this org's issued (status != 'draft') invoices.
 // Drafts are MSP-internal and must never surface to the customer.
@@ -100,7 +103,7 @@ invoiceRoutes.get('/invoices/:id', zValidator('param', ticketParamSchema), async
     console.error('[portal] markViewed failed', { invoiceId: id, orgId: auth.user.orgId, err });
   }
 
-  return c.json({ invoice: result.invoice, lines: result.lines });
+  return c.json({ invoice: result.invoice, lines: result.lines.map(toCustomerInvoiceLine) });
 });
 
 // GET /portal/invoices/:id/pdf — stream the stored PDF (render on demand if absent).
@@ -200,8 +203,9 @@ invoiceRoutes.post('/invoices/:id/pay', zValidator('param', ticketParamSchema), 
     throw err;
   }
 
-  // Customer-facing portal base URL (mirrors invoicePdf.ts portal-link building).
-  const portalBase = (process.env.PUBLIC_APP_URL || process.env.DASHBOARD_URL || 'http://localhost:4321').replace(/\/$/, '');
+  // Customer-facing portal base URL (shared resolution — includes the portal
+  // base path, so it is no longer hand-appended in the URLs below).
+  const portalBaseUrl = portalBase();
 
   // Truly outside any DB context/transaction — no pooled connection is held
   // across this ~hundreds-of-ms round trip.
@@ -225,8 +229,8 @@ invoiceRoutes.post('/invoices/:id/pay', zValidator('param', ticketParamSchema), 
     }],
     // {CHECKOUT_SESSION_ID} is substituted by Stripe on redirect — the verify-on-return
     // handler reads it to settle server-side (the API-key model has no inbound webhook).
-    success_url: `${portalBase}/portal/invoices/${inv.id}?paid=1&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${portalBase}/portal/invoices/${inv.id}`,
+    success_url: `${portalBaseUrl}/invoices/${inv.id}?paid=1&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${portalBaseUrl}/invoices/${inv.id}`,
     metadata: {
       invoice_id: inv.id,
       org_id: inv.orgId,

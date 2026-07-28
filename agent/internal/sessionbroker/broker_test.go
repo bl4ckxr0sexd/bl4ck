@@ -88,13 +88,35 @@ func TestSessionForUserPrefersMostRecentUserSession(t *testing.T) {
 			userSessionOld.SessionID: userSessionOld,
 			userSessionNew.SessionID: userSessionNew,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	got := b.SessionForUser("alice")
 	if got != userSessionNew {
 		t.Fatalf("SessionForUser returned %q, want %q", got.SessionID, userSessionNew.SessionID)
+	}
+}
+
+func TestSessionForUserSelectsRDPHelper(t *testing.T) {
+	now := time.Now()
+
+	consoleSession, consoleClient := newTestUserSession(t, "console-helper", "alice", now.Add(-20*time.Minute))
+	defer consoleClient.Close()
+	consoleSession.WinSessionID = "1"
+	rdpSession, rdpClient := newTestUserSession(t, "rdp-helper", "alice", now.Add(-time.Minute))
+	defer rdpClient.Close()
+	rdpSession.WinSessionID = "7"
+
+	b := &Broker{
+		sessions: map[string]*Session{
+			consoleSession.SessionID: consoleSession,
+			rdpSession.SessionID:     rdpSession,
+		},
+		byIdentity: make(map[string][]*Session),
+	}
+
+	if got := b.SessionForUser("alice"); got != rdpSession {
+		t.Fatalf("SessionForUser returned %v, want RDP helper %q", got, rdpSession.SessionID)
 	}
 }
 
@@ -116,8 +138,7 @@ func TestLaunchProcessViaUserHelperBroadcastsToAllUserSessions(t *testing.T) {
 			olderSession.SessionID: olderSession,
 			newerSession.SessionID: newerSession,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	seen := make(chan string, 2)
@@ -145,7 +166,7 @@ func TestLaunchProcessViaUserHelperBroadcastsToAllUserSessions(t *testing.T) {
 	startResponder("older", olderClient)
 	startResponder("newer", newerClient)
 
-	if err := b.LaunchProcessViaUserHelper("/usr/local/bin/bl4ck-agent"); err != nil {
+	if err := b.LaunchProcessViaUserHelper("/usr/local/bin/breeze-agent"); err != nil {
 		t.Fatalf("LaunchProcessViaUserHelper: %v", err)
 	}
 
@@ -183,8 +204,7 @@ func TestLaunchProcessViaUserHelperForSessionTargetsMatchingHelper(t *testing.T)
 			sessionA.SessionID: sessionA,
 			sessionB.SessionID: sessionB,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	seen := make(chan string, 1)
@@ -209,7 +229,7 @@ func TestLaunchProcessViaUserHelperForSessionTargetsMatchingHelper(t *testing.T)
 		}
 	}()
 
-	if err := b.LaunchProcessViaUserHelperForSession("502", "/usr/local/bin/bl4ck-helper", "--config", "/tmp/helper.yaml"); err != nil {
+	if err := b.LaunchProcessViaUserHelperForSession("502", "/usr/local/bin/breeze-helper", "--config", "/tmp/helper.yaml"); err != nil {
 		t.Fatalf("LaunchProcessViaUserHelperForSession: %v", err)
 	}
 
@@ -217,6 +237,62 @@ func TestLaunchProcessViaUserHelperForSessionTargetsMatchingHelper(t *testing.T)
 	case <-seen:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for targeted helper launch")
+	}
+}
+
+func TestLaunchProcessViaUserHelperForSessionTargetsMatchingRDPHelper(t *testing.T) {
+	now := time.Now()
+
+	consoleSession, consoleClient := newTestUserSession(t, "console-helper", "alice", now.Add(-10*time.Minute))
+	rdpSession, rdpClient := newTestUserSession(t, "rdp-helper", "alice", now.Add(-time.Minute))
+	consoleSession.WinSessionID = "1"
+	rdpSession.WinSessionID = "7"
+	defer consoleSession.Close()
+	defer rdpSession.Close()
+	defer consoleClient.Close()
+	defer rdpClient.Close()
+
+	go consoleSession.RecvLoop(func(*Session, *ipc.Envelope) {})
+	go rdpSession.RecvLoop(func(*Session, *ipc.Envelope) {})
+
+	b := &Broker{
+		sessions: map[string]*Session{
+			consoleSession.SessionID: consoleSession,
+			rdpSession.SessionID:     rdpSession,
+		},
+		byIdentity: make(map[string][]*Session),
+	}
+
+	seen := make(chan string, 1)
+	startResponder := func(label string, client *ipc.Conn) {
+		t.Helper()
+		go func() {
+			client.SetReadDeadline(time.Now().Add(5 * time.Second))
+			env, err := client.Recv()
+			if err != nil {
+				return
+			}
+			seen <- label
+			respPayload, _ := json.Marshal(ipc.LaunchProcessResult{OK: true, PID: 4242})
+			if err := client.Send(&ipc.Envelope{ID: env.ID, Type: ipc.TypeLaunchResult, Payload: respPayload}); err != nil {
+				t.Errorf("send %s launch response: %v", label, err)
+			}
+		}()
+	}
+	startResponder("console", consoleClient)
+	startResponder("rdp", rdpClient)
+
+	if err := b.LaunchProcessViaUserHelperForSession("7", "/usr/local/bin/breeze-helper"); err != nil {
+		t.Fatalf("LaunchProcessViaUserHelperForSession: %v", err)
+	}
+
+	select {
+	case got := <-seen:
+		if got != "rdp" {
+			t.Fatalf("targeted launch reached %s helper, want rdp", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for targeted RDP helper launch")
 	}
 }
 
@@ -234,8 +310,7 @@ func TestReapIdleSessionsReapsStrandedCaptureSessions(t *testing.T) {
 		sessions: map[string]*Session{
 			session.SessionID: session,
 		},
-		byIdentity:   map[string][]*Session{session.IdentityKey: []*Session{session}},
-		staleHelpers: make(map[string][]int),
+		byIdentity: map[string][]*Session{session.IdentityKey: {session}},
 	}
 
 	b.reapIdleSessions()
@@ -348,8 +423,7 @@ func TestPreferredSessionWithScopePrefersNewestUserHelper(t *testing.T) {
 			olderUser.SessionID:     olderUser,
 			newerUser.SessionID:     newerUser,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	got := b.PreferredSessionWithScope("run_as_user")
@@ -385,8 +459,7 @@ func TestPreferredDesktopSession_LoginWindowConsole_PrefersLoginWindowHelper(t *
 			userSession.SessionID:  userSession,
 			loginSession.SessionID: loginSession,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	// Without console user set, user_session wins (existing behavior).
@@ -430,8 +503,7 @@ func TestPreferredDesktopSession_LoggedInConsole_PrefersUserSession(t *testing.T
 			userSession.SessionID:  userSession,
 			loginSession.SessionID: loginSession,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	// With a real user logged in, user_session should still win.
@@ -460,8 +532,7 @@ func TestPreferredDesktopSession_LoginWindowConsole_OnlyLoginHelpers(t *testing.
 		sessions: map[string]*Session{
 			userSession.SessionID: userSession,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	b.SetConsoleUser("loginwindow")
@@ -503,8 +574,7 @@ func TestPreferredDesktopSession_LoginWindow_DeterministicRegardlessOfOrder(t *t
 				userSession.SessionID:  userSession,
 				loginSession.SessionID: loginSession,
 			},
-			byIdentity:   make(map[string][]*Session),
-			staleHelpers: make(map[string][]int),
+			byIdentity: make(map[string][]*Session),
 		}
 		b.SetConsoleUser("loginwindow")
 
@@ -545,8 +615,7 @@ func TestCloseSessionsByDesktopContext(t *testing.T) {
 			loginSession.SessionID:  loginSession,
 			notifySession.SessionID: notifySession,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	closed := b.CloseSessionsByDesktopContext(ipc.DesktopContextUserSession)
@@ -607,8 +676,7 @@ func TestCloseSessionsByDesktopContext_MultipleMatches(t *testing.T) {
 			sess2.SessionID:     sess2,
 			loginSess.SessionID: loginSess,
 		},
-		byIdentity:   make(map[string][]*Session),
-		staleHelpers: make(map[string][]int),
+		byIdentity: make(map[string][]*Session),
 	}
 
 	closed := b.CloseSessionsByDesktopContext(ipc.DesktopContextUserSession)
@@ -901,26 +969,26 @@ func TestScopesForRoleAssist(t *testing.T) {
 	}
 }
 
-func TestPamScopeBelongsOnlyToUserHelper(t *testing.T) {
-	if !containsString(userHelperScopes, ipc.ScopePam) {
-		t.Fatalf("userHelperScopes = %v, want %q", userHelperScopes, ipc.ScopePam)
+func TestPamScopeBelongsOnlyToSystemHelper(t *testing.T) {
+	if containsString(userHelperScopes, ipc.ScopePam) {
+		t.Fatalf("userHelperScopes = %v, must not contain %q", userHelperScopes, ipc.ScopePam)
 	}
-	if containsString(systemHelperScopes, ipc.ScopePam) {
-		t.Fatalf("systemHelperScopes = %v, must not contain %q", systemHelperScopes, ipc.ScopePam)
+	if !containsString(systemHelperScopes, ipc.ScopePam) {
+		t.Fatalf("systemHelperScopes = %v, want %q", systemHelperScopes, ipc.ScopePam)
 	}
 
 	b := &Broker{}
-	userScopes := b.scopesForRole(ipc.HelperRoleUser, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\BL4CK\bl4ck-user-helper.exe`)
-	if !containsString(userScopes, ipc.ScopePam) {
-		t.Fatalf("scopesForRole(user) = %v, want %q", userScopes, ipc.ScopePam)
+	userScopes := b.scopesForRole(ipc.HelperRoleUser, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\Breeze\breeze-user-helper.exe`)
+	if containsString(userScopes, ipc.ScopePam) {
+		t.Fatalf("scopesForRole(user) = %v, must not contain %q", userScopes, ipc.ScopePam)
 	}
-	systemScopes := b.scopesForRole(ipc.HelperRoleSystem, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\BL4CK\bl4ck-user-helper.exe`)
-	if containsString(systemScopes, ipc.ScopePam) {
-		t.Fatalf("scopesForRole(system) = %v, must not contain %q", systemScopes, ipc.ScopePam)
+	systemScopes := b.scopesForRole(ipc.HelperRoleSystem, ipc.HelperBinaryUserHelper, "windows", `C:\Program Files\Breeze\breeze-user-helper.exe`)
+	if !containsString(systemScopes, ipc.ScopePam) {
+		t.Fatalf("scopesForRole(system) = %v, want %q", systemScopes, ipc.ScopePam)
 	}
 }
 
-func TestFindCapableSessionPamUsesUserPamScope(t *testing.T) {
+func TestFindCapableSessionPamUsesSystemPamScope(t *testing.T) {
 	now := time.Now()
 	userSession := &Session{
 		SessionID:     "user-pam",
@@ -946,28 +1014,48 @@ func TestFindCapableSessionPamUsesUserPamScope(t *testing.T) {
 	}
 
 	got := b.FindCapableSession(ipc.ScopePam, "7")
-	if got != userSession {
-		t.Fatalf("FindCapableSession(pam) = %v, want user-token session", got)
+	if got != systemSession {
+		t.Fatalf("FindCapableSession(pam) = %v, want SYSTEM session", got)
 	}
 }
 
-func TestAssistHelperBinaryPathsIncludeBL4CKHelper(t *testing.T) {
+func TestFindCapableSessionPamDoesNotFallBackAcrossWindowsSessions(t *testing.T) {
+	otherSession := &Session{
+		SessionID:     "system-pam-other-session",
+		WinSessionID:  "8",
+		AllowedScopes: []string{ipc.ScopePam},
+		HelperRole:    ipc.HelperRoleSystem,
+		ConnectedAt:   time.Now(),
+		LastSeen:      time.Now(),
+	}
+	b := &Broker{
+		sessions: map[string]*Session{
+			otherSession.SessionID: otherSession,
+		},
+	}
+
+	if got := b.FindCapableSession(ipc.ScopePam, "7"); got != nil {
+		t.Fatalf("FindCapableSession(pam, target=7) = %v, want nil rather than session %q", got, otherSession.WinSessionID)
+	}
+}
+
+func TestAssistHelperBinaryPathsIncludeBreezeHelper(t *testing.T) {
 	paths := assistHelperBinaryPaths("/opt/breeze")
 	found := false
 	for _, p := range paths {
 		base := filepath.Base(p)
-		if base == "bl4ck-helper" || base == "bl4ck-helper.exe" {
+		if base == "breeze-helper" || base == "breeze-helper.exe" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("assistHelperBinaryPaths(%q) = %v, missing bl4ck-helper binary", "/opt/breeze", paths)
+		t.Fatalf("assistHelperBinaryPaths(%q) = %v, missing breeze-helper binary", "/opt/breeze", paths)
 	}
 
 	// On non-windows platforms the agent-dir-relative path must be present so
 	// the hash allowlist covers helpers installed alongside the agent.
 	if runtime.GOOS != "windows" {
-		want := filepath.Join("/opt/breeze", "bl4ck-helper")
+		want := filepath.Join("/opt/breeze", "breeze-helper")
 		has := false
 		for _, p := range paths {
 			if p == want {
@@ -980,7 +1068,7 @@ func TestAssistHelperBinaryPathsIncludeBL4CKHelper(t *testing.T) {
 	}
 
 	if runtime.GOOS == "darwin" {
-		want := "/Applications/BL4CK Helper.app/Contents/MacOS/bl4ck-helper"
+		want := "/Applications/Breeze Helper.app/Contents/MacOS/breeze-helper"
 		has := false
 		for _, p := range paths {
 			if p == want {
@@ -1004,20 +1092,20 @@ func containsString(values []string, want string) bool {
 
 // TestAssistHelperBinaryPathsWindowsRealInstallPath guards the regression where
 // the Windows allowlist used the agent dir instead of the Helper MSI's real
-// "<ProgramFiles>\BL4CK Helper\" install location, causing the broker to reject
+// "<ProgramFiles>\Breeze Helper\" install location, causing the broker to reject
 // the genuine Helper on Windows. Runs on any host via the OS-parameterized core.
 func TestAssistHelperBinaryPathsWindowsRealInstallPath(t *testing.T) {
-	paths := assistHelperBinaryPathsForOS(`C:\Program Files\BL4CK`, "windows", `C:\Program Files`)
-	// At least one candidate must point at the "BL4CK Helper" install dir
-	// (not the agent's "BL4CK" dir) and be the bl4ck-helper.exe binary.
+	paths := assistHelperBinaryPathsForOS(`C:\Program Files\Breeze`, "windows", `C:\Program Files`)
+	// At least one candidate must point at the "Breeze Helper" install dir
+	// (not the agent's "Breeze" dir) and be the breeze-helper.exe binary.
 	found := false
 	for _, p := range paths {
-		if strings.Contains(p, "BL4CK Helper") && strings.HasSuffix(p, "bl4ck-helper.exe") {
+		if strings.Contains(p, "Breeze Helper") && strings.HasSuffix(p, "breeze-helper.exe") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("windows assist paths %v missing a 'BL4CK Helper\\bl4ck-helper.exe' candidate", paths)
+		t.Fatalf("windows assist paths %v missing a 'Breeze Helper\\breeze-helper.exe' candidate", paths)
 	}
 }
 
@@ -1039,7 +1127,7 @@ func TestConsentUIFallbackScopeGrant(t *testing.T) {
 	b := &Broker{}
 	tests := []struct {
 		name            string
-		role            string
+		role            ipc.HelperRole
 		supportsConsent bool
 		wantFallback    bool
 	}{

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Database, HardDrive, ShieldAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useHashState } from '@/lib/useHashState';
 import { fetchWithAuth } from '../../stores/auth';
 import BackupOverviewContent from './BackupOverviewContent';
 import BackupVerificationOverview from './BackupVerificationOverview';
@@ -16,6 +17,9 @@ import {
   parseUsageHistory,
   statIconMap
 } from './backupDashboardHelpers';
+import { useTranslation } from 'react-i18next';
+import { OrgRequiredGate } from '../shared/OrgRequiredGate';
+import '../../lib/i18n';
 
 const MssqlDashboard = lazy(() => import('./MssqlDashboard'));
 const HypervDashboard = lazy(() => import('./HypervDashboard'));
@@ -26,14 +30,16 @@ const SLADashboard = lazy(() => import('./SLADashboard'));
 const EncryptionKeyList = lazy(() => import('./EncryptionKeyList'));
 const RecoveryBootstrapTab = lazy(() => import('./RecoveryBootstrapTab'));
 const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
+const BackupProfilesTab = lazy(() => import('./BackupProfilesTab'));
 
-type BackupTab = 'overview' | 'verification' | 'snapshots' | 'mssql' | 'hyperv' | 'vault' | 'sla' | 'encryption' | 'recovery-bootstrap';
+type BackupTab = 'overview' | 'verification' | 'profiles' | 'snapshots' | 'mssql' | 'hyperv' | 'vault' | 'sla' | 'encryption' | 'recovery-bootstrap';
 
-const ALL_TABS: BackupTab[] = ['overview', 'verification', 'snapshots', 'mssql', 'hyperv', 'vault', 'sla', 'encryption', 'recovery-bootstrap'];
+const ALL_TABS: BackupTab[] = ['overview', 'verification', 'profiles', 'snapshots', 'mssql', 'hyperv', 'vault', 'sla', 'encryption', 'recovery-bootstrap'];
 
 const TAB_LABELS: Record<BackupTab, string> = {
   overview: 'Overview',
   verification: 'Verification',
+  profiles: 'Profiles',
   snapshots: 'Snapshots',
   mssql: 'SQL Server',
   hyperv: 'Hyper-V',
@@ -48,22 +54,21 @@ function isValidTab(hash: string): hash is BackupTab {
 }
 
 function TabFallback() {
+  const { t } = useTranslation('backup');
   return (
     <div className="flex items-center justify-center py-16">
       <div className="text-center">
         <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-        <p className="mt-4 text-sm text-muted-foreground">Loading...</p>
+        <p className="mt-4 text-sm text-muted-foreground">{t('backupDashboard.loading')}</p>
       </div>
     </div>
   );
 }
 
-export default function BackupDashboard() {
-  const [activeTab, setActiveTab] = useState<BackupTab>(() => {
-    if (typeof window === 'undefined') return 'overview';
-    const hash = window.location.hash.replace('#', '');
-    return isValidTab(hash) ? hash : 'overview';
-  });
+function BackupDashboardInner() {
+  const { t } = useTranslation('backup');
+  // SSR-safe hash tab (#2421): starts at the default, adopts the hash post-mount.
+  const [activeTab, setActiveTab] = useHashState<BackupTab>('overview', (h) => (isValidTab(h) ? h : undefined));
   const [stats, setStats] = useState<BackupStat[]>([]);
   const [recentJobs, setRecentJobs] = useState<BackupJob[]>([]);
   const [overdueDevices, setOverdueDevices] = useState<OverdueDevice[]>([]);
@@ -172,15 +177,6 @@ export default function BackupDashboard() {
   useEffect(() => {
     fetchOverview();
   }, [fetchOverview]);
-
-  useEffect(() => {
-    const onHashChange = () => {
-      const hash = window.location.hash.replace('#', '');
-      setActiveTab(isValidTab(hash) ? hash : 'overview');
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
 
   const handleRunAllClick = useCallback(async () => {
     try {
@@ -340,7 +336,7 @@ export default function BackupDashboard() {
       <div className="flex items-center justify-center py-16">
         <div className="text-center">
           <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading backup overview...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('backupDashboard.loadingBackupOverview')}</p>
         </div>
       </div>
     );
@@ -365,10 +361,9 @@ export default function BackupDashboard() {
             )}
           >
             {TAB_LABELS[tab]}
-            {tab !== 'overview' && tab !== 'verification' && (
+            {tab !== 'overview' && tab !== 'verification' && tab !== 'profiles' && (
               <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-wider text-warning">
-                Alpha
-              </span>
+                {t('backupDashboard.alpha')} </span>
             )}
           </button>
         ))}
@@ -382,8 +377,7 @@ export default function BackupDashboard() {
             onClick={fetchOverview}
             className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
-            Try again
-          </button>
+            {t('backupDashboard.tryAgain')} </button>
         </div>
       )}
 
@@ -425,6 +419,12 @@ export default function BackupDashboard() {
         </Suspense>
       )}
 
+      {activeTab === 'profiles' && (
+        <Suspense fallback={<TabFallback />}>
+          <BackupProfilesTab />
+        </Suspense>
+      )}
+
       {activeTab === 'mssql' && (
         <Suspense fallback={<TabFallback />}>
           <MssqlDashboard />
@@ -441,10 +441,9 @@ export default function BackupDashboard() {
 
               <div className="space-y-3 rounded-lg border bg-card p-5 shadow-xs">
                 <div>
-                  <h3 className="text-base font-semibold text-foreground">Active instant boots</h3>
+                  <h3 className="text-base font-semibold text-foreground">{t('backupDashboard.activeInstantBoots')}</h3>
                   <p className="text-sm text-muted-foreground">
-                    Monitor instant boot sessions that are still pending or running.
-                  </p>
+                    {t('backupDashboard.monitorInstantBootSessionsThatAreStillPending')} </p>
                 </div>
                 <InstantBootStatus />
               </div>
@@ -477,5 +476,16 @@ export default function BackupDashboard() {
         </Suspense>
       )}
     </div>
+  );
+}
+
+// The backup APIs are per-organization (they 400 on an org-less request), so
+// the gate resolves loading/error/empty/fleet before the data component — with
+// all its fetch effects — ever mounts without an org.
+export default function BackupDashboard() {
+  return (
+    <OrgRequiredGate>
+      <BackupDashboardInner />
+    </OrgRequiredGate>
   );
 }

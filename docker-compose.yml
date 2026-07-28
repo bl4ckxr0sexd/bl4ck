@@ -57,30 +57,49 @@ services:
       <<: *healthcheck
       test: ['CMD', 'caddy', 'version']
       start_period: 20s
+    # Static IP so the API can identify the bundled Caddy as its immediate peer
+    # and trust the client IP it forwards (TRUSTED_PROXY_CIDRS below defaults to
+    # this address). Override BREEZE_CADDY_IP only together with
+    # TRUSTED_PROXY_CIDRS and BREEZE_DOCKER_SUBNET — see .env.example.
     networks:
-      - breeze
+      breeze:
+        ipv4_address: ${BREEZE_CADDY_IP:-172.31.0.10}
 
   api:
     image: ${BREEZE_API_IMAGE_REF:?Set BREEZE_API_IMAGE_REF to a digest-pinned image ref}
     platform: ${DOCKER_PLATFORM:-linux/amd64}
     container_name: breeze-api
     restart: unless-stopped
+    # Keep the root filesystem writable while redis_password is environment-backed;
+    # standalone Compose supports only file-backed secrets for read-only services.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     environment:
       NODE_ENV: production
       API_PORT: 3001
       DATABASE_URL: postgresql://${POSTGRES_USER:-breeze}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-breeze}
-      # Unprivileged app role connection — RLS policies are enforced against this user.
-      # Falls back to DATABASE_URL (superuser) if unset — but RLS will be bypassed in that case.
-      DATABASE_URL_APP: postgresql://breeze_app:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-breeze}
-      # ensureAppRole reads one of these from the api container env to CREATE/ALTER the
-      # breeze_app role on first boot. Without one of these, DATABASE_URL_APP fails auth.
+      # The request pool derives its breeze_app URL from DATABASE_URL and the same
+      # effective password ensureAppRole uses to CREATE/ALTER that unprivileged role.
+      # DATABASE_URL_APP takes precedence and is required for multi-host/HA URLs,
+      # which cannot be derived. All three must be mapped here — compose only
+      # interpolates vars listed in this block, so omitting one makes a value set
+      # in .env silently inert.
+      DATABASE_URL_APP: ${DATABASE_URL_APP:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       BREEZE_APP_DB_PASSWORD: ${BREEZE_APP_DB_PASSWORD:-}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      PARTNER_API_CURSOR_SIGNING_KEY: ${PARTNER_API_CURSOR_SIGNING_KEY:?Set PARTNER_API_CURSOR_SIGNING_KEY in .env}
       AGENT_ENROLLMENT_SECRET: ${AGENT_ENROLLMENT_SECRET:?Set AGENT_ENROLLMENT_SECRET in .env}
+      # Backup control-plane URL pushed to agents via heartbeat (#2288);
+      # see docs/deploy/agent-server-url-migration.md
+      AGENT_BACKUP_SERVER_URL: ${AGENT_BACKUP_SERVER_URL:-}
       BREEZE_BOOTSTRAP_ADMIN_EMAIL: ${BREEZE_BOOTSTRAP_ADMIN_EMAIL:-}
       BREEZE_BOOTSTRAP_ADMIN_PASSWORD: ${BREEZE_BOOTSTRAP_ADMIN_PASSWORD:-}
       BREEZE_BOOTSTRAP_ADMIN_NAME: ${BREEZE_BOOTSTRAP_ADMIN_NAME:-}
@@ -93,17 +112,41 @@ services:
       PUBLIC_PORTAL_URL: ${PUBLIC_PORTAL_URL:-https://${BREEZE_DOMAIN}/portal}
       API_URL: ${API_URL:-}
       FORCE_HTTPS: ${FORCE_HTTPS:-true}
-      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      # The bundled Caddy is the only trusted peer, and we pin its address
+      # ourselves (see the caddy service). Anything else reaching the API
+      # directly is untrusted and falls back to its raw socket peer. Operators
+      # who front the API with their own proxy must point TRUSTED_PROXY_CIDRS at
+      # it — a CIDR that matches nothing simply means no headers are trusted.
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-${BREEZE_CADDY_IP:-172.31.0.10}/32}
+      # Only trust CF-Connecting-IP when this deployment is genuinely fronted by
+      # Cloudflare — a non-CF reverse proxy does not strip the header, so a
+      # client could otherwise spoof it. Off by default; set true in .env only
+      # if you front Breeze with Cloudflare.
+      TRUST_CF_CONNECTING_IP: ${TRUST_CF_CONNECTING_IP:-}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?Set APP_ENCRYPTION_KEY in .env}
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY in .env}
       ENROLLMENT_KEY_PEPPER: ${ENROLLMENT_KEY_PEPPER:?Set ENROLLMENT_KEY_PEPPER in .env}
       MFA_RECOVERY_CODE_PEPPER: ${MFA_RECOVERY_CODE_PEPPER:?Set MFA_RECOVERY_CODE_PEPPER in .env}
-      TRANSFER_STORAGE_PATH: /data/transfers
       PATCH_REPORT_STORAGE_PATH: /data/patch-reports
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_JSON: ${LOG_JSON:-true}
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
+      # Platform-operator abuse alerts (all optional; unset = feature disabled)
+      OPS_ALERT_WEBHOOK_URL: ${OPS_ALERT_WEBHOOK_URL:-}
+      OPS_ALERT_EMAIL: ${OPS_ALERT_EMAIL:-}
+      OPS_ALERT_LABEL: ${OPS_ALERT_LABEL:-}
+      ABUSE_SIGNAL_OVERRIDES: ${ABUSE_SIGNAL_OVERRIDES:-}
+      ABUSE_SCRIPT_INDICATORS: ${ABUSE_SCRIPT_INDICATORS:-}
+      # Native APNs push for the iOS app (all optional; unset = push disabled).
+      # All-or-none: setting ANY of these makes the four credentials required,
+      # so a half-configured relay fails at boot instead of silently at first
+      # send. Empty values are treated as unset.
+      APNS_AUTH_KEY: ${APNS_AUTH_KEY:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
@@ -123,6 +166,32 @@ services:
       # for self-host/droplet deploys to enable it. Same compose-interpolation gap
       # class as IS_HOSTED / RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS.
       CLIENT_AI_ENTRA_CLIENT_ID: ${CLIENT_AI_ENTRA_CLIENT_ID:-}
+      # Optional customer Graph-read onboarding. The executor is intentionally
+      # not part of this generic Compose stack: deploy it separately with a
+      # workload identity, private ingress, and controlled HTTPS egress.
+      M365_CUSTOMER_GRAPH_READ_ONBOARDING_ENABLED: ${M365_CUSTOMER_GRAPH_READ_ONBOARDING_ENABLED:-false}
+      M365_CUSTOMER_GRAPH_READ_ONBOARDING_ORG_IDS: ${M365_CUSTOMER_GRAPH_READ_ONBOARDING_ORG_IDS:-}
+      M365_CUSTOMER_GRAPH_READ_CLIENT_ID: ${M365_CUSTOMER_GRAPH_READ_CLIENT_ID:-}
+      M365_CUSTOMER_GRAPH_READ_CALLBACK_URL: ${M365_CUSTOMER_GRAPH_READ_CALLBACK_URL:-}
+      M365_CUSTOMER_GRAPH_READ_CREDENTIAL_VERSION: ${M365_CUSTOMER_GRAPH_READ_CREDENTIAL_VERSION:-}
+      M365_CUSTOMER_GRAPH_READ_VAULT_REF: ${M365_CUSTOMER_GRAPH_READ_VAULT_REF:-}
+      M365_GRAPH_READ_EXECUTOR_URL: ${M365_GRAPH_READ_EXECUTOR_URL:-}
+      M365_GRAPH_READ_EXECUTOR_AUDIENCE: ${M365_GRAPH_READ_EXECUTOR_AUDIENCE:-m365-graph-read-executor}
+      M365_GRAPH_READ_EXECUTOR_SIGNING_KID: ${M365_GRAPH_READ_EXECUTOR_SIGNING_KID:-}
+      M365_GRAPH_READ_EXECUTOR_SIGNING_PRIVATE_JWK_FILE: /run/secrets/m365_graph_read_executor_signing_private_jwk
+      # Optional customer Graph-actions (write) executor. Same isolation model
+      # as the Graph-read executor above: intentionally not part of this
+      # generic Compose stack — deploy it separately with a workload identity,
+      # private ingress, and controlled HTTPS egress. Disabled by default.
+      M365_GRAPH_ACTIONS_TOOLS_ENABLED: ${M365_GRAPH_ACTIONS_TOOLS_ENABLED:-false}
+      M365_GRAPH_ACTIONS_TOOLS_ORG_IDS: ${M365_GRAPH_ACTIONS_TOOLS_ORG_IDS:-}
+      M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID: ${M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID:-}
+      M365_CUSTOMER_GRAPH_ACTIONS_CREDENTIAL_VERSION: ${M365_CUSTOMER_GRAPH_ACTIONS_CREDENTIAL_VERSION:-}
+      M365_CUSTOMER_GRAPH_ACTIONS_VAULT_REF: ${M365_CUSTOMER_GRAPH_ACTIONS_VAULT_REF:-}
+      M365_GRAPH_ACTIONS_EXECUTOR_URL: ${M365_GRAPH_ACTIONS_EXECUTOR_URL:-}
+      M365_GRAPH_ACTIONS_EXECUTOR_AUDIENCE: ${M365_GRAPH_ACTIONS_EXECUTOR_AUDIENCE:-m365-graph-actions-executor}
+      M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_KID: ${M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_KID:-}
+      M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_FILE: /run/secrets/m365_graph_actions_executor_signing_private_jwk
       APP_VERSION: ${BREEZE_VERSION:-dev}
       BREEZE_VERSION: ${BREEZE_VERSION:?Set BREEZE_VERSION in .env}
       BINARY_SOURCE: ${BINARY_SOURCE:-github}
@@ -162,11 +231,84 @@ services:
       OAUTH_JWKS_PRIVATE_JWK: ${OAUTH_JWKS_PRIVATE_JWK:-}
       OAUTH_JWKS_PUBLIC_JWK: ${OAUTH_JWKS_PUBLIC_JWK:-}
       OAUTH_CONSENT_URL_BASE: ${OAUTH_CONSENT_URL_BASE:-}
+      # --- Additional API runtime settings ---------------------------------
+      # These are documented in .env.example and read by the API, but were not
+      # previously threaded through Compose, so setting them in .env did nothing
+      # (the #570 / IS_HOSTED gap class). Every value uses `${VAR:-}`: an empty
+      # string is falsy to the API's envFlag/envInt helpers, which then fall
+      # back to their in-code default — so mapping them here is non-regressive
+      # (unset behaves exactly as before) and never drifts from the code default.
+      # Parity between .env.example and this block is enforced by
+      # apps/api/src/config/envComposeParity.test.ts.
+      # Auth / security / session
+      ENABLE_2FA: ${ENABLE_2FA:-}
+      BREEZE_PLATFORM_ADMINS: ${BREEZE_PLATFORM_ADMINS:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      IP_ALLOWLIST_ENFORCEMENT_MODE: ${IP_ALLOWLIST_ENFORCEMENT_MODE:-}
+      JWT_SIGNING_KEYRING: ${JWT_SIGNING_KEYRING:-}
+      JWT_ACTIVE_KID: ${JWT_ACTIVE_KID:-}
+      WS_TICKET_BIND_IP: ${WS_TICKET_BIND_IP:-}
+      ENROLLMENT_KEY_DEFAULT_TTL_MINUTES: ${ENROLLMENT_KEY_DEFAULT_TTL_MINUTES:-}
+      # Real defaults, not `:-}` — an unset var rendered as `VAR: ""` reaches the
+      # container SET to an empty string, and any reader doing
+      # `Number(process.env.X ?? default)` then gets 0 (`??` skips '', and
+      # Number('') is 0). The readers all use utils/envInt now, which treats ''
+      # as absent; these baked defaults are the second line of defence (#2776).
+      CHILD_ENROLLMENT_KEY_TTL_MINUTES: ${CHILD_ENROLLMENT_KEY_TTL_MINUTES:-1440}
+      # BL4CK fork: reusable installers. "unlimited" => maxUsage NULL on the
+      # child enrollment key, which routes/agents/enrollment.ts treats as no
+      # usage cap. Mapped explicitly because a value present only in .env never
+      # reaches the container — this knob was a silent no-op before (#2776).
+      CHILD_ENROLLMENT_KEY_MAX_USAGE: ${CHILD_ENROLLMENT_KEY_MAX_USAGE:-unlimited}
+      INSTALLER_BOOTSTRAP_TOKEN_TTL_MINUTES: ${INSTALLER_BOOTSTRAP_TOKEN_TTL_MINUTES:-1440}
+      INSTALLER_PARENT_MIN_REMAINING_SECONDS: ${INSTALLER_PARENT_MIN_REMAINING_SECONDS:-60}
+      ENROLLMENT_KEY_CLEANUP_ENABLED: ${ENROLLMENT_KEY_CLEANUP_ENABLED:-true}
+      ENROLLMENT_KEY_PURGE_AFTER_DAYS: ${ENROLLMENT_KEY_PURGE_AFTER_DAYS:-7}
+      AUTOMATION_WEBHOOK_ALLOW_LEGACY_SECRET: ${AUTOMATION_WEBHOOK_ALLOW_LEGACY_SECRET:-}
+      # Email — SMTP extras + Mailgun provider
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+      MAILGUN_FROM: ${MAILGUN_FROM:-}
+      MAILGUN_BASE_URL: ${MAILGUN_BASE_URL:-}
+      # SMS MFA + alert notifications (Twilio)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_VERIFY_SERVICE_SID: ${TWILIO_VERIFY_SERVICE_SID:-}
+      TWILIO_MESSAGING_SERVICE_SID: ${TWILIO_MESSAGING_SERVICE_SID:-}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+      # MCP OAuth Dynamic Client Registration
+      OAUTH_DCR_ENABLED: ${OAUTH_DCR_ENABLED:-}
+      OAUTH_DCR_REQUIRE_IAT: ${OAUTH_DCR_REQUIRE_IAT:-}
+      OAUTH_DCR_ALLOW_ANONYMOUS: ${OAUTH_DCR_ALLOW_ANONYMOUS:-}
+      # M365 ticket mailbox + C2C backup app + Graph-read AI tools
+      TICKET_MAILBOX_M365_CLIENT_ID: ${TICKET_MAILBOX_M365_CLIENT_ID:-}
+      TICKET_MAILBOX_M365_CLIENT_SECRET: ${TICKET_MAILBOX_M365_CLIENT_SECRET:-}
+      C2C_M365_CLIENT_ID: ${C2C_M365_CLIENT_ID:-}
+      C2C_M365_CLIENT_SECRET: ${C2C_M365_CLIENT_SECRET:-}
+      M365_GRAPH_READ_TOOLS_ENABLED: ${M365_GRAPH_READ_TOOLS_ENABLED:-}
+      M365_GRAPH_READ_TOOLS_ORG_IDS: ${M365_GRAPH_READ_TOOLS_ORG_IDS:-}
+      # Cloudflare mTLS (API Shield client certificates)
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
+      # Remote-session concurrency caps
+      MAX_ACTIVE_REMOTE_SESSIONS_PER_ORG: ${MAX_ACTIVE_REMOTE_SESSIONS_PER_ORG:-}
+      MAX_ACTIVE_REMOTE_SESSIONS_PER_USER: ${MAX_ACTIVE_REMOTE_SESSIONS_PER_USER:-}
+      # Metrics label controls
+      METRICS_INCLUDE_ORG_ID: ${METRICS_INCLUDE_ORG_ID:-}
+      METRICS_SCRAPE_IP_ALLOWLIST: ${METRICS_SCRAPE_IP_ALLOWLIST:-}
+      # Hosted billing redirect
+      BILLING_URL: ${BILLING_URL:-}
     volumes:
       - api_data:/data
       - binaries:/data/binaries:ro
     secrets:
       - redis_password
+      - source: m365_graph_read_executor_signing_private_jwk
+        target: m365_graph_read_executor_signing_private_jwk
+      - source: m365_graph_actions_executor_signing_private_jwk
+        target: m365_graph_actions_executor_signing_private_jwk
     depends_on:
       binaries-init:
         condition: service_completed_successfully
@@ -333,8 +475,18 @@ services:
       --external-ip=${TURN_HOST:-}
 
 networks:
+  # Fixed subnet so Caddy gets a stable, known peer address (see caddy service
+  # above). The default is deliberately distinct from
+  # deploy/docker-compose.prod.yml's 172.30.0.0/24 so the two stacks never
+  # collide if ever run on the same Docker host. Both defaults sit inside
+  # Docker's default bridge pool (172.17.0.0/12), so a host that has already
+  # auto-allocated this range needs BREEZE_DOCKER_SUBNET set to something
+  # outside it — set BREEZE_CADDY_IP to a matching address when you do.
   breeze:
     name: breeze
+    ipam:
+      config:
+        - subnet: ${BREEZE_DOCKER_SUBNET:-172.31.0.0/24}
 
 volumes:
   binaries:
@@ -347,3 +499,10 @@ volumes:
 secrets:
   redis_password:
     environment: REDIS_PASSWORD
+  # Standalone Compose bind-mounts file-backed secrets and ignores uid/gid/mode
+  # target attributes. /dev/null keeps dark deployments optional; when enabled,
+  # the source JWK must already have numeric owner 1001:1001 and mode 0400.
+  m365_graph_read_executor_signing_private_jwk:
+    file: ${M365_GRAPH_READ_EXECUTOR_SIGNING_PRIVATE_JWK_SOURCE_FILE:-/dev/null}
+  m365_graph_actions_executor_signing_private_jwk:
+    file: ${M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_SOURCE_FILE:-/dev/null}

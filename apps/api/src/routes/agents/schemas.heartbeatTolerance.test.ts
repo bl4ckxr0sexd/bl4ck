@@ -264,6 +264,67 @@ describe('heartbeatSchema — Layer A tolerance', () => {
   });
 });
 
+// signedInUpns degrades at FIELD level (.catch([])): a violating UPN list must
+// cost only the UPNs, never the whole onedriveDeviceState block — the block
+// carries mounted/drift/KFM state whose silent loss leaves stale rows that
+// graph_group tagging keeps consuming.
+describe('heartbeatSchema — onedriveDeviceState signedInUpns bounds', () => {
+  const minimal = { status: 'ok' as const, agentVersion: '0.65.15' };
+  const state = (signedInUpns: unknown) => ({
+    ...minimal,
+    onedriveDeviceState: {
+      signedIn: true,
+      filesOnDemandOn: true,
+      kfmFolderStates: { Desktop: 'redirected' },
+      mountedLibraries: ['C:\\x'],
+      entitledLibraries: ['lib-1'],
+      driftEntries: [],
+      signedInUpns,
+    },
+  });
+  const parseState = (signedInUpns: unknown) => {
+    const result = heartbeatSchema.safeParse(state(signedInUpns));
+    expect(result.success).toBe(true);
+    return (result as { success: true; data: { onedriveDeviceState?: { signedInUpns: string[]; mountedLibraries: string[] } } }).data.onedriveDeviceState;
+  };
+
+  it('keeps exactly 16 UPNs (the cap the agent mirrors)', () => {
+    const upns = Array.from({ length: 16 }, (_, i) => `u${i}@c.com`);
+    const parsed = parseState(upns);
+    expect(parsed?.signedInUpns).toEqual(upns);
+  });
+
+  it('17 UPNs → field degrades to [], the rest of the state block survives', () => {
+    const parsed = parseState(Array.from({ length: 17 }, (_, i) => `u${i}@c.com`));
+    expect(parsed?.signedInUpns).toEqual([]);
+    expect(parsed?.mountedLibraries).toEqual(['C:\\x']);
+  });
+
+  it('an oversized (>320 char) UPN → field degrades to [], block survives', () => {
+    const parsed = parseState([`${'a'.repeat(321)}@c.com`]);
+    expect(parsed?.signedInUpns).toEqual([]);
+    expect(parsed?.mountedLibraries).toEqual(['C:\\x']);
+  });
+
+  it('non-array → field degrades to [], block survives', () => {
+    const parsed = parseState('not-an-array');
+    expect(parsed?.signedInUpns).toEqual([]);
+    expect(parsed?.mountedLibraries).toEqual(['C:\\x']);
+  });
+
+  it('omitted → defaults to [] (Phase 3 agents), block survives', () => {
+    const result = heartbeatSchema.safeParse({
+      ...minimal,
+      onedriveDeviceState: {
+        signedIn: false,
+        filesOnDemandOn: false,
+      },
+    });
+    expect(result.success).toBe(true);
+    expect((result as { success: true; data: { onedriveDeviceState?: { signedInUpns: string[] } } }).data.onedriveDeviceState?.signedInUpns).toEqual([]);
+  });
+});
+
 // uint64Counter guards the cumulative byte/packet counters against v4's new
 // z.number().int() 2^53 cap. The agent emits Go uint64 counters (bigint columns)
 // that exceed 2^53 on busy/long-uptime hosts; a revert to .int() would, via the
@@ -333,5 +394,135 @@ describe('heartbeatSchema — watchdogState .catch collapse (#1121)', () => {
     if (result.success) {
       expect(result.data.watchdogState).toBe('FAILOVER');
     }
+  });
+});
+
+describe('heartbeatSchema — agentRuntime gauges (#2389)', () => {
+  const minimal = {
+    status: 'ok' as const,
+    agentVersion: '0.95.0',
+  };
+
+  const validRuntime = {
+    heapAllocBytes: 12_345_678,
+    heapInuseBytes: 23_456_789,
+    heapReleasedBytes: 1_048_576,
+    sysBytes: 99_999_999,
+    numGc: 42,
+    goroutines: 87,
+  };
+
+  it('parses a full agentRuntime snapshot', () => {
+    const result = heartbeatSchema.safeParse({ ...minimal, agentRuntime: validRuntime });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime).toEqual(validRuntime);
+  });
+
+  it('accepts gauge values above 2^53 (uint64 counters from a big process)', () => {
+    const result = heartbeatSchema.safeParse({
+      ...minimal,
+      agentRuntime: { ...validRuntime, sysBytes: 2 ** 60 },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime?.sysBytes).toBe(2 ** 60);
+  });
+
+  it('drops the whole agentRuntime object on a negative gauge rather than rejecting', () => {
+    const result = heartbeatSchema.safeParse({
+      ...minimal,
+      agentRuntime: { ...validRuntime, heapAllocBytes: -5 },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime).toBeUndefined();
+  });
+
+  it('drops the whole agentRuntime object when a required gauge is missing', () => {
+    const { goroutines: _omitted, ...partial } = validRuntime;
+    const result = heartbeatSchema.safeParse({ ...minimal, agentRuntime: partial });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime).toBeUndefined();
+  });
+
+  it('heartbeat without agentRuntime (old agent) still parses', () => {
+    const result = heartbeatSchema.safeParse(minimal);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime).toBeUndefined();
+  });
+
+  // Worker-pool wedge gauges (#2400) ride the same agentRuntime object.
+  it('parses agentRuntime with wedge gauges (commandsInFlight/commandsOverdue)', () => {
+    const result = heartbeatSchema.safeParse({
+      ...minimal,
+      agentRuntime: { ...validRuntime, commandsInFlight: 3, commandsOverdue: 1 },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime?.commandsInFlight).toBe(3);
+    expect(result.data.agentRuntime?.commandsOverdue).toBe(1);
+  });
+
+  it('agentRuntime without wedge gauges (pre-#2400 agent) still parses whole', () => {
+    const result = heartbeatSchema.safeParse({ ...minimal, agentRuntime: validRuntime });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime).toBeDefined();
+    expect(result.data.agentRuntime?.commandsInFlight).toBeUndefined();
+    expect(result.data.agentRuntime?.commandsOverdue).toBeUndefined();
+  });
+
+  it('drops only the bad wedge gauge, keeping the rest of agentRuntime', () => {
+    const result = heartbeatSchema.safeParse({
+      ...minimal,
+      agentRuntime: { ...validRuntime, commandsInFlight: -2, commandsOverdue: 1 },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentRuntime).toBeDefined();
+    expect(result.data.agentRuntime?.commandsInFlight).toBeUndefined();
+    expect(result.data.agentRuntime?.commandsOverdue).toBe(1);
+    expect(result.data.agentRuntime?.goroutines).toBe(validRuntime.goroutines);
+  });
+});
+
+// desktopAccess.reason forward-compat: the Linux agent (Task 12) emits
+// no_display_session / wayland_unsupported / x11_connect_failed today, with
+// x11_auth_failed reserved for a future emitter. All four must round-trip
+// through the enum; an unrecognized reason must degrade to undefined via
+// .catch(undefined) rather than dropping the whole desktopAccess object.
+describe('desktopAccess Linux reasons', () => {
+  const base = {
+    status: 'ok' as const,
+    agentVersion: '0.65.15',
+    desktopAccess: {
+      mode: 'unavailable' as const,
+      loginUiReachable: false,
+      virtualDisplayReady: false,
+      checkedAt: '2026-07-17T00:00:00.000Z',
+    },
+  };
+
+  it.each(['no_display_session', 'wayland_unsupported', 'x11_connect_failed', 'x11_auth_failed'])(
+    'accepts Linux reason %s',
+    (reason) => {
+      const parsed = heartbeatSchema.parse({
+        ...base,
+        desktopAccess: { ...base.desktopAccess, reason },
+      });
+      expect(parsed.desktopAccess?.reason).toBe(reason);
+    },
+  );
+
+  it('keeps the object but drops an unknown reason (forward-compat)', () => {
+    const parsed = heartbeatSchema.parse({
+      ...base,
+      desktopAccess: { ...base.desktopAccess, reason: 'totally_new_reason' },
+    });
+    expect(parsed.desktopAccess).toBeDefined();
+    expect(parsed.desktopAccess?.reason).toBeUndefined();
   });
 });

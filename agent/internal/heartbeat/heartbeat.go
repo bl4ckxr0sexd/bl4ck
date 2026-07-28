@@ -28,7 +28,6 @@ import (
 	"github.com/breeze-rmm/agent/internal/collectors"
 	"github.com/breeze-rmm/agent/internal/config"
 	"github.com/breeze-rmm/agent/internal/executor"
-	"github.com/breeze-rmm/agent/internal/filetransfer"
 	"github.com/breeze-rmm/agent/internal/health"
 	"github.com/breeze-rmm/agent/internal/helper"
 	"github.com/breeze-rmm/agent/internal/httputil"
@@ -37,11 +36,14 @@ import (
 	"github.com/breeze-rmm/agent/internal/mgmtdetect"
 	"github.com/breeze-rmm/agent/internal/monitoring"
 	"github.com/breeze-rmm/agent/internal/mtls"
+	"github.com/breeze-rmm/agent/internal/netcache"
 	"github.com/breeze-rmm/agent/internal/observability"
+	"github.com/breeze-rmm/agent/internal/onedrivehelper"
 	"github.com/breeze-rmm/agent/internal/patching"
 	"github.com/breeze-rmm/agent/internal/peripheral"
 	"github.com/breeze-rmm/agent/internal/privilege"
 	"github.com/breeze-rmm/agent/internal/remote/desktop"
+	"github.com/breeze-rmm/agent/internal/remote/desktop/x11"
 	"github.com/breeze-rmm/agent/internal/remote/tools"
 	"github.com/breeze-rmm/agent/internal/secmem"
 	"github.com/breeze-rmm/agent/internal/security"
@@ -58,6 +60,8 @@ import (
 
 var log = logging.L("heartbeat")
 var desktopSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+const backupProbeThreshold = 10 // keep in sync with agent/cmd/breeze-watchdog
 
 type HeartbeatPayload struct {
 	Metrics          *collectors.SystemMetrics `json:"metrics,omitempty"`
@@ -76,19 +80,30 @@ type HeartbeatPayload struct {
 	IsVirtual              *bool          `json:"isVirtual,omitempty"`
 	VirtualizationPlatform string         `json:"virtualizationPlatform,omitempty"`
 	HealthStatus           map[string]any `json:"healthStatus,omitempty"`
-	DroppedLogs      int64                     `json:"droppedLogs,omitempty"`
-	HelperVersion    string                    `json:"helperVersion,omitempty"`
-	WatchdogVersion  string                    `json:"watchdogVersion,omitempty"`
-	TCCPermissions   *ipc.TCCStatus            `json:"tccPermissions,omitempty"`
-	DesktopAccess    *DesktopAccessState       `json:"desktopAccess,omitempty"`
-	Hostname         string                    `json:"hostname,omitempty"`
-	OSVersion        string                    `json:"osVersion,omitempty"`
-	OSBuild          string                    `json:"osBuild,omitempty"`
-	IsHeadless       bool                      `json:"isHeadless"`
+	DroppedLogs            int64          `json:"droppedLogs,omitempty"`
+	HelperVersion          string         `json:"helperVersion,omitempty"`
+	WatchdogVersion        string         `json:"watchdogVersion,omitempty"`
+	// ServerURL is the control-plane base URL this heartbeat is POSTed to
+	// (#2288). Set per-attempt in postHeartbeat, so a backup probe reports
+	// the backup URL and the device row shows real fleet position.
+	ServerURL      string              `json:"serverUrl,omitempty"`
+	TCCPermissions *ipc.TCCStatus      `json:"tccPermissions,omitempty"`
+	DesktopAccess  *DesktopAccessState `json:"desktopAccess,omitempty"`
+	Hostname       string              `json:"hostname,omitempty"`
+	OSVersion      string              `json:"osVersion,omitempty"`
+	OSBuild        string              `json:"osBuild,omitempty"`
+	IsHeadless     bool                `json:"isHeadless"`
 	// Current-state power/battery telemetry (#2142). Pointer + omitempty so an
 	// old agent (or a platform that can't report power state) omits the field
 	// and the server keeps whatever it last knew rather than clobbering it.
-	Battery          *collectors.BatteryInfo   `json:"battery,omitempty"`
+	Battery *collectors.BatteryInfo `json:"battery,omitempty"`
+	// OneDrive helper state (Phase 2). Nil until a config has been applied on a
+	// Windows box — omitempty then drops the field entirely.
+	OneDriveDeviceState *onedrivehelper.DeviceState `json:"onedriveDeviceState,omitempty"`
+	// Agent's own Go runtime memory gauges (#2389). Collected every heartbeat
+	// (runtime.ReadMemStats is microseconds) so fleet-wide agent memory leaks
+	// are visible from the server without shell access to the device.
+	AgentRuntime *collectors.RuntimeStats `json:"agentRuntime,omitempty"`
 }
 
 type DesktopAccessState struct {
@@ -101,11 +116,14 @@ type DesktopAccessState struct {
 }
 
 type HeartbeatResponse struct {
-	Commands               []Command              `json:"commands"`
-	ConfigUpdate           map[string]any         `json:"configUpdate,omitempty"`
-	UpgradeTo              string                 `json:"upgradeTo,omitempty"`
-	RenewCert              bool                   `json:"renewCert,omitempty"`
-	RotateToken            bool                   `json:"rotateToken,omitempty"`
+	Commands     []Command      `json:"commands"`
+	ConfigUpdate map[string]any `json:"configUpdate,omitempty"`
+	UpgradeTo    string         `json:"upgradeTo,omitempty"`
+	RenewCert    bool           `json:"renewCert,omitempty"`
+	RotateToken  bool           `json:"rotateToken,omitempty"`
+	// Issue #2621 — the server sees this agent authenticating with the STAGED
+	// credentials of an unconfirmed rotation. Finish phase two.
+	ConfirmTokenRotation   bool                   `json:"confirmTokenRotation,omitempty"`
 	HelperEnabled          bool                   `json:"helperEnabled,omitempty"`
 	UacInterceptionEnabled *bool                  `json:"uacInterceptionEnabled,omitempty"`
 	HelperSettings         *HelperSettings        `json:"helperSettings,omitempty"`
@@ -129,37 +147,46 @@ type Command struct {
 	Payload map[string]any `json:"payload"`
 }
 
+type helperLifecycleController interface {
+	Stop()
+	Done() <-chan struct{}
+}
+
 type Heartbeat struct {
-	config                *config.Config
-	secureToken           *secmem.SecureString
-	client                *http.Client
-	clientMu              sync.RWMutex
-	stopChan              chan struct{}
-	metricsCol            *collectors.MetricsCollector
-	hardwareCol           *collectors.HardwareCollector
-	softwareCol           *collectors.SoftwareCollector
-	inventoryCol          *collectors.InventoryCollector
-	vpnCol                *collectors.VPNCollector
-	changeTrackerCol      *collectors.ChangeTrackerCollector
-	sessionCol            *collectors.SessionCollector
-	policyStateCol        *collectors.PolicyStateCollector
-	patchCol              *collectors.PatchCollector
-	patchMgr              *patching.PatchManager
-	connectionsCol        *collectors.ConnectionsCollector
-	eventLogCol           *collectors.EventLogCollector
-	bootCol               *collectors.BootPerformanceCollector
-	reliabilityCol        *collectors.ReliabilityCollector
-	agentVersion          string
-	fileTransferMgr       *filetransfer.Manager
-	desktopMgr            *desktop.SessionManager
-	wsDesktopMgr          *desktop.WsSessionManager
-	terminalMgr           *terminal.Manager
-	tunnelMgr             *tunnel.Manager
-	executor              *executor.Executor
-	backupBinaryPath      string
-	rebootMgr             *patching.RebootManager
-	securityScanner       *security.SecurityScanner
-	wsClient              *websocket.Client
+	config           *config.Config
+	secureToken      *secmem.SecureString
+	client           *http.Client
+	clientMu         sync.RWMutex
+	stopChan         chan struct{}
+	metricsCol       *collectors.MetricsCollector
+	hardwareCol      *collectors.HardwareCollector
+	softwareCol      *collectors.SoftwareCollector
+	inventoryCol     *collectors.InventoryCollector
+	vpnCol           *collectors.VPNCollector
+	changeTrackerCol *collectors.ChangeTrackerCollector
+	sessionCol       *collectors.SessionCollector
+	policyStateCol   *collectors.PolicyStateCollector
+	patchCol         *collectors.PatchCollector
+	patchMgr         *patching.PatchManager
+	connectionsCol   *collectors.ConnectionsCollector
+	eventLogCol      *collectors.EventLogCollector
+	bootCol          *collectors.BootPerformanceCollector
+	reliabilityCol   *collectors.ReliabilityCollector
+	agentVersion     string
+	desktopMgr       *desktop.SessionManager
+	wsDesktopMgr     *desktop.WsSessionManager
+	terminalMgr      *terminal.Manager
+	tunnelMgr        *tunnel.Manager
+	executor         *executor.Executor
+	backupBinaryPath string
+	rebootMgr        *patching.RebootManager
+	securityScanner  *security.SecurityScanner
+	wsClient         *websocket.Client
+	// backupOutbox persists terminal backup results that failed to send over
+	// the WS connection, so a transient blip doesn't orphan the job
+	// server-side. Flushed on WS reconnect (see SetWebSocketClient). Never
+	// nil in production — always constructed in NewWithVersion.
+	backupOutbox          *backupResultOutbox
 	mu                    sync.Mutex
 	lastInventoryUpdate   time.Time
 	lastEventLogUpdate    time.Time
@@ -173,27 +200,55 @@ type Heartbeat struct {
 	lastPatchUpdate       time.Time // stamped at startup; gate then re-runs every PatchScanIntervalHours
 
 	// User session helper (IPC)
-	helperToken      string // retained copy of the helper-scoped token for connect-time pushes
-	helperTokenMu    sync.RWMutex
-	sessionBroker    *sessionbroker.Broker
-	isService        bool
-	isHeadless       bool
+	helperToken     string // retained copy of the helper-scoped token for connect-time pushes
+	helperTokenMu   sync.RWMutex
+	sessionBroker   *sessionbroker.Broker
+	helperLifecycle helperLifecycleController
+	lifecycleCancel context.CancelFunc
+	shutdownTimeout time.Duration
+	isService       bool
+	isHeadless      bool
+	// headlessCachedAt memoizes the Linux resolver-backed headless probe used by
+	// currentHeadless() for the outgoing heartbeat payload. Stores a
+	// headlessCache; an atomic.Value so the heartbeat and command-handler
+	// goroutines never race on a plain bool (isHeadless itself is never mutated
+	// after construction).
+	headlessCachedAt atomic.Value
 	scmSessionCh     chan sessionbroker.SCMSessionEvent // fed by SCM handler
 	helperFinder     func(targetSession string) *sessionbroker.Session
 	spawnHelper      func(targetSession string) error
-	killStaleHelpers func(staleKey string)
-	// pamFindSession / pamRequestDialog default to the real broker methods in
-	// RunPamFlow when nil; overridden in pam_flow_test.go.
-	pamFindSession   func(capability, targetWinSession string) *sessionbroker.Session
-	pamRequestDialog func(session *sessionbroker.Session, id string, req ipc.PamRequestDialog, timeout time.Duration) (ipc.PamDialogResult, error)
+
+	// Shutdown seams keep lifecycle ordering directly testable without opening
+	// sockets or spawning Windows processes. Production leaves these nil.
+	stopBrokerAcceptingAndWait func(context.Context) error
+	stopHelperLifecycleAndWait func(context.Context) error
+	closeSessionBroker         func()
+	// PAM seams default to the real broker methods in RunPamFlow/denyConsent
+	// when nil; overridden in pam_flow_test.go.
+	pamFindSession    func(capability, targetWinSession string) *sessionbroker.Session
+	pamRequestDialog  func(session *sessionbroker.Session, id string, req ipc.PamRequestDialog, timeout time.Duration) (ipc.PamDialogResult, error)
+	pamDismissConsent func(session *sessionbroker.Session, id string, timeout time.Duration) (ipc.PamDismissConsentResult, error)
 	// pamActuateMu serializes consent.exe actuation/dismissal so the local
 	// etwlua flow (RunPamFlow) and the remote actuate_elevation command never
 	// drive SendInput/SetThreadDesktop against the same live consent.exe prompt
 	// concurrently (e.g. an await_remote technician approval firing
 	// actuate_elevation while a re-fired ETW event re-enters RunPamFlow).
-	pamActuateMu   sync.Mutex
-	wsDesktopStart func(sessionID string, displayIndex int, config desktop.StreamConfig, sendFrame desktop.SendFrameFunc) (int, int, error)
-	desktopOwners  sync.Map // desktop session ID -> helper session ID
+	pamActuateMu sync.Mutex
+	// pamDismissalUncertain is protected by pamActuateMu. It keeps later PAM
+	// input fail-closed after a broker failure until a helper response PROVES
+	// no denied consent prompt is still on screen. A response that merely
+	// arrives, or a helper that dies, never clears it (issue #2610).
+	pamDismissalUncertain bool
+	// pamRecoveryDelay / pamRecoveryMaxAttempts bound the gate-recovery probe
+	// loop; pamGateProofTimeout bounds the wait for the helper's late dismissal
+	// proof; pamGateStuckReassertInterval paces the "PAM still disabled" alarm.
+	// Zero means the defaults in pam_flow.go; tests shrink them.
+	pamRecoveryDelay             time.Duration
+	pamRecoveryMaxAttempts       int
+	pamGateProofTimeout          time.Duration
+	pamGateStuckReassertInterval time.Duration
+	wsDesktopStart        func(sessionID string, displayIndex int, config desktop.StreamConfig, sendFrame desktop.SendFrameFunc) (int, int, error)
+	desktopOwners         sync.Map // desktop session ID -> helper session ID
 
 	// Resilience & observability
 	pool        *workerpool.Pool
@@ -211,10 +266,34 @@ type Heartbeat struct {
 	seenCommands   map[string]time.Time
 	seenCommandsMu sync.Mutex
 
+	// commandInFlightWarnAfter overrides the wedged-worker watchdog interval
+	// in executeCommandViaPool for non-ephemeral commands; non-positive means
+	// defaultCommandInFlightWarnAfter. Set before the heartbeat runs (tests
+	// only) — never mutated afterwards.
+	commandInFlightWarnAfter time.Duration
+
+	// ephemeralCommandInFlightWarnAfter is the same override for the short
+	// watchdog tier applied to ephemeral commands (isEphemeralCommand:
+	// terminal/tunnel/desktop data, which should complete in milliseconds);
+	// non-positive means defaultEphemeralCommandInFlightWarnAfter. Tests only.
+	ephemeralCommandInFlightWarnAfter time.Duration
+
+	// inFlightCommands tracks every command currently executing on the worker
+	// pool (keyed by a per-dispatch sequence number so duplicate command IDs
+	// can't clobber each other), with its start time and watchdog tier. Read
+	// by inFlightCommandStats to put wedged-worker gauges on the heartbeat
+	// (issue #2400).
+	inFlightMu       sync.Mutex
+	inFlightCommands map[uint64]inFlightCommand
+	inFlightSeq      atomic.Uint64
+
 	// Guard against concurrent cert renewals from successive heartbeats
-	certRenewing      atomic.Bool
-	tokenRotating     atomic.Bool
-	upgradeInProgress atomic.Bool
+	certRenewing  atomic.Bool
+	tokenRotating atomic.Bool
+	// Issue #2621 — a staged credential rotation is sitting on disk unconfirmed.
+	// Drives the per-tick retry so recovery does not depend on a process restart.
+	pendingRotationOnDisk atomic.Bool
+	upgradeInProgress     atomic.Bool
 
 	// Set when PinManifestKeys returns ErrManifestTrustRotationRejected.
 	// Suspends auto-update until the rotation conflict is resolved (server
@@ -238,6 +317,10 @@ type Heartbeat struct {
 
 	// Service & process monitoring
 	monitor *monitoring.Monitor
+
+	// OneDrive helper state captured on config apply, reported next heartbeat.
+	onedriveMu    sync.Mutex
+	onedriveState *onedrivehelper.DeviceState
 
 	// Cached device role classification (computed once at startup)
 	cachedDeviceRole string
@@ -325,7 +408,7 @@ type Heartbeat struct {
 
 	// watchdogVersionReader is an optional test seam: when non-nil,
 	// installedWatchdogVersion calls this instead of the real on-disk read
-	// (readInstalledWatchdogVersion, which execs `bl4ck-watchdog status`). It
+	// (readInstalledWatchdogVersion, which execs `breeze-watchdog status`). It
 	// returns (version, stable) — stable=false marks a transient failure that
 	// must NOT be cached. nil in production.
 	watchdogVersionReader func() (string, bool)
@@ -352,6 +435,7 @@ type Heartbeat struct {
 	watchdogVersionDisk       string
 	watchdogVersionRead       bool
 	watchdogVersionReadWarned bool
+	hbConsecutiveFailures     int // guarded by h.mu
 }
 
 func New(cfg *config.Config) *Heartbeat {
@@ -359,23 +443,24 @@ func New(cfg *config.Config) *Heartbeat {
 }
 
 func newHeartbeatHTTPClient(tlsCfg *tls.Config) *http.Client {
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Clone DefaultTransport so proxy support (ProxyFromEnvironment) and the
+	// idle-conn/timeout defaults survive; a bare &http.Transport{} would
+	// silently strand proxied agents. Dials then go through the
+	// last-known-good DNS cache (#2288); TLS (including the mTLS client
+	// cert) sits above it, so hostname verification is unchanged — the cache
+	// alters where we dial, never what we trust.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = netcache.Shared().DialContext
 	if tlsCfg != nil {
-		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+		transport.TLSClientConfig = tlsCfg
 	}
-	return client
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
 }
 
 func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureString, tlsCfg *tls.Config) *Heartbeat {
-	ftToken := token
-	if ftToken == nil && cfg.AuthToken != "" {
-		ftToken = secmem.NewSecureString(cfg.AuthToken)
-	}
-
-	ftConfig := &filetransfer.Config{
-		ServerURL: cfg.ServerURL,
-		AuthToken: ftToken,
-		AgentID:   cfg.AgentID,
+	secToken := token
+	if secToken == nil && cfg.AuthToken != "" {
+		secToken = secmem.NewSecureString(cfg.AuthToken)
 	}
 
 	// Build HTTP client with optional mTLS transport
@@ -383,7 +468,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 
 	h := &Heartbeat{
 		config:       cfg,
-		secureToken:  ftToken,
+		secureToken:  secToken,
 		client:       httpClient,
 		stopChan:     make(chan struct{}),
 		metricsCol:   collectors.NewMetricsCollector(),
@@ -404,7 +489,6 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		reliabilityCol:  collectors.NewReliabilityCollector(),
 		agentVersion:    version,
 		executor:        executor.New(cfg),
-		fileTransferMgr: filetransfer.NewManager(ftConfig),
 		desktopMgr:      desktop.NewSessionManager(),
 		wsDesktopMgr:    desktop.NewWsSessionManager(),
 		terminalMgr:     terminal.NewManager(),
@@ -414,6 +498,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		healthMon:       health.NewMonitor(),
 		retryCfg:        httputil.DefaultRetryConfig(),
 		seenCommands:    make(map[string]time.Time),
+		backupOutbox:    newBackupResultOutbox(backupResultOutboxDir()),
 	}
 	h.accepting.Store(true)
 	h.isService = cfg.IsService
@@ -454,12 +539,12 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		h.mu.Unlock()
 	}
 
-	// Initialize BL4CK Assist manager
+	// Initialize Breeze Assist manager
 	helperCtx, helperCancel := context.WithCancel(context.Background())
 	go func() { <-h.stopChan; helperCancel() }()
 
 	if runtime.GOOS == "windows" && cfg.IsService {
-		h.helperMgr = helper.New(helperCtx, cfg.ServerURL, ftToken, cfg.AgentID,
+		h.helperMgr = helper.New(helperCtx, h.ServerURL, secToken, cfg.AgentID,
 			helper.WithSessionEnumerator(helper.NewPlatformEnumerator()),
 			helper.WithAgentVersion(version),
 			helper.WithManifestKeys(cfg.PinnedManifestPubKeys),
@@ -482,22 +567,12 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 				return 0, sessionbroker.SpawnProcessInSessionWithArgs(binaryPath, args, uint32(sessionNum))
 			}),
 		)
-	} else if cfg.IsHeadless && h.sessionBroker != nil {
-		// macOS/Linux headless daemons: launch BL4CK Helper via user-role
-		// IPC helper (LaunchAgent) so the Tauri app runs in the user session.
-		h.helperMgr = helper.New(helperCtx, cfg.ServerURL, ftToken, cfg.AgentID,
-			helper.WithSessionEnumerator(helper.NewPlatformEnumerator()),
-			helper.WithAgentVersion(version),
-			helper.WithManifestKeys(cfg.PinnedManifestPubKeys),
-			helper.WithSpawnFunc(func(sessionKey, binaryPath string, args ...string) (int, error) {
-				if err := h.sessionBroker.LaunchProcessViaUserHelperForSession(sessionKey, binaryPath, args...); err == nil {
-					return 0, nil // PID unknown when launched via IPC; refreshPID will reconcile
-				}
-				return 0, helper.ErrNoActiveSession
-			}),
-		)
 	} else {
-		h.helperMgr = helper.New(helperCtx, cfg.ServerURL, ftToken, cfg.AgentID,
+		// NOTE: h.sessionBroker is not constructed until later in this constructor
+		// (the needsBroker block below), so a broker-backed headless spawn arm here
+		// would always be dead code; the user-role IPC spawn path is wired via the
+		// session broker after it exists.
+		h.helperMgr = helper.New(helperCtx, h.ServerURL, secToken, cfg.AgentID,
 			helper.WithSessionEnumerator(helper.NewPlatformEnumerator()),
 			helper.WithAgentVersion(version),
 			helper.WithManifestKeys(cfg.PinnedManifestPubKeys),
@@ -525,7 +600,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 	// Enable IPC session broker when running as a service, headless, or when
 	// explicitly configured. macOS daemons handle desktop capture directly
 	// but still need the broker for user-context operations (run_as_user
-	// scripts and BL4CK Helper launch).
+	// scripts and Breeze Helper launch).
 	needsBroker := cfg.UserHelperEnabled || cfg.IsService || cfg.IsHeadless
 	if needsBroker {
 		socketPath := cfg.IPCSocketPath
@@ -564,12 +639,17 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		}
 	}, cfg.PatchRebootMaxPerDay)
 
-	// Set backup binary path for IPC forwarding to bl4ck-backup helper
+	// Set backup binary path for IPC forwarding to breeze-backup helper
 	h.backupBinaryPath = cfg.BackupBinaryPath
 
 	// For direct mode (non-service), notify API when WebRTC peer drops.
 	// In service/headless mode this is handled via IPC from the user helper.
-	if !cfg.IsService && !cfg.IsHeadless {
+	// Linux always registers it: a Linux box may boot headless (no graphical
+	// session yet) but still serve desktop captures directly (there is no IPC
+	// helper on Linux in Phase 1), so its WebRTC disconnects must be reported
+	// here. The callback is nil-checked at every fire site and inert in helper
+	// mode, so registering it unconditionally on Linux is safe.
+	if (!cfg.IsService && !cfg.IsHeadless) || runtime.GOOS == "linux" {
 		h.desktopMgr.OnSessionStopped = func(sessionID string) {
 			h.sendDesktopDisconnectNotification(sessionID)
 		}
@@ -591,6 +671,42 @@ func (h *Heartbeat) SetWebSocketClient(ws *websocket.Client) {
 	if os.Getenv("BREEZE_TUNNEL_DIAG") == "1" && h.tunnelMgr != nil && ws != nil {
 		h.tunnelMgr.StartDiagLogger(5*time.Second, ws.BinaryFrameChanStats)
 	}
+	// Retry any backup results that couldn't be delivered before the last
+	// disconnect as soon as the handshake completes on every (re)connect —
+	// set here, before Start() is ever called on ws, so there's no race with
+	// the read pump goroutine that invokes it (terminal-result outbox).
+	if ws != nil {
+		ws.OnConnected = h.flushBackupResultOutbox
+		// Re-persist any command result that writePump popped but failed to
+		// deliver (conn torn down mid-write, or a WriteMessage error) so it
+		// isn't silently lost after SendResult already reported success. The
+		// next reconnect's OnConnected flush redelivers it. (FIX 3)
+		ws.OnResultWriteFailed = h.preserveUndeliveredResult
+	}
+}
+
+// preserveUndeliveredResult persists a command result whose WS write failed to
+// the backup-result outbox for redelivery on the next reconnect. Invoked from
+// the websocket write pump (see Client.OnResultWriteFailed). This catches all
+// failed command-result writes, not just backup results — the write pump can't
+// distinguish them — which is safe: the outbox re-sends via SendResult and the
+// server tolerates a late or duplicate terminal result.
+func (h *Heartbeat) preserveUndeliveredResult(result websocket.CommandResult) {
+	if h.backupOutbox == nil {
+		return
+	}
+	h.backupOutbox.Enqueue(result)
+}
+
+// flushBackupResultOutbox retries delivery of any backup results persisted
+// because a prior SendResult failed (WS blip). Called on every WS
+// (re)connect via wsClient.OnConnected. A flush failure just leaves the
+// entry on disk for the next reconnect.
+func (h *Heartbeat) flushBackupResultOutbox() {
+	if h.backupOutbox == nil || h.wsClient == nil {
+		return
+	}
+	h.backupOutbox.Flush(h.wsClient.SendResult)
 }
 
 // SetAuthMonitor sets the shared auth-failure monitor.
@@ -666,9 +782,11 @@ func (h *Heartbeat) handleUserHelperMessage(session *sessionbroker.Session, env 
 		h.forgetDesktopOwner(notice.SessionID)
 		go h.sendDesktopDisconnectNotification(notice.SessionID)
 	case backupipc.TypeBackupResult:
-		if h.wsClient == nil {
-			return
-		}
+		// NOTE: do NOT early-return when wsClient is nil. The outbox needs no
+		// live WS client, and a terminal backup result that arrives during
+		// startup or a WS teardown gap must still be persisted so the next
+		// reconnect flushes it — otherwise the server-side job is stuck
+		// "running" until a reaper falsely fails it. (FIX 2)
 		var backupResult backupipc.BackupCommandResult
 		if err := json.Unmarshal(env.Payload, &backupResult); err != nil {
 			log.Warn("invalid backup result payload", "error", err.Error())
@@ -693,8 +811,28 @@ func (h *Heartbeat) handleUserHelperMessage(session *sessionbroker.Session, env 
 				result.Result = backupResult.Stdout
 			}
 		}
+
+		// No live WS client yet (startup) or the connection is torn down: skip
+		// the send entirely and persist to the outbox so redelivery happens on
+		// the next reconnect rather than dropping the result outright. (FIX 2)
+		if h.wsClient == nil {
+			if h.backupOutbox != nil {
+				log.Info("no WS client for terminal backup result, persisting to outbox for retry on reconnect",
+					"commandId", backupResult.CommandID)
+				h.backupOutbox.Enqueue(result)
+			} else {
+				log.Warn("dropping terminal backup result: no WS client and no outbox configured",
+					"commandId", backupResult.CommandID)
+			}
+			return
+		}
+
 		if err := h.wsClient.SendResult(result); err != nil {
-			log.Warn("failed to send backup result", "commandId", backupResult.CommandID, "error", err.Error())
+			log.Warn("failed to send backup result, persisting to outbox for retry on reconnect",
+				"commandId", backupResult.CommandID, "error", err.Error())
+			if h.backupOutbox != nil {
+				h.backupOutbox.Enqueue(result)
+			}
 		}
 	case backupipc.TypeBackupProgress:
 		if h.wsClient == nil {
@@ -796,15 +934,59 @@ func checkUpdateMarker() bool {
 	return true
 }
 
+func bootstrapThenListen(bootstrap func() error, listen func()) error {
+	if bootstrap != nil {
+		if err := bootstrap(); err != nil {
+			return err
+		}
+	}
+	if listen != nil {
+		listen()
+	}
+	return nil
+}
+
+// lifecycleBootstrapRetryInterval matches the lifecycle reconcile cadence: both
+// recover from the same transient WTS enumeration failure.
+const lifecycleBootstrapRetryInterval = 30 * time.Second
+
+// bootstrapThenListenWithRetry keeps the fail-closed contract of
+// bootstrapThenListen — never listen without desired state — while making the
+// failure recoverable. Bootstrap reaches WTSEnumerateSessionsW, which fails
+// transiently when the agent service starts before Remote Desktop Services' RPC
+// endpoint is ready. Without a retry, one boot-order flake costs the agent its
+// pipe listener for the entire process lifetime: no remote desktop, no PAM, no
+// helper IPC, while the machine keeps heartbeating healthy. The reconcile loop
+// already treats this same error as transient and retries it.
+//
+// Blocks until bootstrap succeeds (then listens exactly once) or ctx is done.
+func bootstrapThenListenWithRetry(ctx context.Context, bootstrap func() error, listen func(), retry time.Duration) {
+	for {
+		err := bootstrapThenListen(bootstrap, listen)
+		if err == nil {
+			return
+		}
+		log.Warn("helper lifecycle bootstrap failed; retrying before starting broker listener",
+			"retryIn", retry.String(), "error", err.Error())
+		select {
+		case <-ctx.Done():
+			log.Error("helper lifecycle bootstrap never succeeded; broker listener not started",
+				"error", ctx.Err().Error())
+			return
+		case <-time.After(retry):
+		}
+	}
+}
+
 func (h *Heartbeat) Start() {
-	// Start session broker for user helpers
-	if h.sessionBroker != nil {
-		go h.sessionBroker.Listen(h.stopChan)
-		h.startDarwinDesktopWatcher()
-	}
-	if h.sessionCol != nil {
-		h.sessionCol.Start(h.stopChan)
-	}
+	// Issue #2621 — before the first heartbeat, finish any credential rotation
+	// that was interrupted between the durable disk write and the server
+	// confirmation. This runs first on purpose: if the agent was offline long
+	// enough for its old credentials to fall out of the previous-token grace
+	// window, the staged credentials are the ONLY ones the server still accepts,
+	// and reconciling here is what gets the agent back on a current credential
+	// instead of 401-looping.
+	go h.reconcilePendingRotation()
 
 	// Proactively spawn helpers into user sessions so remote desktop works
 	// instantly after reboot (Windows service only). The SCM session event
@@ -812,11 +994,26 @@ func (h *Heartbeat) Start() {
 	// (service_windows.go) for instant notification; the lifecycle manager
 	// also runs a slow reconcile tick as a safety net for helper crashes
 	// and early-boot edge cases.
+	var lifecycle *sessionbroker.HelperLifecycleManager
 	if h.scmSessionCh != nil && h.sessionBroker != nil {
 		ctx, cancel := context.WithCancel(context.Background())
-		go func() { <-h.stopChan; cancel() }()
-		lm := sessionbroker.NewHelperLifecycleManager(h.sessionBroker, h.scmSessionCh)
-		go lm.Start(ctx)
+		lifecycle = sessionbroker.NewHelperLifecycleManager(h.sessionBroker, h.scmSessionCh)
+		h.mu.Lock()
+		h.helperLifecycle = lifecycle
+		h.lifecycleCancel = cancel
+		h.mu.Unlock()
+		go bootstrapThenListenWithRetry(ctx, lifecycle.Bootstrap, func() {
+			go h.sessionBroker.Listen(h.stopChan)
+		}, lifecycleBootstrapRetryInterval)
+		go lifecycle.Start(ctx)
+	} else if h.sessionBroker != nil {
+		go h.sessionBroker.Listen(h.stopChan)
+	}
+	if h.sessionBroker != nil {
+		h.startDarwinDesktopWatcher()
+	}
+	if h.sessionCol != nil {
+		h.sessionCol.Start(h.stopChan)
 	}
 
 	// Jitter: random delay before first heartbeat to avoid thundering herd
@@ -848,7 +1045,7 @@ func (h *Heartbeat) Start() {
 	defer ticker.Stop()
 	const bootCheckInterval = 5 * time.Minute
 	var lastBootCheck time.Time
-	// Self-heal a missing bl4ck-user-helper.exe (Windows), decoupled from
+	// Self-heal a missing breeze-user-helper.exe (Windows), decoupled from
 	// upgrades. Zero-valued timer → fires on the first tick (≈startup), then
 	// every interval after (issue #816 follow-up).
 	const userHelperCheckInterval = 30 * time.Minute
@@ -895,6 +1092,16 @@ func (h *Heartbeat) Start() {
 	for {
 		select {
 		case <-ticker.C:
+			// Issue #2621 — retry an unfinished credential rotation on every tick
+			// while one is outstanding. This runs BEFORE the auth-dead skip on
+			// purpose: if the server already promoted but the confirmation
+			// response was lost, the agent is heartbeating with a credential that
+			// is about to stop working, and the staged token on disk is the way
+			// out. Waiting for a process restart to reconcile would leave the
+			// device dark until someone restarted the service.
+			if h.pendingRotationOnDisk.Load() {
+				go h.reconcilePendingRotation()
+			}
 			if h.authMon != nil && h.authMon.ShouldSkip() {
 				log.Debug("skipping heartbeat tick, auth-dead",
 					"backoff", h.authMon.BackoffDuration())
@@ -1052,12 +1259,61 @@ func (h *Heartbeat) DrainAndWait(ctx context.Context) {
 
 func (h *Heartbeat) Stop() {
 	h.stopOnce.Do(func() {
-		if h.rebootMgr != nil {
-			h.rebootMgr.Stop()
+		shutdownTimeout := h.shutdownTimeout
+		if shutdownTimeout <= 0 {
+			shutdownTimeout = 5 * time.Second
 		}
-		// Stop backup helper if running
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		if h.stopBrokerAcceptingAndWait != nil {
+			if err := h.stopBrokerAcceptingAndWait(ctx); err != nil {
+				log.Warn("session broker pre-auth drain timed out", "error", err.Error())
+			}
+		} else if h.sessionBroker != nil {
+			if err := h.sessionBroker.StopAcceptingAndWait(ctx); err != nil {
+				log.Warn("session broker pre-auth drain timed out", "error", err.Error())
+			}
+		}
+
+		if h.stopHelperLifecycleAndWait != nil {
+			if err := h.stopHelperLifecycleAndWait(ctx); err != nil {
+				log.Warn("helper lifecycle shutdown timed out", "error", err.Error())
+			}
+		} else {
+			h.mu.Lock()
+			lifecycle := h.helperLifecycle
+			lifecycleCancel := h.lifecycleCancel
+			h.mu.Unlock()
+			if lifecycleCancel != nil {
+				lifecycleCancel()
+			}
+			if lifecycle != nil {
+				// Stop bounds its own cleanup work. Keep this synchronous so broker
+				// close cannot overlap a still-running lifecycle cleanup goroutine.
+				lifecycle.Stop()
+				select {
+				case <-lifecycle.Done():
+				case <-ctx.Done():
+					log.Warn("helper lifecycle reconcile loop did not stop before deadline")
+				}
+			}
+		}
+
 		if h.sessionBroker != nil {
 			h.sessionBroker.StopBackupHelper()
+		}
+		if h.closeSessionBroker != nil {
+			h.closeSessionBroker()
+		} else if h.sessionBroker != nil {
+			h.sessionBroker.Close()
+		}
+
+		if h.stopChan != nil {
+			close(h.stopChan)
+		}
+		if h.rebootMgr != nil {
+			h.rebootMgr.Stop()
 		}
 		if h.monitor != nil {
 			h.monitor.Stop()
@@ -1072,9 +1328,6 @@ func (h *Heartbeat) Stop() {
 		if h.tunnelMgr != nil {
 			h.tunnelMgr.Stop()
 		}
-		// Close stopChan first — this signals broker.Listen() to call broker.Close()
-		// internally. The broker's Close() is idempotent via its closed flag.
-		close(h.stopChan)
 	})
 }
 
@@ -1094,7 +1347,7 @@ func (h *Heartbeat) sendMonitoringResults(results []monitoring.CheckResult) {
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/monitoring-results", h.config.ServerURL, h.config.AgentID)
+	url := h.monitoringResultsURL()
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -1165,7 +1418,7 @@ func (h *Heartbeat) sendInventoryData(endpoint string, payload any, label string
 		return err
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/%s", h.config.ServerURL, h.config.AgentID, endpoint)
+	url := fmt.Sprintf("%s/api/v1/agents/%s/%s", h.serverURL(), h.config.AgentID, endpoint)
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -1275,7 +1528,7 @@ func (h *Heartbeat) sendProcessSample() {
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/process-sample", h.config.ServerURL, h.config.AgentID)
+	url := fmt.Sprintf("%s/api/v1/agents/%s/process-sample", h.serverURL(), h.config.AgentID)
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -1305,7 +1558,7 @@ func (h *Heartbeat) submitPeripheralEvents(events []peripheral.PeripheralEvent) 
 		return fmt.Errorf("marshal peripheral events: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/peripherals/events", h.config.ServerURL, h.config.AgentID)
+	url := fmt.Sprintf("%s/api/v1/agents/%s/peripherals/events", h.serverURL(), h.config.AgentID)
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -1650,6 +1903,56 @@ func equalPolicyConfigProbes(left, right []config.PolicyConfigStateProbe) bool {
 	return true
 }
 
+// decideBackupURLUpdate is the pure decision core for a pushed
+// backup_server_url value. Empty string = clear, equal-to-primary and
+// invalid values are ignored. Returns (newValue, apply).
+func decideBackupURLUpdate(raw any, primary, current string) (string, bool) {
+	s, ok := raw.(string)
+	if !ok {
+		log.Warn("ignoring non-string backup_server_url config update payload")
+		return "", false
+	}
+	s = strings.TrimSpace(s)
+	if s == current {
+		return "", false
+	}
+	if s == "" {
+		return "", true // clear
+	}
+	if s == primary {
+		log.Debug("ignoring backup_server_url identical to primary server_url")
+		return "", false
+	}
+	if err := config.ValidateBackupServerURL(s); err != nil {
+		log.Warn("ignoring invalid backup_server_url config update", "error", err.Error())
+		return "", false
+	}
+	return s, true
+}
+
+func (h *Heartbeat) applyBackupServerURLConfig(raw any) {
+	h.mu.Lock()
+	primary, current := h.config.ServerURL, h.config.BackupServerURL
+	h.mu.Unlock()
+
+	val, apply := decideBackupURLUpdate(raw, primary, current)
+	if !apply {
+		return
+	}
+	h.mu.Lock()
+	h.config.BackupServerURL = val
+	h.mu.Unlock()
+	if err := config.SetAndPersist("backup_server_url", val); err != nil {
+		log.Warn("failed to persist backup_server_url", "error", err.Error())
+		return
+	}
+	if val == "" {
+		log.Info("cleared backup server URL")
+	} else {
+		log.Info("stored backup server URL", "backupServerUrl", val)
+	}
+}
+
 func (h *Heartbeat) applyConfigUpdate(update map[string]any) {
 	if len(update) == 0 {
 		return
@@ -1676,7 +1979,7 @@ func (h *Heartbeat) applyConfigUpdate(update map[string]any) {
 		}
 	}
 
-	// Apply patch_source_settings if present (#1872): enforce/revert BL4CK as
+	// Apply patch_source_settings if present (#1872): enforce/revert Breeze as
 	// the sole Windows Update source. No-op on non-Windows.
 	psRaw, hasPS := update["patch_source_settings"]
 	if !hasPS {
@@ -1684,6 +1987,25 @@ func (h *Heartbeat) applyConfigUpdate(update map[string]any) {
 	}
 	if hasPS {
 		h.applyPatchSourceConfig(psRaw)
+	}
+
+	// Backup control-plane URL (#2288). Key absent = no change; present
+	// empty string = clear. Snake_case and camelCase both accepted.
+	bsRaw, hasBS := update["backup_server_url"]
+	if !hasBS {
+		bsRaw, hasBS = update["backupServerUrl"]
+	}
+	if hasBS {
+		h.applyBackupServerURLConfig(bsRaw)
+	}
+
+	// Apply onedrive_helper_settings if present (Phase 2). No-op on non-Windows.
+	odRaw, hasOD := update["onedrive_helper_settings"]
+	if !hasOD {
+		odRaw, hasOD = update["onedriveHelperSettings"]
+	}
+	if hasOD {
+		h.applyOneDriveHelperConfig(odRaw)
 	}
 
 	registryRaw, hasRegistry := update["policy_registry_state_probes"]
@@ -2388,7 +2710,7 @@ func (h *Heartbeat) sendBootPerformance(metrics *collectors.BootPerformanceMetri
 		log.Error("failed to marshal boot performance", "error", err.Error())
 		return
 	}
-	url := fmt.Sprintf("%s/api/v1/agents/%s/boot-performance", h.config.ServerURL, h.config.AgentID)
+	url := fmt.Sprintf("%s/api/v1/agents/%s/boot-performance", h.serverURL(), h.config.AgentID)
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -2434,7 +2756,7 @@ func (h *Heartbeat) sendReliabilityMetrics(sentAt time.Time) {
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/reliability", h.config.ServerURL, h.config.AgentID)
+	url := fmt.Sprintf("%s/api/v1/agents/%s/reliability", h.serverURL(), h.config.AgentID)
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -2471,12 +2793,50 @@ func (h *Heartbeat) sendReliabilityMetrics(sentAt time.Time) {
 // heartbeatWatchdogTimeoutNs is the duration (in nanoseconds) after which
 // sendHeartbeatWithWatchdog dumps all goroutine stacks if the wrapped send
 // has not returned. Stored as an int64 via sync/atomic so tests can override
-// it from another goroutine without tripping -race. Production default is
-// 15s; tests may shorten it via setHeartbeatWatchdogTimeout().
+// it from another goroutine without tripping -race. Tests may shorten it via
+// setHeartbeatWatchdogTimeout().
+//
+// Production default is 90s. The watchdog times the WHOLE runHeartbeat() —
+// metrics collection, the primary POST (one 30s-capped context around the
+// retry loop), and once consecutive failures reach backupProbeThreshold
+// (with a backup URL configured) a second full backup-probe POST (another
+// 30s cap) — so a routine slow/flapping uplink legitimately takes up to
+// ~60-65s. The watchdog exists to catch indefinite broker-mutex starvation
+// (#387), which blows past any finite bound, so 90s keeps the diagnostic
+// while never firing on a merely degraded link (#2386: a 15s timeout fired
+// on every heartbeat for days on a slow macOS uplink).
 var heartbeatWatchdogTimeoutNs atomic.Int64
 
+// heartbeatWatchdogDumpIntervalNs rate-limits the expensive part of a
+// watchdog fire (stop-the-world runtime.Stack over all goroutines + a multi-KB
+// WARN log the shipper uploads): at most one goroutine dump per interval,
+// across invocations. Fires inside the interval log a cheap one-line WARN
+// with a suppressed counter instead. Atomic so tests can shrink it.
+var heartbeatWatchdogDumpIntervalNs atomic.Int64
+
+// heartbeatWatchdogLastDumpNs is the unix-nano timestamp of the last emitted
+// goroutine dump (0 = never). heartbeatWatchdogSuppressedDumps counts fires
+// whose dump was rate-limited since the last emitted dump.
+var (
+	heartbeatWatchdogLastDumpNs      atomic.Int64
+	heartbeatWatchdogSuppressedDumps atomic.Int64
+)
+
+// heartbeatWatchdogMaxDumpBytes caps the raw goroutine dump put in the WARN
+// log's `goroutines` field. The API's log endpoint rejects any entry whose
+// stringified `fields` object exceeds 32,000 chars — and one oversized entry
+// 400s the WHOLE shipped batch (#2386). Typical dumps inflate only a few
+// percent under JSON escaping (one \n + one \t per frame line), but the cap
+// is sized for the ~2x worst case where every char escapes to two
+// (TestWatchdogDumpFitsAPIFieldsLimit models this): 12KB*2 leaves headroom
+// under the ceiling. Pathological dumps heavy in <>& (six-byte \u00XX
+// escapes) are backstopped by the shipper's capFields, which replaces
+// oversized fields with a marker rather than burning the batch.
+const heartbeatWatchdogMaxDumpBytes = 12 * 1024
+
 func init() {
-	heartbeatWatchdogTimeoutNs.Store(int64(15 * time.Second))
+	heartbeatWatchdogTimeoutNs.Store(int64(90 * time.Second))
+	heartbeatWatchdogDumpIntervalNs.Store(int64(10 * time.Minute))
 }
 
 // heartbeatWatchdogTimeout returns the current watchdog timeout as a duration.
@@ -2491,6 +2851,59 @@ func setHeartbeatWatchdogTimeout(d time.Duration) time.Duration {
 	return time.Duration(heartbeatWatchdogTimeoutNs.Swap(int64(d)))
 }
 
+// heartbeatWatchdogDumpInterval returns the current minimum interval between
+// emitted goroutine dumps.
+func heartbeatWatchdogDumpInterval() time.Duration {
+	return time.Duration(heartbeatWatchdogDumpIntervalNs.Load())
+}
+
+// setHeartbeatWatchdogDumpInterval overrides the dump rate-limit interval and
+// returns the previous value. Intended for tests.
+func setHeartbeatWatchdogDumpInterval(d time.Duration) time.Duration {
+	return time.Duration(heartbeatWatchdogDumpIntervalNs.Swap(int64(d)))
+}
+
+// resetHeartbeatWatchdogDumpState clears the cross-invocation rate-limit
+// state (last-dump timestamp + suppressed counter). Intended for tests.
+func resetHeartbeatWatchdogDumpState() {
+	heartbeatWatchdogLastDumpNs.Store(0)
+	heartbeatWatchdogSuppressedDumps.Store(0)
+}
+
+// heartbeatWatchdogTryAcquireDump reports whether a goroutine dump may be
+// emitted now, atomically claiming the slot if so. Safe for concurrent
+// watchdog goroutines (overlapping invocations race for one slot).
+//
+// The slot is consumed even if the resulting WARN entry is later dropped by
+// a full shipper buffer — acceptable because the dump still reaches the
+// local log via the base handler, and when the buffer is full (network
+// dead) nothing would ship anyway.
+func heartbeatWatchdogTryAcquireDump(now time.Time, interval time.Duration) bool {
+	for {
+		last := heartbeatWatchdogLastDumpNs.Load()
+		if last != 0 && now.UnixNano()-last < int64(interval) {
+			return false
+		}
+		if heartbeatWatchdogLastDumpNs.CompareAndSwap(last, now.UnixNano()) {
+			return true
+		}
+	}
+}
+
+// truncateGoroutineDump caps a runtime.Stack dump at max bytes, cutting at a
+// goroutine boundary when possible so the tail isn't a half-printed frame.
+func truncateGoroutineDump(dump string, max int) string {
+	if len(dump) <= max {
+		return dump
+	}
+	total := len(dump)
+	cut := dump[:max]
+	if i := strings.LastIndex(cut, "\n\ngoroutine "); i > 0 {
+		cut = cut[:i]
+	}
+	return cut + fmt.Sprintf("\n... [truncated, %d of %d bytes]", len(cut), total)
+}
+
 // sendHeartbeatFn is the function invoked inside sendHeartbeatWithWatchdog.
 // Tests may replace it via the sendHeartbeatFn field on *Heartbeat to inject
 // a blocking/fast implementation without spawning a real HTTP client.
@@ -2501,6 +2914,105 @@ func (h *Heartbeat) runHeartbeat() {
 		return
 	}
 	h.sendHeartbeat()
+}
+
+func (h *Heartbeat) serverURL() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.config.ServerURL
+}
+
+// ServerURL returns the current server base URL, reflecting any
+// backup-server-URL promotion (#2323). Long-lived client loops (UniFi
+// telemetry, workspace indexing) must read the URL through this getter on
+// every request instead of copying cfg.ServerURL once at startup — a copied
+// string keeps pointing at a dead primary after failover (#2423).
+func (h *Heartbeat) ServerURL() string {
+	return h.serverURL()
+}
+
+func (h *Heartbeat) monitoringResultsURL() string {
+	return fmt.Sprintf("%s/api/v1/agents/%s/monitoring-results", h.serverURL(), h.config.AgentID)
+}
+
+func (h *Heartbeat) resetHeartbeatFailures() {
+	h.mu.Lock()
+	h.hbConsecutiveFailures = 0
+	h.mu.Unlock()
+}
+
+// recordHeartbeatFailure advances the consecutive-failure counter and, past
+// the threshold, probes the backup URL with a full authenticated heartbeat.
+// A successful response from the backup is the validate-before-persist gate:
+// only then do we promote-and-swap. A failed probe persists nothing; we
+// re-probe every subsequent failed cycle.
+func (h *Heartbeat) recordHeartbeatFailure(payload *HeartbeatPayload) {
+	h.mu.Lock()
+	h.hbConsecutiveFailures++
+	failures := h.hbConsecutiveFailures
+	backup := h.config.BackupServerURL
+	h.mu.Unlock()
+
+	if failures < backupProbeThreshold || backup == "" {
+		return
+	}
+	log.Warn("primary server unreachable, probing backup", "failures", failures, "backupServerUrl", backup)
+	response, ok := h.doHeartbeatPost(backup, payload)
+	if !ok {
+		return
+	}
+	// Promote BEFORE processing the response: its directives (commands,
+	// upgrades, token/cert rotation) must run against the control plane that
+	// issued them, and their result/rotation requests read h.serverURL().
+	// Promotion is synchronous (in-memory swap + single-write persist), so by
+	// the time any directive runs, the probed URL is current everywhere.
+	h.promoteBackupServerURL(backup)
+	h.resetHeartbeatFailures()
+	// Drop the probe response's own backup_server_url directive: promotion
+	// just installed the old primary as the rollback backup, and letting the
+	// probe clear/replace it one cycle earlier than the next regular
+	// heartbeat buys nothing while costing the rollback if this promotion
+	// turns out to be a false positive.
+	delete(response.ConfigUpdate, "backup_server_url")
+	delete(response.ConfigUpdate, "backupServerUrl")
+	h.processHeartbeatResponse(response)
+}
+
+// promoteBackupServerURL swaps probedURL — the backup that just answered a
+// fully authenticated heartbeat — to primary in the shared in-memory config
+// and persists both sides of the swap. The old primary remains the backup so
+// the same probe logic can roll back a false-positive promotion.
+//
+// probedURL is a parameter, NOT re-read from config: the probe response's
+// own configUpdate is applied inside postHeartbeat and may have already
+// rewritten or cleared BackupServerURL (the API sends the key on every
+// heartbeat — a backup instance with the env var unset pushes a clear).
+// Only the URL that actually passed the probe may be promoted; re-reading
+// config here bricked stragglers with server_url="" during migrations.
+func (h *Heartbeat) promoteBackupServerURL(probedURL string) {
+	if probedURL == "" {
+		log.Error("refusing to promote empty backup server URL")
+		return
+	}
+	h.mu.Lock()
+	oldPrimary := h.config.ServerURL
+	newPrimary := probedURL
+	h.config.ServerURL = newPrimary
+	h.config.BackupServerURL = oldPrimary
+	h.mu.Unlock()
+
+	if h.wsClient != nil {
+		h.wsClient.SetServerURL(newPrimary)
+	}
+
+	if err := config.SetAllAndPersist(map[string]any{
+		"server_url":        newPrimary,
+		"backup_server_url": oldPrimary,
+	}); err != nil {
+		log.Error("failed to persist promoted server URL swap", "error", err.Error())
+	}
+	log.Warn("PROMOTED backup server URL to primary",
+		"newServerUrl", newPrimary, "rollbackBackupUrl", oldPrimary)
 }
 
 // sendHeartbeatWithWatchdog wraps sendHeartbeat with a watchdog that dumps all
@@ -2521,23 +3033,32 @@ func (h *Heartbeat) sendHeartbeatWithWatchdog() {
 	defer close(done)
 
 	go func() {
-		const maxDumpBytes = 100 * 1024 // 100 KB cap to avoid log storm
-
 		// The select fires at most once per invocation, so sync.Once is
 		// unnecessary — a plain select is sufficient.
 		select {
 		case <-done:
 			// Normal return — watchdog cancelled.
 		case <-time.After(timeout):
+			elapsedMs := time.Since(start).Milliseconds()
+			if !heartbeatWatchdogTryAcquireDump(time.Now(), heartbeatWatchdogDumpInterval()) {
+				// Rate-limited: skip the stop-the-world stack dump and the
+				// multi-KB log entry; note the fire cheaply instead.
+				suppressed := heartbeatWatchdogSuppressedDumps.Add(1)
+				log.Warn("heartbeat send exceeded watchdog timeout (goroutine dump rate-limited)",
+					"elapsed_ms", elapsedMs,
+					"timeout_ms", timeout.Milliseconds(),
+					"suppressed_dumps", suppressed)
+				return
+			}
+			suppressed := heartbeatWatchdogSuppressedDumps.Swap(0)
 			buf := make([]byte, 1<<20) // 1 MiB stack buffer
 			n := runtime.Stack(buf, true)
-			dump := string(buf[:n])
-			if len(dump) > maxDumpBytes {
-				dump = dump[:maxDumpBytes] + "\n... [truncated]"
-			}
+			dump := truncateGoroutineDump(string(buf[:n]), heartbeatWatchdogMaxDumpBytes)
 			log.Warn("heartbeat send exceeded watchdog timeout — dumping goroutine stacks",
-				"elapsed_ms", time.Since(start).Milliseconds(),
+				"elapsed_ms", elapsedMs,
 				"timeout_ms", timeout.Milliseconds(),
+				"goroutine_count", runtime.NumGoroutine(),
+				"suppressed_dumps_since_last", suppressed,
 				"goroutines", dump)
 		}
 	}()
@@ -2545,6 +3066,36 @@ func (h *Heartbeat) sendHeartbeatWithWatchdog() {
 	h.runHeartbeat()
 
 	log.Debug("heartbeat sent", "duration_ms", time.Since(start).Milliseconds())
+}
+
+// headlessCache is the memoized result of a Linux headless probe.
+type headlessCache struct {
+	headless bool
+	at       time.Time
+}
+
+// currentHeadless reports whether the device currently lacks an attachable
+// graphical session, for the outgoing heartbeat payload ONLY. On non-Linux it
+// returns the boot-time flag. On Linux it is resolver-backed (cached ≤30s) so
+// xrdp session churn is reflected without an agent restart. It never mutates
+// h.isHeadless — that flag is read unsynchronized by pool-worker goroutines and
+// also drives helper stop-routing, so flipping it would both race and misroute.
+// The probe result is stored in an atomic so heartbeat and command-handler
+// goroutines never race on a plain bool.
+func (h *Heartbeat) currentHeadless() bool {
+	if runtime.GOOS != "linux" {
+		return h.isHeadless
+	}
+	now := time.Now()
+	if cached := h.headlessCachedAt.Load(); cached != nil {
+		if c, ok := cached.(headlessCache); ok && now.Sub(c.at) < 30*time.Second {
+			return c.headless
+		}
+	}
+	_, err := x11.SelectX11Target()
+	headless := err != nil
+	h.headlessCachedAt.Store(headlessCache{headless: headless, at: now})
+	return headless
 }
 
 func (h *Heartbeat) sendHeartbeat() {
@@ -2592,7 +3143,7 @@ func (h *Heartbeat) sendHeartbeat() {
 		WatchdogVersion: h.installedWatchdogVersion(),
 		HealthStatus:    h.healthMon.Summary(),
 		DeviceRole:      deviceRole,
-		IsHeadless:      h.isHeadless,
+		IsHeadless:      h.currentHeadless(),
 	}
 
 	// Only report virtualization once background hardware collection has
@@ -2620,6 +3171,16 @@ func (h *Heartbeat) sendHeartbeat() {
 	// Current power/battery state (#2142). Nil on platforms that can't report
 	// it or when the query failed — omitempty then drops the field.
 	payload.Battery = h.hardwareCol.CollectBattery()
+
+	// Agent's own runtime memory gauges (#2389), plus worker-pool wedge
+	// gauges (#2400) so in-flight/overdue commands are visible fleet-wide.
+	payload.AgentRuntime = h.collectAgentRuntime(time.Now())
+
+	// OneDrive helper state (Phase 2). Nil until a config has been applied on a
+	// Windows box — omitempty then drops the field entirely.
+	h.onedriveMu.Lock()
+	payload.OneDriveDeviceState = h.onedriveState
+	h.onedriveMu.Unlock()
 
 	// Check for pending reboot
 	pendingReboot, _ := patching.DetectPendingReboot()
@@ -2664,6 +3225,8 @@ func (h *Heartbeat) sendHeartbeat() {
 			payload.TCCPermissions = tccStatus
 		}
 		payload.DesktopAccess = h.computeDesktopAccess(sysInfo)
+	} else if runtime.GOOS == "linux" {
+		payload.DesktopAccess = h.computeDesktopAccess(sysInfo)
 	}
 
 	// Include user helper session info in heartbeat
@@ -2693,13 +3256,42 @@ func (h *Heartbeat) sendHeartbeat() {
 		}
 	}
 
+	if h.postHeartbeat(h.serverURL(), &payload) {
+		h.resetHeartbeatFailures()
+		return
+	}
+	h.recordHeartbeatFailure(&payload)
+}
+
+// postHeartbeat POSTs the payload to baseURL and, on an authenticated 2xx,
+// processes the full response (configUpdate, commands, upgrades, rotation).
+// The regular heartbeat path uses this; the backup PROBE path must NOT — it
+// uses doHeartbeatPost + processHeartbeatResponse separately so promotion
+// runs between validation and side effects (see recordHeartbeatFailure).
+func (h *Heartbeat) postHeartbeat(baseURL string, payload *HeartbeatPayload) bool {
+	response, ok := h.doHeartbeatPost(baseURL, payload)
+	if !ok {
+		return false
+	}
+	h.processHeartbeatResponse(response)
+	return true
+}
+
+// doHeartbeatPost sends the heartbeat and validates the response up to and
+// including the JSON decode — the authenticated-2xx gate — WITHOUT executing
+// any of the response's directives. Side effects (commands, upgrades, token
+// and cert rotation, configUpdate) live in processHeartbeatResponse: a backup
+// probe must promote the probed URL first, so those directives run against
+// the control plane that actually issued them.
+func (h *Heartbeat) doHeartbeatPost(baseURL string, payload *HeartbeatPayload) (*HeartbeatResponse, bool) {
+	payload.ServerURL = baseURL
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Error("failed to marshal heartbeat", "error", err.Error())
-		return
+		return nil, false
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/heartbeat", h.config.ServerURL, h.config.AgentID)
+	url := fmt.Sprintf("%s/api/v1/agents/%s/heartbeat", baseURL, h.config.AgentID)
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -2710,25 +3302,25 @@ func (h *Heartbeat) sendHeartbeat() {
 
 	resp, err := httputil.Do(ctx, h.httpClient(), "POST", url, body, headers, h.retryCfg)
 	if err != nil {
-		log.Error("failed to send heartbeat", "error", err.Error())
+		log.Error("failed to send heartbeat", "server", baseURL, "error", err.Error())
 		h.healthMon.Update("heartbeat", health.Unhealthy, err.Error())
-		return
+		return nil, false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		log.Warn("heartbeat returned 401")
+		log.Warn("heartbeat returned 401", "server", baseURL)
 		h.healthMon.Update("heartbeat", health.Degraded, "unauthorized")
 		if h.authMon != nil {
 			h.authMon.RecordAuthFailure()
 		}
-		return
+		return nil, false
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Warn("heartbeat returned non-OK status", "status", resp.StatusCode)
+		log.Warn("heartbeat returned non-OK status", "server", baseURL, "status", resp.StatusCode)
 		h.healthMon.Update("heartbeat", health.Degraded, fmt.Sprintf("status %d", resp.StatusCode))
-		return
+		return nil, false
 	}
 
 	h.healthMon.Update("heartbeat", health.Healthy, "")
@@ -2756,9 +3348,18 @@ func (h *Heartbeat) sendHeartbeat() {
 	var response HeartbeatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		log.Error("failed to decode heartbeat response", "error", err.Error())
-		return
+		return nil, false
 	}
+	return &response, true
+}
 
+// processHeartbeatResponse executes the directives carried by a validated
+// heartbeat response: configUpdate, manifest trust keys, commands, upgrades,
+// cert/token rotation, tunnel policy, and helper settings. Callers must have
+// already made the response's origin the current server URL (the regular
+// path trivially has; the probe path promotes first) so that command results
+// and rotation requests go back to the control plane that issued them.
+func (h *Heartbeat) processHeartbeatResponse(response *HeartbeatResponse) {
 	if len(response.ConfigUpdate) > 0 {
 		h.applyConfigUpdate(response.ConfigUpdate)
 	}
@@ -2847,6 +3448,14 @@ func (h *Heartbeat) sendHeartbeat() {
 	// Handle proactive bearer-token rotation before the token becomes stale.
 	if response.RotateToken {
 		go h.handleTokenRotation()
+	}
+
+	// Issue #2621 — the server is telling us we are running on staged
+	// credentials it never promoted (we confirmed late, or crashed before
+	// confirming). Finish phase two so the rotation stops depending on the
+	// pending window staying open.
+	if response.ConfirmTokenRotation {
+		go h.reconcilePendingRotation()
 	}
 
 	// Handle helper upgrade if requested
@@ -2951,7 +3560,7 @@ func (h *Heartbeat) handleCertRenewal() {
 	log.Info("mTLS cert renewal requested by server")
 
 	token := h.secureToken.Reveal()
-	renewClient := api.NewClient(h.config.ServerURL, token, h.config.AgentID)
+	renewClient := api.NewClient(h.serverURL(), token, h.config.AgentID)
 
 	renewResp, err := renewClient.RenewCert()
 	if err != nil {
@@ -3030,7 +3639,7 @@ func (h *Heartbeat) handleTokenRotation() {
 	log.Info("agent token rotation requested by server")
 
 	currentToken := h.secureToken.Reveal()
-	rotateClient := api.NewClient(h.config.ServerURL, currentToken, h.config.AgentID)
+	rotateClient := api.NewClient(h.serverURL(), currentToken, h.config.AgentID)
 	rotateResp, err := rotateClient.RotateToken()
 	if err != nil {
 		log.Error("agent token rotation failed", "error", err.Error())
@@ -3050,33 +3659,187 @@ func (h *Heartbeat) handleTokenRotation() {
 		return
 	}
 
-	h.mu.Lock()
-	h.secureToken.Replace(rotateResp.AuthToken)
-	h.config.AuthToken = rotateResp.AuthToken
-	h.config.WatchdogAuthToken = rotateResp.WatchdogAuthToken
-	h.config.HelperAuthToken = rotateResp.HelperAuthToken
-	saveErr := config.Save(h.config)
-	h.config.AuthToken = ""
-	h.config.WatchdogAuthToken = ""
-	h.config.HelperAuthToken = ""
-	h.mu.Unlock()
+	// Issue #2621 — PERSIST BEFORE COMMIT.
+	//
+	// The old sequence swapped credentials in memory and only then tried to save,
+	// treating a save failure as a log line. Because the server had already
+	// committed the new hashes, that log line was the last warning before the
+	// device was stranded: the next restart loaded stale credentials and every
+	// request 401'd once the grace window closed.
+	//
+	// Now the server has merely STAGED these credentials — the agent's existing
+	// ones are still current server-side. So a failure anywhere below is
+	// recoverable: we abort, keep using credentials we know are both durable and
+	// valid, and the staged set expires harmlessly.
+	if err := config.StagePendingCredentials(
+		rotateResp.AuthToken,
+		rotateResp.WatchdogAuthToken,
+		rotateResp.HelperAuthToken,
+	); err != nil {
+		// Deliberately NOT swapping the in-memory credentials here. Continuing on
+		// unpersisted credentials is exactly the divergence that caused #2621.
+		log.Error("agent token rotation aborted — new credentials could not be durably persisted; continuing on the existing durable credentials",
+			"error", err.Error())
+		return
+	}
+	h.pendingRotationOnDisk.Store(true)
 
-	if saveErr != nil {
-		log.Error("agent token rotated in memory but failed to persist new token", "error", saveErr.Error())
-	} else {
-		log.Info("agent token rotated", "rotatedAt", rotateResp.RotatedAt)
+	// A pre-#2621 server has ALREADY committed these hashes as current — its
+	// response carries no confirmationRequired and it has no confirm endpoint.
+	// Treating that as a two-phase rotation would be fatal: the confirm would
+	// 404, we would never promote locally, and the agent would sit on a
+	// credential the server has already demoted — permanently stranded once the
+	// grace window closed. So against an old server, promote immediately; the
+	// durable write above already happened, which is still strictly better
+	// ordering than the code this replaces.
+	if !rotateResp.ConfirmationRequired {
+		log.Info("server committed the rotation without a confirmation phase (pre-#2621 server); promoting locally")
+		h.applyRotatedCredentials(rotateResp.AuthToken, rotateResp.WatchdogAuthToken, rotateResp.HelperAuthToken)
+		return
 	}
 
+	// The staged set is on disk and verified by readback. Only now is it safe to
+	// ask the server to promote it, authenticating WITH the new token — that is
+	// the proof of durable possession the server requires.
+	if !h.confirmTokenRotation(rotateResp.AuthToken) {
+		// Confirmation failed. Both credential sets are on disk and both are
+		// accepted by the server while the staged set lives, so the agent keeps
+		// working either way. Startup reconciliation and the heartbeat
+		// confirmTokenRotation flag will retry the promotion.
+		log.Warn("rotation credentials persisted but confirmation failed; will retry — agent remains authenticated on its current credentials")
+		return
+	}
+
+	h.applyRotatedCredentials(rotateResp.AuthToken, rotateResp.WatchdogAuthToken, rotateResp.HelperAuthToken)
+	log.Info("agent token rotated", "rotatedAt", rotateResp.RotatedAt)
+}
+
+// confirmTokenRotation runs phase two: it tells the server the staged
+// credentials are durably held, which promotes them to current. Returns true
+// only on a confirmed promotion.
+//
+// A failure here is safe by construction — the server keeps the agent's
+// previous credentials current until it succeeds — so the caller can simply
+// retry later rather than unwinding anything.
+func (h *Heartbeat) confirmTokenRotation(newAuthToken string) bool {
+	confirmClient := api.NewClient(h.serverURL(), newAuthToken, h.config.AgentID)
+	resp, err := confirmClient.ConfirmTokenRotation()
+	if err != nil {
+		if errors.Is(err, api.ErrPendingRotationExpired) {
+			// The staged set can never be promoted now. Drop it so startup
+			// reconciliation doesn't retry forever; the durable current
+			// credentials are untouched and still valid.
+			log.Warn("pending token rotation can no longer be promoted (expired or revoked); discarding staged credentials")
+			if clearErr := config.ClearPendingCredentials(); clearErr != nil {
+				log.Error("failed to clear unusable staged credentials", "error", clearErr.Error())
+			} else {
+				h.pendingRotationOnDisk.Store(false)
+			}
+			return false
+		}
+		log.Error("agent token rotation confirmation failed", "error", err.Error())
+		return false
+	}
+
+	return resp.Confirmed
+}
+
+// applyRotatedCredentials collapses a confirmed rotation into the agent's
+// durable current credentials and refreshes every in-memory consumer.
+//
+// Called only after the server has confirmed the promotion, so writing these as
+// current can no longer diverge from the server's view.
+func (h *Heartbeat) applyRotatedCredentials(authToken, watchdogAuthToken, helperAuthToken string) {
+	if err := config.PromotePendingCredentials(authToken, watchdogAuthToken, helperAuthToken); err != nil {
+		// The server has promoted, and the tokens remain on disk under their
+		// pending_* keys, which startup reconciliation reads back. The agent is
+		// not stranded, but this file is now in a shape that needs attention.
+		log.Error("rotation confirmed by server but promoting staged credentials on disk failed; staged copy is still on disk and the per-tick retry will recover it",
+			"error", err.Error())
+		// Leave pendingRotationOnDisk set so the retry keeps trying; the server
+		// has already promoted, so the reconcile will take the alreadyCurrent
+		// path and finish the local write.
+	} else {
+		h.pendingRotationOnDisk.Store(false)
+	}
+
+	h.mu.Lock()
+	h.secureToken.Replace(authToken)
+	// Keep the in-memory config in step with disk. SaveTo rebuilds secrets.yaml
+	// from this struct, so leaving these stale would let an unrelated save (the
+	// cert-renewal path calls config.Save) write PRE-rotation watchdog/helper
+	// tokens back over the promoted ones. AuthToken stays cleared — secureToken
+	// is the authority for it and the struct copy is zeroed after startup.
+	h.config.WatchdogAuthToken = watchdogAuthToken
+	h.config.HelperAuthToken = helperAuthToken
+	h.mu.Unlock()
+
 	// Notify the watchdog of its role-scoped token so it can use it for failover heartbeats.
-	h.sendWatchdogTokenUpdate(rotateResp.WatchdogAuthToken)
+	h.sendWatchdogTokenUpdate(watchdogAuthToken)
 
 	// Retain and push the rotated helper token to any connected assist sessions.
-	h.setHelperToken(rotateResp.HelperAuthToken)
-	h.sendHelperTokenUpdate(rotateResp.HelperAuthToken)
+	h.setHelperToken(helperAuthToken)
+	h.sendHelperTokenUpdate(helperAuthToken)
 
 	if h.wsClient != nil {
 		h.wsClient.ForceReconnect()
 	}
+}
+
+// reconcilePendingRotation recovers a rotation that was interrupted between the
+// durable disk write and the server confirmation — the crash window the
+// two-phase design is built to survive.
+//
+// Both credential sets are on disk at that point and the server accepts either
+// while the staged set is live, so the agent is never locked out; this just
+// finishes the handshake. Safe to call on every startup: it is a no-op when
+// there is nothing staged.
+func (h *Heartbeat) reconcilePendingRotation() {
+	// Share the rotation mutex with handleTokenRotation: a startup reconcile, a
+	// heartbeat-triggered reconcile and a fresh rotation can all fire at once,
+	// and two concurrent confirms would race the server's compare-and-swap.
+	if !h.tokenRotating.CompareAndSwap(false, true) {
+		return
+	}
+	defer h.tokenRotating.Store(false)
+
+	persisted, err := config.ReadPersistedCredentials()
+	if err != nil {
+		log.Warn("could not read persisted credentials for rotation reconciliation", "error", err.Error())
+		return
+	}
+
+	if persisted.PendingAuthToken == "" {
+		h.pendingRotationOnDisk.Store(false)
+		return
+	}
+	if persisted.PendingWatchdogAuthToken == "" || persisted.PendingHelperAuthToken == "" {
+		// An incomplete staged set can never be promoted — the server only ever
+		// stages all three together. Drop it rather than confirm a partial set.
+		log.Warn("discarding incomplete staged credential set")
+		if clearErr := config.ClearPendingCredentials(); clearErr != nil {
+			log.Error("failed to clear incomplete staged credentials", "error", clearErr.Error())
+		} else {
+			h.pendingRotationOnDisk.Store(false)
+		}
+		return
+	}
+
+	// Keep the per-tick retry armed until this rotation actually resolves.
+	h.pendingRotationOnDisk.Store(true)
+
+	log.Info("found an unconfirmed credential rotation on disk; resuming confirmation")
+
+	if !h.confirmTokenRotation(persisted.PendingAuthToken) {
+		return
+	}
+
+	h.applyRotatedCredentials(
+		persisted.PendingAuthToken,
+		persisted.PendingWatchdogAuthToken,
+		persisted.PendingHelperAuthToken,
+	)
+	log.Info("resumed credential rotation confirmed and promoted")
 }
 
 // sendWatchdogStateSync sends a state_sync IPC message to the watchdog
@@ -3204,7 +3967,7 @@ func (h *Heartbeat) sendHelperTokenUpdate(newToken string) {
 }
 
 func (h *Heartbeat) processCommand(cmd Command) {
-	result := h.executeCommand(cmd)
+	result := h.runTrackedCommand(cmd)
 
 	if result.Status == "duplicate" {
 		return
@@ -3222,7 +3985,7 @@ func (h *Heartbeat) submitCommandResult(commandID string, result tools.CommandRe
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/commands/%s/result", h.config.ServerURL, h.config.AgentID, commandID)
+	url := fmt.Sprintf("%s/api/v1/agents/%s/commands/%s/result", h.serverURL(), h.config.AgentID, commandID)
 	headers := http.Header{
 		"Content-Type":  {"application/json"},
 		"Authorization": {h.authHeader()},
@@ -3245,13 +4008,45 @@ func (h *Heartbeat) submitCommandResult(commandID string, result tools.CommandRe
 	return nil
 }
 
+// toWSCommandResult maps an internal tools.CommandResult onto the WebSocket
+// wire result, carrying stdout, stderr and the exit code through to the
+// server (#2474). The stdout->Result reparse is load-bearing: server handlers
+// for discovery, backup, snmp and monitor read the structured `result` field,
+// not stdout. Result is set ONLY when stdout parses as JSON — raw text rides
+// exclusively in Stdout. Duplicating it into Result would double the payload
+// and, for stdout near the executor's 1MB cap, trip the server's 1MB refine
+// on `result` and get the whole command_result rejected.
+func toWSCommandResult(commandID string, result tools.CommandResult) websocket.CommandResult {
+	wsResult := websocket.CommandResult{
+		CommandID: commandID,
+		Status:    result.Status,
+		ExitCode:  result.ExitCode,
+		Stdout:    result.Stdout,
+		Stderr:    result.Stderr,
+	}
+
+	if result.Error != "" {
+		wsResult.Error = result.Error
+	} else if result.Stdout != "" {
+		var jsonResult any
+		if err := json.Unmarshal([]byte(result.Stdout), &jsonResult); err == nil {
+			wsResult.Result = jsonResult
+		}
+	}
+
+	return wsResult
+}
+
 // HandleCommand processes a command from WebSocket and returns a result
 func (h *Heartbeat) HandleCommand(wsCmd websocket.Command) websocket.CommandResult {
 	if !h.accepting.Load() {
 		return websocket.CommandResult{
 			CommandID: wsCmd.ID,
 			Status:    "failed",
-			Error:     "agent is shutting down",
+			// Synthetic exit code: no process ran. ExitCode is not omitempty,
+			// so leaving it zero would persist a false "exited 0".
+			ExitCode: 1,
+			Error:    "agent is shutting down",
 		}
 	}
 
@@ -3263,24 +4058,14 @@ func (h *Heartbeat) HandleCommand(wsCmd websocket.Command) websocket.CommandResu
 
 	result := h.executeCommandViaPool(cmd)
 
-	wsResult := websocket.CommandResult{
-		CommandID: cmd.ID,
-		Status:    result.Status,
-	}
-
-	if result.Error != "" {
-		wsResult.Error = result.Error
-	} else if result.Stdout != "" {
-		var jsonResult any
-		if err := json.Unmarshal([]byte(result.Stdout), &jsonResult); err == nil {
-			wsResult.Result = jsonResult
-		} else {
-			wsResult.Result = result.Stdout
-		}
-	}
+	wsResult := toWSCommandResult(cmd.ID, result)
 
 	if result.Status != "duplicate" && !isEphemeralCommand(cmd.Type) {
-		go h.submitCommandResult(cmd.ID, result)
+		go func() {
+			if err := h.submitCommandResult(cmd.ID, result); err != nil {
+				log.Error("failed to submit command result", logging.KeyCommandID, cmd.ID, "error", err.Error())
+			}
+		}()
 	}
 
 	return wsResult
@@ -3293,28 +4078,154 @@ func (h *Heartbeat) executeCommandViaPool(cmd Command) tools.CommandResult {
 
 	resultCh := make(chan tools.CommandResult, 1)
 	if !h.pool.Submit(func() {
-		resultCh <- h.executeCommand(cmd)
+		resultCh <- h.runTrackedCommand(cmd)
 	}) {
 		return tools.CommandResult{
 			Status: "failed",
-			Error:  "command rejected, worker pool full",
+			// Synthetic exit code: no process ran (see tools.CommandResult.ExitCode).
+			ExitCode: 1,
+			Error:    "command rejected, worker pool full",
 		}
 	}
 
-	select {
-	case result := <-resultCh:
-		return result
-	case <-h.stopChan:
-		return tools.CommandResult{
-			Status: "failed",
-			Error:  "agent is shutting down",
-		}
-	case <-h.pool.Context().Done():
-		return tools.CommandResult{
-			Status: "failed",
-			Error:  "command execution interrupted during shutdown",
+	// Watchdog: log-only, deliberately NOT a timeout. Some handlers are
+	// long-running by design (run_script up to 1h, software installs, patch
+	// loops), so failing the command here would race legitimate work. The log
+	// flags workers wedged on an unbounded blocking call — each one pins its
+	// decoded command payload (up to the 64MB websocket read limit,
+	// maxMessageSize in internal/websocket) for the process lifetime and
+	// permanently shrinks the pool (issue #2387). Ephemeral commands
+	// (terminal/tunnel/desktop data) should complete in milliseconds, so they
+	// get a much shorter tier (issue #2400) — still log-only.
+	warnAfter := h.commandWarnAfter(cmd.Type)
+	started := time.Now()
+	watchdog := time.NewTimer(warnAfter)
+	defer watchdog.Stop()
+
+	for {
+		select {
+		case result := <-resultCh:
+			return result
+		case <-watchdog.C:
+			log.Warn("command still in flight after watchdog interval — handler may be wedged and retaining its payload",
+				logging.KeyCommandID, cmd.ID,
+				"type", cmd.Type,
+				"elapsed", time.Since(started).Round(time.Second).String(),
+				"warnAfter", warnAfter.String(),
+			)
+			watchdog.Reset(warnAfter)
+		case <-h.stopChan:
+			return tools.CommandResult{
+				Status:   "failed",
+				ExitCode: 1, // synthetic: no exit code observed (shutdown)
+				Error:    "agent is shutting down",
+			}
+		case <-h.pool.Context().Done():
+			return tools.CommandResult{
+				Status:   "failed",
+				ExitCode: 1, // synthetic: no exit code observed (shutdown)
+				Error:    "command execution interrupted during shutdown",
+			}
 		}
 	}
+}
+
+// defaultCommandInFlightWarnAfter is how long a pool-dispatched command may
+// run before the dispatch loop logs a wedged-worker warning (and again each
+// further interval). Generous on purpose: the longest legitimate handlers
+// (scripts capped at executor.MaxTimeout = 1h, patch installs) must not trip
+// it in normal operation.
+const defaultCommandInFlightWarnAfter = 2 * time.Hour
+
+// defaultEphemeralCommandInFlightWarnAfter is the short watchdog tier for
+// ephemeral commands (isEphemeralCommand: terminal_data, tunnel_data, desktop
+// input, ...). Those handlers hand off to an interactive session and should
+// return in milliseconds, so one stuck for a minute is a wedged interactive
+// path — worth flagging long before the 2h tier would (issue #2400). Log-only,
+// exactly like the default tier: it never fails or kills the command.
+const defaultEphemeralCommandInFlightWarnAfter = 60 * time.Second
+
+// commandWarnAfter returns the in-flight watchdog tier for a command type:
+// the short ephemeral tier for interactive-session data commands, the
+// generous default for everything else. Test overrides on the Heartbeat take
+// precedence within their tier.
+func (h *Heartbeat) commandWarnAfter(cmdType string) time.Duration {
+	if isEphemeralCommand(cmdType) {
+		if h.ephemeralCommandInFlightWarnAfter > 0 {
+			return h.ephemeralCommandInFlightWarnAfter
+		}
+		return defaultEphemeralCommandInFlightWarnAfter
+	}
+	if h.commandInFlightWarnAfter > 0 {
+		return h.commandInFlightWarnAfter
+	}
+	return defaultCommandInFlightWarnAfter
+}
+
+// inFlightCommand is one pool-dispatched command currently executing, as
+// tracked for the heartbeat wedge gauges (issue #2400).
+type inFlightCommand struct {
+	started   time.Time
+	warnAfter time.Duration
+}
+
+// runTrackedCommand executes cmd on the calling goroutine (a pool worker),
+// recording it in the in-flight wedge gauges for exactly the duration of its
+// execution. Both command-delivery channels go through here — the WebSocket
+// dispatch loop (executeCommandViaPool) and the heartbeat-response poll path
+// (processCommand) — so the gauges see every pool worker a command occupies,
+// and tracking starts when a worker picks the command up, not when it is
+// queued behind a backlog.
+func (h *Heartbeat) runTrackedCommand(cmd Command) tools.CommandResult {
+	key := h.trackInFlight(time.Now(), h.commandWarnAfter(cmd.Type))
+	defer h.untrackInFlight(key)
+	return h.executeCommand(cmd)
+}
+
+// trackInFlight records a command dispatch and returns the key to pass to
+// untrackInFlight when the dispatch loop exits.
+func (h *Heartbeat) trackInFlight(started time.Time, warnAfter time.Duration) uint64 {
+	key := h.inFlightSeq.Add(1)
+	h.inFlightMu.Lock()
+	defer h.inFlightMu.Unlock()
+	if h.inFlightCommands == nil {
+		h.inFlightCommands = make(map[uint64]inFlightCommand)
+	}
+	h.inFlightCommands[key] = inFlightCommand{started: started, warnAfter: warnAfter}
+	return key
+}
+
+func (h *Heartbeat) untrackInFlight(key uint64) {
+	h.inFlightMu.Lock()
+	defer h.inFlightMu.Unlock()
+	delete(h.inFlightCommands, key)
+}
+
+// collectAgentRuntime builds the heartbeat's agentRuntime gauge object: the
+// Go runtime memory stats (#2389) plus the worker-pool wedge gauges (#2400).
+// Extracted from sendHeartbeat so the gauge wiring itself is testable — if
+// this stops being called with live tracker data, the gauges silently report
+// a permanently-plausible 0/0.
+func (h *Heartbeat) collectAgentRuntime(now time.Time) *collectors.RuntimeStats {
+	rt := collectors.CollectRuntimeStats()
+	rt.CommandsInFlight, rt.CommandsOverdue = h.inFlightCommandStats(now)
+	return rt
+}
+
+// inFlightCommandStats returns how many pool-dispatched commands are
+// currently executing and how many of those are overdue — running longer
+// than their watchdog tier. Reported on every heartbeat via the agentRuntime
+// gauges so wedged workers are visible fleet-wide (issue #2400).
+func (h *Heartbeat) inFlightCommandStats(now time.Time) (inFlight, overdue int) {
+	h.inFlightMu.Lock()
+	defer h.inFlightMu.Unlock()
+	inFlight = len(h.inFlightCommands)
+	for _, c := range h.inFlightCommands {
+		if now.Sub(c.started) > c.warnAfter {
+			overdue++
+		}
+	}
+	return inFlight, overdue
 }
 
 func isEphemeralCommand(cmdType string) bool {
@@ -3761,7 +4672,7 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-// handleWatchdogUpgrade swaps the on-disk bl4ck-watchdog binary to
+// handleWatchdogUpgrade swaps the on-disk breeze-watchdog binary to
 // targetVersion and restarts the watchdog service. Invoked when the server sets
 // watchdogUpgradeTo in the heartbeat response (it does so only after a watchdog
 // failover heartbeat told it the on-disk watchdog is behind the latest
@@ -3867,7 +4778,7 @@ const watchdogUpgradeRetryCooldown = 30 * time.Minute
 // download lives in one place.
 func (h *Heartbeat) downloadWatchdogBinary(targetVersion string) (string, error) {
 	u := updater.New(&updater.Config{
-		ServerURL:             h.config.ServerURL,
+		ServerURL:             h.serverURL,
 		AuthToken:             h.secureToken,
 		CurrentVersion:        h.agentVersion,
 		Component:             "watchdog",
@@ -3901,7 +4812,7 @@ func (h *Heartbeat) handleUpgrade(targetVersion string) {
 	}
 }
 
-// prefetchUserHelper pre-downloads bl4ck-user-helper.exe so the upgrade-restart
+// prefetchUserHelper pre-downloads breeze-user-helper.exe so the upgrade-restart
 // script can drop it alongside the new agent binary. Returns nil when the
 // helper is not applicable (non-Windows) or could not be fetched (404 for
 // pre-#816 releases, network errors, checksum mismatches, manifest signature
@@ -3910,7 +4821,7 @@ func (h *Heartbeat) handleUpgrade(targetVersion string) {
 //
 // Without this prefetch, in-place upgrades produce an agent install missing
 // the user-helper (only the MSI installer ever placed it on disk before #816),
-// the HelperLifecycleManager falls through to a `bl4ck-agent.exe user-helper`
+// the HelperLifecycleManager falls through to a `breeze-agent.exe user-helper`
 // fallback every ~30s, and orphaned processes accumulate during heartbeat
 // goroutine wedges until the service dies.
 //
@@ -3937,7 +4848,7 @@ func (h *Heartbeat) prefetchUserHelper(targetVersion, binaryPath string) *update
 	download := h.userHelperDownloader
 	if download == nil {
 		helperCfg := &updater.Config{
-			ServerURL:             h.config.ServerURL,
+			ServerURL:             h.serverURL,
 			AuthToken:             h.secureToken,
 			CurrentVersion:        h.agentVersion,
 			Component:             "user-helper",
@@ -3960,7 +4871,7 @@ func (h *Heartbeat) prefetchUserHelper(targetVersion, binaryPath string) *update
 
 	pair := &updater.BinaryPair{
 		Temp:   tempPath,
-		Target: filepath.Join(filepath.Dir(binaryPath), "bl4ck-user-helper.exe"),
+		Target: filepath.Join(filepath.Dir(binaryPath), "breeze-user-helper.exe"),
 	}
 	log.Info(
 		"pre-downloaded user-helper for restart-helper swap",
@@ -3970,13 +4881,13 @@ func (h *Heartbeat) prefetchUserHelper(targetVersion, binaryPath string) *update
 	return pair
 }
 
-// reconcileUserHelper self-heals a Windows agent whose bl4ck-user-helper.exe
+// reconcileUserHelper self-heals a Windows agent whose breeze-user-helper.exe
 // sibling is missing from disk, decoupled from any version upgrade. The MSI
 // installer and the in-place upgrade prefetch (see prefetchUserHelper) are the
 // only two vectors that ever place the helper, so an agent installed via a
 // vector that skips it (direct-exe enrollment, pre-#816 MSI) and already at the
 // latest version has no path to acquire it — it falls back to spawning
-// bl4ck-agent.exe as the helper every ~30s, which is unstable (issue #816
+// breeze-agent.exe as the helper every ~30s, which is unstable (issue #816
 // follow-up). This reconciliation closes that gap: if the helper is absent next
 // to the agent, fetch the matching CURRENT version via the user-helper update
 // component and drop it in. All failure modes are non-fatal — we log and return
@@ -3988,11 +4899,11 @@ func (h *Heartbeat) reconcileUserHelper(binaryPath string) {
 	}
 	if goos != "windows" {
 		// macOS/Linux have no sibling helper binary — the helper runs as a
-		// bl4ck-agent subcommand — so there is nothing to reconcile.
+		// breeze-agent subcommand — so there is nothing to reconcile.
 		return
 	}
 
-	helperPath := filepath.Join(filepath.Dir(binaryPath), "bl4ck-user-helper.exe")
+	helperPath := filepath.Join(filepath.Dir(binaryPath), "breeze-user-helper.exe")
 	switch fi, statErr := os.Stat(helperPath); {
 	case statErr == nil && fi.Size() > 0:
 		// Present and non-empty — nothing to heal. If we'd been failing (e.g.
@@ -4030,7 +4941,7 @@ func (h *Heartbeat) reconcileUserHelper(binaryPath string) {
 	download := h.userHelperDownloader
 	if download == nil {
 		helperCfg := &updater.Config{
-			ServerURL:             h.config.ServerURL,
+			ServerURL:             h.serverURL,
 			AuthToken:             h.secureToken,
 			CurrentVersion:        h.agentVersion,
 			Component:             "user-helper",
@@ -4150,10 +5061,10 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 		log.Error("failed to create backup directory", "path", backupDir, "error", err.Error())
 		return
 	}
-	backupPath := filepath.Join(backupDir, "bl4ck-agent.backup")
+	backupPath := filepath.Join(backupDir, "breeze-agent.backup")
 
 	updaterCfg := &updater.Config{
-		ServerURL:             h.config.ServerURL,
+		ServerURL:             h.serverURL,
 		AuthToken:             h.secureToken,
 		CurrentVersion:        h.agentVersion,
 		BinaryPath:            binaryPath,
@@ -4161,7 +5072,7 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 		PinnedManifestPubKeys: h.config.PinnedManifestPubKeys,
 	}
 
-	// Pre-download bl4ck-user-helper.exe on Windows so the restart-helper
+	// Pre-download breeze-user-helper.exe on Windows so the restart-helper
 	// script can drop it alongside the new agent binary. See prefetchUserHelper
 	// for the full rationale (issue #816 / PR #845). All failure modes are
 	// non-fatal — a nil return value is the normal "agent-only upgrade"

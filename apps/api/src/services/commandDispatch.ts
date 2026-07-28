@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db, withSystemDbAccessContext } from '../db';
 import { deviceCommands } from '../db/schema';
 
@@ -27,6 +27,19 @@ export async function claimPendingCommandForDelivery(
   return rows.length > 0 ? { id: commandId, executedAt } : null;
 }
 
+/**
+ * Put a claimed-but-undelivered command back to `pending`. Keyed on
+ * `(id, status='sent', executedAt=<claim ts>)` so a stale release can never
+ * clobber a newer claim or resurrect a terminal command (0-row no-op is the
+ * correct outcome in both cases).
+ *
+ * Context note: `withSystemDbAccessContext` does NOT escalate when a request
+ * context is already active — on the heartbeat paths (#2414) this UPDATE runs
+ * inside the caller's org-scoped transaction. That is safe solely because
+ * `device_commands` is intentionally RLS-free; if it ever gains a system-only
+ * write policy, this release would become a silent 0-row no-op on the hottest
+ * delivery path.
+ */
 export async function releaseClaimedCommandDelivery(
   commandId: string,
   executedAt: Date,
@@ -49,7 +62,15 @@ export async function claimPendingCommandsForDevice(
   deviceId: string,
   limit: number = 10,
   targetRole: 'agent' | 'watchdog' = 'agent',
+  // #2774 — when set (offboarding drain window), only commands of these types
+  // are claimable; anything else stays `pending` and is reaped/cancelled by
+  // the normal lifecycle. The drain callers pass ['self_uninstall'].
+  typeAllowlist?: readonly string[],
 ): Promise<DeviceCommandRow[]> {
+  // Only HTTP delivery paths (heartbeat responses) claim batches; the agent
+  // WebSocket never embeds command batches in frames (#2407 removed the
+  // connect-time/heartbeat_ack claims — no agent version ever consumed them),
+  // so the per-frame payload budget that #2399 added here is gone with it.
   return db.transaction(async (tx) => {
     const pendingCommands = await tx
       .select()
@@ -59,6 +80,7 @@ export async function claimPendingCommandsForDevice(
           eq(deviceCommands.deviceId, deviceId),
           eq(deviceCommands.status, 'pending'),
           eq(deviceCommands.targetRole, targetRole),
+          ...(typeAllowlist ? [inArray(deviceCommands.type, [...typeAllowlist])] : []),
         ),
       )
       .orderBy(deviceCommands.createdAt)

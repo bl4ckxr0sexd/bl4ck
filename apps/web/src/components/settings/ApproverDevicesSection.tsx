@@ -1,3 +1,5 @@
+import { i18n } from '@/lib/i18n';
+import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, ShieldCheck, X } from 'lucide-react';
 import {
@@ -6,13 +8,15 @@ import {
   revokeApproverDevice,
   renameApproverDevice,
   type ApproverDevice,
+  type RegisterReauth,
 } from '../../stores/authenticator';
 import { runAction, ActionError } from '../../lib/runAction';
 import { showToast } from '../shared/Toast';
 import { formatAbsolute, formatRelative } from '../account/relativeTime';
+import StepUpPrompt, { pickReauthTier, type ReauthTier } from './StepUpPrompt';
 
 /**
- * Profile "Approval security" section (BL4CK Authenticator Phase 2).
+ * Profile "Approval security" section (Breeze Authenticator Phase 2).
  *
  * Mirrors the ProfilePage passkey list + MobileDevicesPage revoke/confirm
  * pattern, but swaps the data source to the typed `stores/authenticator`
@@ -35,16 +39,25 @@ function deviceTitle(d: ApproverDevice): string {
 
 const OK_RESPONSE = { ok: true, status: 200, json: async () => ({ success: true }) } as Response;
 
-export default function ApproverDevicesSection() {
+export default function ApproverDevicesSection({
+  passkeyCount,
+  mfaMethod,
+}: {
+  passkeyCount: number;
+  mfaMethod: string | null;
+}) {
+  const { t } = useTranslation('settings');
   const [devices, setDevices] = useState<ApproverDevice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [label, setLabel] = useState('');
+  const [reauthValue, setReauthValue] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
+  const tier: ReauthTier = pickReauthTier(passkeyCount, mfaMethod);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -53,7 +66,7 @@ export default function ApproverDevicesSection() {
       const result = await listApproverDevices();
       setDevices(result.filter((d) => !d.disabledAt));
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load approver devices');
+      setLoadError(err instanceof Error ? err.message : t('approverDevicesSection.failedToLoadApproverDevices'));
     } finally {
       setIsLoading(false);
     }
@@ -65,28 +78,105 @@ export default function ApproverDevicesSection() {
 
   const activeDevices = useMemo(() => devices.filter((d) => !d.disabledAt), [devices]);
 
+  const buildReauth = (): RegisterReauth | null => {
+    if (tier === 'passkey') return { method: 'passkey' };
+    if (tier === 'totp') return reauthValue.length === 6 ? { method: 'totp', code: reauthValue } : null;
+    return reauthValue.length > 0 ? { method: 'password', password: reauthValue } : null;
+  };
+
+  const mapRegisterError = (err: unknown): string => {
+    // A user-cancelled/dismissed WebAuthn ceremony (startRegistration in the
+    // register call itself, or startAuthentication inside the passkey re-auth
+    // mint) rejects with a DOMException — `NotAllowedError` (dismissed/denied)
+    // or `AbortError` (browser aborted it) — that carries no `status`. Must be
+    // caught before the status checks below, or it falls through to the final
+    // `err.message` branch and shows raw browser jargon.
+    if (err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
+      return t('approverDevicesSection.registrationCancelled');
+    }
+    const status = (err as { status?: number })?.status;
+    if (status === 401) {
+      // Because the mint calls use `skipUnauthorizedRetry`, a 401 here is
+      // EITHER a rejected re-auth proof (wrong password/code, burned/replayed
+      // WebAuthn assertion — the handler returns the literal string
+      // "Invalid credentials", see routes/auth/helpers.ts and routes/auth/mfa.ts)
+      // OR a rejected bearer token (auth middleware — various messages, e.g.
+      // "Invalid or expired token"; see middleware/auth.ts). Only the former
+      // is fixed by retyping the same field; the latter needs a page reload.
+      const isCredentialFailure = err instanceof Error && err.message === 'Invalid credentials';
+      if (!isCredentialFailure) return t('approverDevicesSection.sessionExpiredReloadAndTryAgain');
+      if (tier === 'totp') return t('approverDevicesSection.incorrectCode');
+      // The passkey tier never shows a password field — a credential-failure
+      // 401 here means the WebAuthn assertion itself was rejected
+      // (burned/replayed challenge), not a wrong password, so "Incorrect
+      // password." would be nonsensical.
+      if (tier === 'passkey') return t('approverDevicesSection.passkeyVerificationFailed');
+      return t('approverDevicesSection.incorrectPassword');
+    }
+    if (status === 429) return t('approverDevicesSection.tooManyAttemptsTryAgainInAFewMinutes');
+    if (status === 403) {
+      // POST /authenticator/register-grant (and the step-up mint) 403 for two
+      // distinct reasons: the register/step-up grant expired mid-ceremony
+      // (>300s in the WebAuthn prompt), or the account gained a stronger
+      // factor (passkey/TOTP) in another tab since the page loaded — signaled
+      // by the exact error string "stronger_factor_required" below, where the
+      // password field shown here is stale. Point the user at reloading
+      // rather than letting them retry the same password forever.
+      if (err instanceof Error && err.message === 'stronger_factor_required') {
+        return t('approverDevicesSection.useYourPasskeyOrAuthenticatorCodeInstead');
+      }
+      return t('approverDevicesSection.verificationExpiredPleaseVerifyAgain');
+    }
+    return err instanceof Error ? err.message : t('approverDevicesSection.failedToRegisterThisDevice');
+  };
+
   const handleRegister = async () => {
     if (isRegistering) return;
+    const reauth = buildReauth();
+    if (!reauth) return; // submit disabled anyway
     const trimmed = label.trim() || 'This device';
     setIsRegistering(true);
     try {
       await runAction({
         // registerApproverDevice runs the full WebAuthn registration ceremony
-        // (options → Touch ID/Hello → verify) and resolves void on success; a
-        // user cancellation or a non-2xx verify rejects, which runAction turns
-        // into an error toast.
+        // (options → Touch ID/Hello → verify) and resolves void on success. A
+        // rejected re-auth (wrong code/password, rate-limited, expired grant)
+        // throws with a `status`. Convert that into a non-2xx Response here —
+        // rather than letting it escape request() as a throw — so runAction's
+        // status-aware isApiFailure branch carries the real status through to
+        // the toast and to the 403 handling below (a throw straight out of
+        // `request()` always collapses to a generic status-0 "network error"
+        // toast, per runAction's documented contract in runAction.test.ts).
         request: async () => {
-          await registerApproverDevice(trimmed);
-          return OK_RESPONSE;
+          try {
+            await registerApproverDevice(trimmed, reauth);
+            return OK_RESPONSE;
+          } catch (err) {
+            const status = (err as { status?: number })?.status ?? 500;
+            return { ok: false, status, json: async () => ({ error: mapRegisterError(err) }) } as Response;
+          }
         },
-        errorFallback: 'Failed to register this device',
-        successMessage: 'This device can now approve requests',
+        errorFallback: t('approverDevicesSection.failedToRegisterThisDevice'),
+        successMessage: t('approverDevicesSection.thisDeviceCanNowApproveRequests'),
+        // A 401 here means "wrong code/password", not "stale access token" —
+        // must be toasted, not silently swallowed into a login redirect.
+        treatUnauthorizedAsError: true,
       });
       setLabel('');
+      setReauthValue('');
       await load();
     } catch (err) {
-      if (err instanceof ActionError) return; // already toasted by runAction
-      showToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to register this device' });
+      if (err instanceof ActionError) {
+        // 403 = grant expired mid-ceremony (>300s in the WebAuthn prompt):
+        // keep the label, clear the proof, and ask the user to verify again.
+        if (err.status === 403) setReauthValue('');
+        return; // already toasted by runAction
+      }
+      // Defensive net only: every documented failure path (401/403/429) is
+      // converted into a Response above and surfaced via runAction's
+      // ActionError branch. This only fires for an error escaping runAction
+      // itself (e.g. a bug in runAction), not a live path in normal use.
+      showToast({ type: 'error', message: mapRegisterError(err) });
     } finally {
       setIsRegistering(false);
     }
@@ -99,14 +189,14 @@ export default function ApproverDevicesSection() {
     try {
       await runAction({
         request: () => revokeApproverDevice(id),
-        errorFallback: 'Failed to revoke device',
-        successMessage: 'Device revoked',
+        errorFallback: t('approverDevicesSection.failedToRevokeDevice'),
+        successMessage: t('approverDevicesSection.deviceRevoked'),
       });
       setConfirm(null);
       await load();
     } catch (err) {
       if (!(err instanceof ActionError)) {
-        showToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to revoke device' });
+        showToast({ type: 'error', message: err instanceof Error ? err.message : t('approverDevicesSection.failedToRevokeDevice') });
       }
     } finally {
       setMutatingId(null);
@@ -120,15 +210,15 @@ export default function ApproverDevicesSection() {
     try {
       await runAction({
         request: () => renameApproverDevice(id, next),
-        errorFallback: 'Failed to rename device',
-        successMessage: 'Device renamed',
+        errorFallback: t('approverDevicesSection.failedToRenameDevice'),
+        successMessage: t('approverDevicesSection.deviceRenamed'),
       });
       setDevices((prev) => prev.map((d) => (d.id === id ? { ...d, label: next } : d)));
       setEditingId(null);
       setEditingLabel('');
     } catch (err) {
       if (!(err instanceof ActionError)) {
-        showToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to rename device' });
+        showToast({ type: 'error', message: err instanceof Error ? err.message : t('approverDevicesSection.failedToRenameDevice') });
       }
     } finally {
       setMutatingId(null);
@@ -138,21 +228,16 @@ export default function ApproverDevicesSection() {
   return (
     <div className="space-y-6 rounded-lg border bg-card p-6 shadow-xs" data-testid="approver-devices-section">
       <div className="space-y-1">
-        <h2 className="text-lg font-semibold">Approval security</h2>
+        <h2 className="text-lg font-semibold">{t('approverDevicesSection.approvalSecurity')}</h2>
         <p className="text-sm text-muted-foreground">
-          These devices can confirm high-risk approvals (privileged access, AI actions) with a
-          biometric. Your phone registers itself automatically when you sign in to the BL4CK mobile
-          app; you can also register this browser with Windows Hello or Touch ID. All of this is
-          optional — approvals still work without it.
-        </p>
+          {t('approverDevicesSection.theseDevicesCanConfirmHighRiskApprovalsPrivilegedAccessA')}</p>
       </div>
 
       <div className="space-y-3">
         {isLoading ? (
           <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            Loading approver devices…
-          </div>
+            {t('approverDevicesSection.loadingApproverDevices')}</div>
         ) : loadError ? (
           <div
             role="alert"
@@ -164,17 +249,14 @@ export default function ApproverDevicesSection() {
               onClick={() => void load()}
               className="rounded-md border border-destructive/40 px-2 py-1 text-xs font-medium hover:bg-destructive/5"
             >
-              Try again
-            </button>
+              {t('approverDevicesSection.tryAgain')}</button>
           </div>
         ) : activeDevices.length === 0 ? (
           <div
             data-testid="approver-devices-empty"
             className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground"
           >
-            No approver devices registered yet. Sign in to the BL4CK mobile app on your phone and it
-            appears here automatically, or register this browser below to approve with a biometric.
-          </div>
+            {t('approverDevicesSection.noApproverDevicesRegisteredYetSignInToTheBreezeMobileApp')}</div>
         ) : (
           activeDevices.map((device) => {
             const isEditing = editingId === device.id;
@@ -212,14 +294,21 @@ export default function ApproverDevicesSection() {
                           data-testid={`approver-device-platform-badge-${device.id}`}
                           className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
                         >
-                          Platform-bound
+                          {t('approverDevicesSection.platformBound')}</span>
+                      )}
+                      {device.lastUsedAt === null && (
+                        <span
+                          data-testid={`approver-device-pending-${device.id}`}
+                          className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600"
+                        >
+                          {t('approverDevicesSection.pendingActivatesOnFirstApproval')}
                         </span>
                       )}
                     </div>
                     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                      <dt>Registered</dt>
+                      <dt>{t('approverDevicesSection.registered')}</dt>
                       <dd title={formatAbsolute(device.createdAt)}>{formatRelative(device.createdAt)}</dd>
-                      <dt>Last used</dt>
+                      <dt>{t('approverDevicesSection.lastUsed')}</dt>
                       <dd title={formatAbsolute(device.lastUsedAt)}>{formatRelative(device.lastUsedAt)}</dd>
                     </dl>
                   </div>
@@ -233,7 +322,7 @@ export default function ApproverDevicesSection() {
                           data-testid={`approver-device-rename-save-${device.id}`}
                           className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          {isMutating ? 'Saving…' : 'Save'}
+                          {isMutating ? t('approverDevicesSection.saving') : t('approverDevicesSection.save')}
                         </button>
                         <button
                           type="button"
@@ -244,8 +333,7 @@ export default function ApproverDevicesSection() {
                           disabled={isMutating}
                           className="h-9 rounded-md border px-3 text-sm font-medium text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          Cancel
-                        </button>
+                          {t('approverDevicesSection.cancel')}</button>
                       </>
                     ) : (
                       <>
@@ -259,8 +347,7 @@ export default function ApproverDevicesSection() {
                           data-testid={`approver-device-rename-${device.id}`}
                           className="h-9 rounded-md border px-3 text-sm font-medium text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          Rename
-                        </button>
+                          {t('approverDevicesSection.rename')}</button>
                         <button
                           type="button"
                           onClick={() => setConfirm({ device })}
@@ -268,8 +355,7 @@ export default function ApproverDevicesSection() {
                           data-testid={`approver-device-revoke-${device.id}`}
                           className="h-9 rounded-md border border-destructive/40 px-3 text-sm font-medium text-destructive transition hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          Revoke
-                        </button>
+                          {t('approverDevicesSection.revoke')}</button>
                       </>
                     )}
                   </div>
@@ -282,36 +368,33 @@ export default function ApproverDevicesSection() {
 
       <div className="space-y-4 rounded-md border p-4">
         <div className="space-y-1">
-          <h3 className="text-sm font-medium">Register this browser</h3>
+          <h3 className="text-sm font-medium">{t('approverDevicesSection.registerThisBrowser')}</h3>
           <p className="text-xs text-muted-foreground">
-            Optional — your phone is already an approver once you sign in to the mobile app. Register
-            this browser too and you'll be prompted for Windows Hello, Touch ID, or your device's
-            biometric.
-          </p>
+            {t('approverDevicesSection.optionalYourPhoneIsAlreadyAnApproverOnceYouSignInToTheMo')}</p>
         </div>
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="approver-device-label">
-            Device name
-          </label>
+            {t('approverDevicesSection.deviceName')}</label>
           <input
             id="approver-device-label"
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Front-desk laptop"
+            placeholder={t('approverDevicesSection.frontDeskLaptop')}
             className="h-10 w-full rounded-md border bg-background px-3 text-sm"
             disabled={isRegistering}
             data-testid="approver-device-label-input"
           />
         </div>
+        <StepUpPrompt tier={tier} reauthValue={reauthValue} onChange={setReauthValue} disabled={isRegistering} />
         <button
           type="button"
           onClick={() => void handleRegister()}
-          disabled={isRegistering}
+          disabled={isRegistering || buildReauth() === null}
           data-testid="approver-device-register"
           className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isRegistering ? 'Registering…' : 'Register this device'}
+          {isRegistering ? t('approverDevicesSection.registering') : t('approverDevicesSection.registerThisDevice')}
         </button>
       </div>
 
@@ -346,23 +429,21 @@ function RevokeConfirmDialog({
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
               <AlertTriangle className="h-5 w-5 text-destructive" aria-hidden />
             </div>
-            <h2 className="text-lg font-semibold">Revoke {deviceTitle(device)}?</h2>
+            <h2 className="text-lg font-semibold">{i18n.t('settings:approverDevicesSection.revoke')}{deviceTitle(device)}?</h2>
           </div>
           <button
             type="button"
             onClick={onCancel}
             disabled={revoking}
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted disabled:cursor-not-allowed"
-            aria-label="Close"
+            aria-label={i18n.t('settings:approverDevicesSection.close')}
           >
             <X className="h-4 w-4" aria-hidden />
           </button>
         </div>
 
         <p className="mt-4 text-sm text-muted-foreground">
-          This device can no longer approve requests with a biometric. You can re-register it at any
-          time.
-        </p>
+          {i18n.t('settings:approverDevicesSection.thisDeviceCanNoLongerApproveRequestsWithABiometricYouCan')}</p>
 
         <div className="mt-6 flex justify-end gap-3">
           <button
@@ -371,8 +452,7 @@ function RevokeConfirmDialog({
             disabled={revoking}
             className="h-10 rounded-md border px-4 text-sm font-medium text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Cancel
-          </button>
+            {i18n.t('settings:approverDevicesSection.cancel')}</button>
           <button
             type="button"
             onClick={onConfirm}
@@ -380,7 +460,7 @@ function RevokeConfirmDialog({
             data-testid="approver-device-revoke-confirm"
             className="inline-flex h-10 items-center justify-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {revoking ? 'Revoking…' : 'Revoke device'}
+            {revoking ? i18n.t('settings:approverDevicesSection.revoking') : i18n.t('settings:approverDevicesSection.revokeDevice')}
           </button>
         </div>
       </div>

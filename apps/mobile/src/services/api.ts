@@ -1,9 +1,11 @@
 import * as SecureStore from 'expo-secure-store';
+import * as Sentry from '@sentry/react-native';
 
 import { getServerUrl } from './serverConfig';
 import { getOrCreateInstallationId } from './installationId';
 
-const FALLBACK_API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
+export const FALLBACK_API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 const API_PREFIX = '/api/v1/mobile';
 const API_CORE_PREFIX = '/api/v1';
 const CSRF_HEADER_NAME = 'x-breeze-csrf';
@@ -90,6 +92,8 @@ export interface User {
 export interface LoginResponse {
   token: string;
   user: User;
+  /** #2707: single-use approver-register grant minted at login; memory-only. */
+  registerGrant: string | null;
 }
 
 export type MfaMethod = 'totp' | 'sms';
@@ -101,7 +105,7 @@ export interface MfaChallenge {
 }
 
 export type LoginResult =
-  | { kind: 'success'; token: string; user: User }
+  | { kind: 'success'; token: string; user: User; registerGrant: string | null }
   | { kind: 'mfaRequired'; challenge: MfaChallenge };
 
 export interface ApiError {
@@ -133,6 +137,8 @@ interface LoginPayload {
   mfaMethod?: MfaMethod;
   phoneLast4?: string | null;
   error?: string;
+  /** #2707: single-use approver-register grant; mobile-header-gated. */
+  authenticatorRegisterGrantId?: string;
 }
 
 type MobileAlertRecord = {
@@ -208,16 +214,25 @@ async function requestWithPrefix<T>(
     (headers as Record<string, string>)[CSRF_HEADER_NAME] = CSRF_HEADER_VALUE;
   }
 
-  // Always send the per-install id so the API can recognise this phone for
-  // the lifecycle/lockout flow. Failures (SecureStore disabled in tests)
-  // fall through silently — a missing header simply means "no row to match".
+  // Always send the per-install id so the API can recognise this phone. This
+  // used to be a harmless soft-matching hint (the lifecycle/lockout flow), but
+  // post-#2707 the server also gates login-time register_approver_device grant
+  // minting on this header — if SecureStore fails here, the phone never gets a
+  // grant, approver registration permanently defers, and there is no recovery:
+  // ApprovalGate's deferred-banner "sign out and back in" advice cannot fix a
+  // device that can't produce an installation id at all. Report failures so
+  // they're observable instead of silently capping the phone at L1 forever.
   try {
     const installationId = await getOrCreateInstallationId();
     if (installationId) {
       (headers as Record<string, string>)[MOBILE_DEVICE_ID_HEADER] = installationId;
     }
-  } catch {
-    // ignore
+  } catch (e) {
+    Sentry.captureMessage('installation id unavailable for mobile-device header', {
+      level: 'warning',
+      tags: { area: 'mobile-device-id-header' },
+      extra: { errorName: (e as Error)?.name ?? 'unknown' },
+    });
   }
 
   const baseUrl = (await getServerUrl()) || FALLBACK_API_BASE_URL;
@@ -262,7 +277,7 @@ async function request<T>(
   return requestWithPrefix<T>(endpoint, API_PREFIX, options);
 }
 
-export type DeviceAction = 'reboot' | 'shutdown' | 'lock' | 'wake' | 'update';
+export type DeviceAction = 'reboot' | 'shutdown' | 'wake' | 'update';
 
 function mapAlert(alert: MobileAlertRecord): Alert {
   const normalizedSeverity: Alert['severity'] =
@@ -336,7 +351,12 @@ export async function login(email: string, password: string): Promise<LoginResul
     throw { message: response.error || 'Invalid login response' } as ApiError;
   }
 
-  return { kind: 'success', token, user: response.user };
+  return {
+    kind: 'success',
+    token,
+    user: response.user,
+    registerGrant: response.authenticatorRegisterGrantId ?? null,
+  };
 }
 
 export async function verifyMfa(code: string, tempToken: string): Promise<LoginResponse> {
@@ -350,7 +370,7 @@ export async function verifyMfa(code: string, tempToken: string): Promise<LoginR
     throw { message: response.error || 'Invalid MFA response' } as ApiError;
   }
 
-  return { token, user: response.user };
+  return { token, user: response.user, registerGrant: response.authenticatorRegisterGrantId ?? null };
 }
 
 export async function sendMfaSms(tempToken: string): Promise<void> {

@@ -27,7 +27,10 @@ const BLOCKED_TOOLS = new Set<string>([
 // Actions that are Tier 2 (auto-execute + audit):
 //   manage_alerts: acknowledge/resolve/suppress are low-risk mutations
 //   manage_services: list is a read downgraded from the tool's base Tier 3
-const TIER2_ACTIONS: Record<string, string[]> = {
+// Exported for contract tests only (tier-table disjointness + the web
+// tierConfig.ts parity guard, issue #2686). Not part of the runtime API —
+// resolution always goes through checkGuardrails().
+export const TIER2_ACTIONS: Record<string, string[]> = {
   manage_alerts: ['acknowledge', 'resolve', 'suppress'],
   manage_tickets: [
     'create',
@@ -39,13 +42,26 @@ const TIER2_ACTIONS: Record<string, string[]> = {
     'unlink_alert',
     'create_from_alert',
     'edit_comment',
-    'delete_comment'
+    'delete_comment',
+    // Time-tracking downgraded from Tier 3 (2026-07-20): starting/stopping a
+    // timer or logging time is org-internal bookkeeping, consistent with
+    // create/comment above. move_org stays Tier 3 (tenant-shape mutation).
+    'log_time_entry',
+    'start_timer',
+    'stop_timer'
   ],
   manage_services: ['list'],
+  // SR5-01 partial relaxation (2026-07-20): directory LISTING is recon-only —
+  // filenames leak far less than contents — so it auto-executes with audit.
+  // file READ stays Tier 3 below: the agent runs as root/LocalSystem and an
+  // unapproved read can exfiltrate any file's contents.
+  file_operations: ['list'],
   // Fleet tools — Tier 2 actions (auto-execute + audit)
   manage_configuration_policy: ['activate', 'deactivate'],
   manage_deployments: ['pause', 'resume'],
-  manage_patches: ['approve', 'decline', 'defer', 'bulk_approve'],
+  // scan downgraded from Tier 3 (2026-07-20): discovery, not mutation —
+  // consistent with approve/decline/defer here. install/rollback stay Tier 3.
+  manage_patches: ['approve', 'decline', 'defer', 'bulk_approve', 'scan'],
   manage_groups: ['add_devices', 'remove_devices'],
   // manage_maintenance_windows mutations disabled — managed via configuration policies
   manage_automations: ['enable', 'disable'],
@@ -57,20 +73,28 @@ const TIER2_ACTIONS: Record<string, string[]> = {
   manage_software_policies: ['create', 'update'],
   manage_peripheral_policies: ['create', 'update'],
   manage_backup_configs: ['create', 'update'],
+  manage_backup_profiles: ['create', 'update', 'delete'],
   // Notification channel & saved filter tools — Tier 2 actions
   manage_notification_channels: ['test', 'create', 'update', 'delete'],
   manage_saved_filters: ['create', 'delete'],
 };
 
 // Actions that downgrade to Tier 1 (auto-execute, no approval) even if the tool's base tier is higher
-const TIER1_ACTIONS: Record<string, string[]> = {
+// Exported for contract tests only — see the note on TIER2_ACTIONS.
+export const TIER1_ACTIONS: Record<string, string[]> = {
   security_scan: ['vulnerabilities'],
   manage_tags: ['list'],
 };
 
 // Mutations that require approval (Tier 3) even if the tool is registered as Tier 1
-const TIER3_ACTIONS: Record<string, string[]> = {
-  file_operations: ['write', 'delete', 'mkdir', 'rename'],
+// Exported for contract tests only — see the note on TIER2_ACTIONS.
+export const TIER3_ACTIONS: Record<string, string[]> = {
+  // SR5-01: filesystem READ is privileged. The endpoint agent runs as
+  // root/LocalSystem and does not restrict reads to an approved root, so an
+  // unapproved read can exfiltrate any file (/etc/shadow, SAM hive, SSH keys).
+  // Require interactive approval (Tier 3) for read, same as the mutations.
+  // `list` was deliberately downgraded to Tier 2 (2026-07-20) — recon-only.
+  file_operations: ['read', 'write', 'delete', 'mkdir', 'rename'],
   manage_services: ['start', 'stop', 'restart'],
   security_scan: ['quarantine', 'remove', 'restore'],
   disk_cleanup: ['execute'],
@@ -79,7 +103,7 @@ const TIER3_ACTIONS: Record<string, string[]> = {
   // Fleet tools — Tier 3 actions (require user approval)
   manage_configuration_policy: ['create', 'update', 'delete'],
   manage_deployments: ['create', 'start', 'cancel'],
-  manage_patches: ['scan', 'install', 'rollback'],
+  manage_patches: ['install', 'rollback'],
   manage_groups: ['create', 'update', 'delete'],
   manage_automations: ['run'],
   manage_processes: ['kill'],
@@ -90,11 +114,15 @@ const TIER3_ACTIONS: Record<string, string[]> = {
   manage_hyperv_checkpoints: ['delete', 'apply'],
   // Monitoring tools — Tier 3 actions (require user approval)
   manage_monitors: ['create', 'update', 'delete'],
-  // Ticketing time-tracking — writes at Tier 3 (spec §4)
-  manage_tickets: ['log_time_entry', 'start_timer', 'stop_timer', 'move_org'],
+  // Ticketing — move_org is a tenant-shape mutation and requires approval.
+  // log_time_entry/start_timer/stop_timer downgraded to Tier 2 (2026-07-20).
+  manage_tickets: ['move_org'],
   manage_invoices: ['issue', 'void', 'record_payment', 'void_payment'],
   manage_contracts: ['activate', 'pause', 'resume', 'cancel'],
   manage_quotes: ['send'],
+  // Org lifecycle (issue #2366) — tenant-shape mutations require approval.
+  // add_contact stays at the tool's base tier (it returns guidance only).
+  manage_organizations: ['create_org', 'update_org', 'create_site'],
 };
 
 // RBAC permission map: tool → { resource, action } (or action-based overrides)
@@ -158,6 +186,7 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
   },
   search_catalog: { resource: 'catalog', action: 'read' },
   get_catalog_item: { resource: 'catalog', action: 'read' },
+  lookup_distributor_product: { resource: 'catalog', action: 'read' },
   manage_catalog: {
     create_item: { resource: 'catalog', action: 'write' },
     update_item: { resource: 'catalog', action: 'write' },
@@ -179,6 +208,8 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
     resume: { resource: 'contracts', action: 'manage' },
     cancel: { resource: 'contracts', action: 'manage' },
   },
+  list_quotes: { resource: 'quotes', action: 'read' },
+  get_quote: { resource: 'quotes', action: 'read' },
   manage_quotes: {
     create_draft: { resource: 'quotes', action: 'write' },
     update: { resource: 'quotes', action: 'write' },
@@ -191,10 +222,18 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
     add_catalog_line: { resource: 'quotes', action: 'write' },
     update_line: { resource: 'quotes', action: 'write' },
     remove_line: { resource: 'quotes', action: 'write' },
+    move_line: { resource: 'quotes', action: 'write' },
     reorder_lines: { resource: 'quotes', action: 'write' },
     send: { resource: 'quotes', action: 'send' },
     decline: { resource: 'quotes', action: 'write' },
     create_pay_link: { resource: 'quotes', action: 'write' },
+  },
+  list_organizations: { resource: 'organizations', action: 'read' },
+  manage_organizations: {
+    create_org: { resource: 'organizations', action: 'write' },
+    update_org: { resource: 'organizations', action: 'write' },
+    create_site: { resource: 'sites', action: 'write' },
+    add_contact: { resource: 'organizations', action: 'write' },
   },
   manage_services: { resource: 'devices', action: 'execute' },
   manage_processes: {
@@ -215,8 +254,10 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
     execute: { resource: 'devices', action: 'execute' },
   },
   file_operations: {
-    list: { resource: 'devices', action: 'read' },
-    read: { resource: 'devices', action: 'read' },
+    // SR5-01: read/list require devices.execute (not devices.read). Reading an
+    // arbitrary file off a root/LocalSystem agent is a privileged operation.
+    list: { resource: 'devices', action: 'execute' },
+    read: { resource: 'devices', action: 'execute' },
     write: { resource: 'devices', action: 'execute' },
     delete: { resource: 'devices', action: 'execute' },
     mkdir: { resource: 'devices', action: 'execute' },
@@ -324,6 +365,7 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
   // Agent log tools
   search_agent_logs: { resource: 'devices', action: 'read' },
   set_agent_log_level: { resource: 'devices', action: 'execute' },
+  capture_agent_pprof: { resource: 'devices', action: 'execute' },
   // Event log tools
   search_logs: { resource: 'devices', action: 'read' },
   get_log_trends: { resource: 'devices', action: 'read' },
@@ -349,6 +391,13 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
     add: { resource: 'policies', action: 'write' },
     update: { resource: 'policies', action: 'write' },
     remove: { resource: 'policies', action: 'write' },
+  },
+  manage_backup_profiles: {
+    list: { resource: 'policies', action: 'read' },
+    get: { resource: 'policies', action: 'read' },
+    create: { resource: 'policies', action: 'write' },
+    update: { resource: 'policies', action: 'write' },
+    delete: { resource: 'policies', action: 'write' },
   },
   apply_configuration_policy: { resource: 'policies', action: 'write' },
   remove_configuration_policy_assignment: { resource: 'policies', action: 'write' },
@@ -410,6 +459,12 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
   get_vault_status: { resource: 'devices', action: 'read' },
   trigger_vault_sync: { resource: 'devices', action: 'execute' },
   configure_vault: { resource: 'devices', action: 'write' },
+  m365_query_users: { resource: 'organizations', action: 'read' },
+  m365_query_signins: { resource: 'organizations', action: 'read' },
+  m365_query_intune_devices: { resource: 'organizations', action: 'read' },
+  m365_query_groups: { resource: 'organizations', action: 'read' },
+  m365_query_org: { resource: 'organizations', action: 'read' },
+  m365_query_sites: { resource: 'organizations', action: 'read' },
   query_c2c_connections: { resource: 'organizations', action: 'read' },
   query_c2c_jobs: { resource: 'organizations', action: 'read' },
   search_c2c_items: { resource: 'organizations', action: 'read' },
@@ -504,9 +559,26 @@ export const TOOL_PERMISSIONS: Record<string, { resource: string; action: string
   google_list_licenses: { resource: 'google', action: 'read' },
   google_assign_license: { resource: 'google', action: 'execute' },
   google_remove_license: { resource: 'google', action: 'execute' },
+
+  // Bootstrap authTools (MCP-OAUTH-11). These dispatch outside the main aiTools
+  // registry (see mcpServer.ts dispatchBootstrapAuthTool) but MUST still carry a
+  // product-RBAC mapping — enforced regardless of MCP_REQUIRE_EXECUTE_ADMIN. A
+  // registry-parity test (aiGuardrails.bootstrapParity.test.ts) fails if a future
+  // bootstrap tool omits an entry here. configure_defaults touches three product
+  // surfaces (device groups, alert rules, notification channels), so its extra
+  // permissions live in TOOL_EXTRA_PERMISSIONS below.
+  send_deployment_invites: { resource: 'devices', action: 'write' },
+  configure_defaults: { resource: 'organizations', action: 'write' },
 };
 
 const TOOL_EXTRA_PERMISSIONS: Record<string, { resource: string; action: string }[]> = {
+  // configure_defaults (MCP-OAUTH-11): primary organizations.write in
+  // TOOL_PERMISSIONS, plus these — it also creates a default device group and a
+  // baseline alert policy, so require devices.write AND alerts.write.
+  configure_defaults: [
+    { resource: 'devices', action: 'write' },
+    { resource: 'alerts', action: 'write' },
+  ],
   restore_snapshot: [{ resource: 'backup', action: 'read' }],
   restore_as_vm: [{ resource: 'backup', action: 'read' }],
   instant_boot_vm: [{ resource: 'backup', action: 'read' }],
@@ -551,6 +623,7 @@ const TOOL_RATE_LIMITS: Record<string, { limit: number; windowSeconds: number }>
   detect_log_correlations: { limit: 10, windowSeconds: 300 },
   // Agent log tools
   set_agent_log_level: { limit: 5, windowSeconds: 600 },
+  capture_agent_pprof: { limit: 3, windowSeconds: 600 },
   // Configuration policy tools
   get_configuration_policy: { limit: 30, windowSeconds: 300 },
   manage_configuration_policy: { limit: 20, windowSeconds: 300 },
@@ -691,6 +764,64 @@ export function checkGuardrails(
 }
 
 /**
+ * Core role-resolution + permission-check primitive shared by checkToolPermission
+ * (tools/call) and any other MCP dispatch path that needs to authorize a single
+ * explicit `{ resource, action }` requirement — e.g. resources/read's
+ * MCP_RESOURCE_PERMISSIONS map (MCP-OAUTH-03). Returns null if allowed, or a
+ * denial reason string if not.
+ *
+ * Preserves the same fail-open short-circuits checkToolPermission has always
+ * had: helper sessions carry a synthetic auth with no roleId, and tool/resource
+ * access for those callers is governed elsewhere (the helper whitelist), not
+ * user RBAC.
+ */
+export async function checkPermissionRequirement(
+  auth: AuthContext,
+  requirement: { resource: string; action: string }
+): Promise<string | null> {
+  return checkPermissionRequirements(auth, [requirement]);
+}
+
+/**
+ * Batch variant: resolves the user's permissions ONCE and checks every
+ * requirement against that single resolution, returning the first denial.
+ * Use this when a caller has several requirements for the same auth context
+ * (e.g. a tool's base permission plus TOOL_EXTRA_PERMISSIONS) — calling the
+ * single-requirement form in a loop re-fetches getUserPermissions each time.
+ */
+export async function checkPermissionRequirements(
+  auth: AuthContext,
+  requirements: Array<{ resource: string; action: string }>
+): Promise<string | null> {
+  if (requirements.length === 0) return null;
+  if (!auth.token) {
+    const described = requirements.map((r) => `${r.resource}.${r.action}`).join(', ');
+    console.warn(
+      `[aiGuardrails] checkPermissionRequirements called without auth.token for ${described}`
+    );
+    return null;
+  }
+  if (auth.token.roleId === null) return null;
+
+  const userPerms = await getUserPermissions(auth.user.id, {
+    partnerId: auth.partnerId || undefined,
+    orgId: auth.orgId || undefined,
+  });
+
+  if (!userPerms) {
+    return 'Insufficient permissions: no role assigned';
+  }
+
+  for (const requirement of requirements) {
+    if (!hasPermission(userPerms, requirement.resource, requirement.action)) {
+      return `Insufficient permissions: requires ${requirement.resource}.${requirement.action}`;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Check RBAC permissions for a tool invocation.
  * Returns null if allowed, or an error message if denied.
  */
@@ -701,8 +832,6 @@ export async function checkToolPermission(
 ): Promise<string | null> {
   // Helper sessions use a synthetic auth with no roleId — tool access is
   // governed by the helper whitelist (helperToolFilter), not user RBAC.
-  // Helper sessions use a synthetic auth with no roleId — tool access is
-  // governed by the helper whitelist, not user RBAC.
   if (!auth.token) {
     console.warn(`[aiGuardrails] checkToolPermission called without auth.token for tool ${toolName}`);
     return null;
@@ -736,26 +865,13 @@ export async function checkToolPermission(
     return `Missing required "action" argument for tool "${toolName}"`;
   }
 
-  const userPerms = await getUserPermissions(auth.user.id, {
-    partnerId: auth.partnerId || undefined,
-    orgId: auth.orgId || undefined,
-  });
-
-  if (!userPerms) {
-    return 'Insufficient permissions: no role assigned';
-  }
-
-  if (!hasPermission(userPerms, required.resource, required.action)) {
-    return `Insufficient permissions: requires ${required.resource}.${required.action}`;
-  }
-
-  for (const extraPermission of TOOL_EXTRA_PERMISSIONS[toolName] ?? []) {
-    if (!hasPermission(userPerms, extraPermission.resource, extraPermission.action)) {
-      return `Insufficient permissions: requires ${extraPermission.resource}.${extraPermission.action}`;
-    }
-  }
-
-  return null;
+  // One getUserPermissions resolution covers the base requirement and every
+  // extra permission; denials keep the same first-failure ordering as the
+  // old per-requirement loop.
+  return checkPermissionRequirements(auth, [
+    required,
+    ...(TOOL_EXTRA_PERMISSIONS[toolName] ?? []),
+  ]);
 }
 
 /**
@@ -896,6 +1012,11 @@ function buildApprovalDescription(
       if (input.durationMinutes) parts.push(`for ${input.durationMinutes} minutes`);
       break;
 
+    case 'capture_agent_pprof':
+      parts.push(`Capture agent ${(input.profile as string) ?? 'all'} pprof profile(s)`);
+      if (input.deviceId) parts.push(`on device ${(input.deviceId as string).slice(0, 8)}...`);
+      break;
+
     case 'apply_configuration_policy':
       parts.push(`Assign config policy ${(input.configPolicyId as string)?.slice(0, 8)}...`);
       parts.push(`to ${input.level} ${(input.targetId as string)?.slice(0, 8)}...`);
@@ -936,6 +1057,13 @@ function buildApprovalDescription(
       parts.push(`Registry ${action}: ${input.keyPath}`);
       if (input.valueName) parts.push(`\\${input.valueName}`);
       if (input.deviceId) parts.push(`on device ${(input.deviceId as string).slice(0, 8)}...`);
+      break;
+
+    case 'manage_organizations':
+      if (action === 'create_org') parts.push(`Create organization "${input.name}" (with a default Main Office site)`);
+      else if (action === 'update_org') parts.push(`Update organization ${(input.orgId as string)?.slice(0, 8)}...${input.status ? ` (status → ${input.status})` : ''}`);
+      else if (action === 'create_site') parts.push(`Create site "${input.name}" in organization ${(input.orgId as string)?.slice(0, 8) ?? '(own org)'}...`);
+      else parts.push(`Organizations: ${action}`);
       break;
 
     case 'manage_monitors':
