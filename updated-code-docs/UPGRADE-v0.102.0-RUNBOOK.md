@@ -96,7 +96,7 @@ Two migrations in this range are dangerous:
   `SET NOT NULL` on `refresh_token_families` in one transaction.
 
 ```bash
-ssh root@<host> "cd /opt/breeze && \
+ssh root@<host> "cd /opt/bl4ck && \
   docker compose exec -T postgres pg_dump -U breeze breeze | gzip > /root/bl4ck-pre-0102-$(date +%F).sql.gz && \
   ls -lh /root/bl4ck-pre-0102-*.sql.gz"
 ```
@@ -114,7 +114,7 @@ A large table means a long migration — batch the backfill manually if needed.
 
 ### 2.2 Required environment variables
 
-Add to `/opt/breeze/.env` **and** confirm each is mapped in the `api` service
+Add to `/opt/bl4ck/.env` **and** confirm each is mapped in the `api` service
 `environment:` block. A value in `.env` alone does nothing.
 
 | Variable | Why | Value |
@@ -148,13 +148,13 @@ the repo's compose against the droplet's before deploying.
 ## 3. Deploy
 
 ```bash
-ssh root@<host> "cd /opt/breeze && \
+ssh root@<host> "cd /opt/bl4ck && \
   cp .env .env.bak-pre-0102 && \
   sed -i 's/^BREEZE_VERSION=.*/BREEZE_VERSION=0.102.0/' .env && \
   docker compose pull api web binaries-init && \
   docker compose up -d binaries-init api web"
 
-ssh root@<host> "cd /opt/breeze && docker compose logs -f api | head -150"
+ssh root@<host> "cd /opt/bl4ck && docker compose logs -f api | head -150"
 ```
 
 Watch for: config-validation refusal on boot, migration checksum mismatch,
@@ -253,7 +253,7 @@ causing "Agent Silent"); v0.101.0 is the first clean build in this range.
 git checkout main
 
 # Droplet
-ssh root@<host> "cd /opt/breeze && \
+ssh root@<host> "cd /opt/bl4ck && \
   cp .env.bak-pre-0102 .env && \
   docker compose pull api web binaries-init && \
   docker compose up -d binaries-init api web"

@@ -1,5 +1,8 @@
 # Deploy BL4CK RMM on a fresh VPS — instructions for Claude Code
 
+> **Already installed?** Use `deploy/INSTALL-OR-UPDATE-WITH-CLAUDE.md` instead — it
+> detects install-vs-update and routes here only for a genuine fresh install.
+
 **You are Claude Code running on a fresh Linux VPS. Your job: stand up the BL4CK
 RMM stack end-to-end and verify it works.** Follow this playbook top to bottom.
 Ask the user for the inputs in Step 0, then execute. Do not skip verification.
