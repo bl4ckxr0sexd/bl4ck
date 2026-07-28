@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "prebuild": "node --experimental-strip-types scripts/compute-uninstall-sha256.ts && node --experimental-strip-types scripts/copy-monaco-assets.ts",
-    "presync:scripts": "node --experimental-strip-types scripts/compute-uninstall-sha256.ts",
+    "prebuild": "node --experimental-strip-types scripts/copy-monaco-assets.ts",
     "predev": "node --experimental-strip-types scripts/copy-monaco-assets.ts",
     "dev": "astro dev",
     "build": "astro build",

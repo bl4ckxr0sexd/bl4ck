@@ -159,6 +159,31 @@ Watch the logs for: config-validation refusal, migration checksum mismatch,
 missing-env-var refusal. If the API crash-loops, capture the first 50 lines of the
 error and report before retrying.
 
+### C.4b — Known failure modes (all seven were hit on the 2026-07-28 upgrade)
+
+Read this **before** you start debugging anything. Every item below cost real time
+on the first v0.102.0 upgrade. Check them proactively rather than rediscovering
+them from logs — that is what made the first run expensive.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `pnpm build` fails in `apps/web` on `compute-uninstall-sha256.ts` | Upstream's `prebuild` hook referenced a file this fork removed | **Fixed in repo.** If you still hit it, your checkout predates the fix — `git pull` again |
+| Services can't resolve each other by name after restart | Compose service aliases don't re-register on an incremental swap | `docker compose down` then `docker compose up -d` (**never** `down -v` — that deletes volumes) |
+| API boots but RLS / `breeze_app` errors | `DATABASE_URL_APP` left as a **localhost placeholder** | A placeholder is worse than absent. Either unset it and set `BREEZE_APP_DB_PASSWORD` (derived mode), or make it a real reachable URL |
+| Footer / API reports `0.0.0-dev` | A binaries-init **stub** (from `setup.sh` or a dev/ci override) hardcodes `0.0.0-dev` into `/target/VERSION` | Ensure the real `binaries-init` service runs and `BREEZE_VERSION` is set in `.env` |
+| Dashboard links point at `breeze.yourdomain.com` | `.env` copied `.env.example` placeholders verbatim | Set `PUBLIC_APP_URL` and `DASHBOARD_URL` to the real HTTPS domain |
+| Installer / agent download returns **500** | v0.102's download route presigns S3; with no MinIO it targets `localhost:9000` and hard-500s | Disable S3 so files serve from the volume; this also clears the "S3 sync errors" in logs |
+| Bootstrap admin recreated, or warnings on boot | `BREEZE_BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD` left populated after first login | Blank both in `.env` **and** the running container once the admin exists |
+
+**Budget note.** The expensive part of an upgrade is Docker **build** output, not
+the app itself. Prefer `docker compose pull` over building from source whenever
+images are available, and never stream a full build log into your context —
+redirect it to a file and `tail` only the failing section:
+
+```bash
+docker compose build web > /tmp/build.log 2>&1 || tail -40 /tmp/build.log
+```
+
 ### C.5 — Agent fleet
 
 🔴 **Never promote the v0.100.0 Windows agent.** Its watchdog kills healthy agents
