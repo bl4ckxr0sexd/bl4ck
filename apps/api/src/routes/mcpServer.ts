@@ -27,10 +27,11 @@ import { bearerTokenAuthMiddleware, resolvePartnerAccessibleOrgIds } from '../mi
 import { getToolDefinitions, executeTool, getToolTier } from '../services/aiTools';
 import { checkGuardrails, checkToolPermission, checkToolRateLimit, checkPermissionRequirement } from '../services/aiGuardrails';
 import { db } from '../db';
+import { readWithPartnerAxisVisibility } from '../db/partnerAxisRead';
 import { devices, alerts, scripts, automations, partners, organizations } from '../db/schema';
 import { eq, and, asc, desc, inArray, isNull, or, getTableColumns, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import type { AuthContext } from '../middleware/auth';
+import type { AuthContext, PrincipalKind } from '../middleware/auth';
 import { siteAccessCheck } from '../middleware/auth';
 import { getUserPermissions } from '../services/permissions';
 import { authorizeHumanApiKeyCreator, authorizeServicePrincipalKey } from '../services/apiKeyAuthorization';
@@ -478,6 +479,7 @@ async function buildCheckedAuthFromApiKey(
     scopes: apiKey.scopes,
     principalType: apiKey.principalType,
     principalId: apiKey.principalId ?? null,
+    oauthGrantId: apiKey.oauthGrantId ?? null,
   });
 
   // SR2-15 fail-closed: buildAuthFromApiKey returns null when the key's creator
@@ -1380,17 +1382,36 @@ async function dispatchBootstrapAuthTool(
   }
 
   // Look up partner billing email (used as the admin email in invite templates).
-  let partnerAdminEmail = '';
-  try {
-    const [row] = await db
+  //
+  // Read under a SYSTEM context (#2822). Both non-partner-scoped principals that
+  // reach this dispatcher deliberately carry accessiblePartnerIds = []: an
+  // org-scoped OAuth bearer (bearerTokenAuth.ts, MCP-OAUTH-06) and any X-API-Key
+  // whose source is not `mcp_provisioning` (apiKeyAuth.ts). Both still resolve a
+  // non-null auth.partnerId, so the ambient-context read returned zero rows —
+  // and RLS does not raise, so the try/catch never fired and partnerAdminEmail
+  // silently became ''. Downstream that produced an email notification channel
+  // with an empty target (modules/mcpInvites/tools/configureDefaults.ts) and
+  // deployment invites rendered with a blank admin contact, both reporting
+  // success. The narrow escalation of this one pinned single-column lookup is
+  // deliberate: it does NOT widen accessiblePartnerIds, which those middlewares
+  // withhold on purpose.
+  //
+  // Deliberately NOT wrapped in a try/catch. The catch that used to be here
+  // never actually fired — RLS returns zero rows without raising, so the ''
+  // came from `row?.billingEmail ?? ''`, not from an exception. Now that the
+  // read is correct, the only way it can throw is a genuine DB fault, and
+  // swallowing that would degrade to the exact same '' the rest of this fix
+  // exists to eliminate. A DB fault is not a business outcome; let it surface
+  // through the JSON-RPC error path.
+  const partnerId = auth.partnerId;
+  const [row] = await readWithPartnerAxisVisibility(() =>
+    db
       .select({ billingEmail: partners.billingEmail })
       .from(partners)
-      .where(eq(partners.id, auth.partnerId))
-      .limit(1);
-    partnerAdminEmail = row?.billingEmail ?? '';
-  } catch (err) {
-    console.error('[MCP] Failed to load partner billing email:', err);
-  }
+      .where(eq(partners.id, partnerId))
+      .limit(1)
+  );
+  const partnerAdminEmail = row?.billingEmail ?? '';
 
   const bootstrapCtx = {
     ip: requestIp(c),
@@ -1855,7 +1876,19 @@ async function buildAuthFromApiKey(apiKey: {
   scopes: string[];
   principalType?: string;
   principalId?: string | null;
+  /**
+   * Set when this "API key" is actually an MCP-OAuth bearer grant.
+   * bearerTokenAuth injects OAuth tokens through the SAME apiKey context slot
+   * (id `oauth:<jti>`, keyPrefix `oauth`), so without this the two are
+   * indistinguishable here and an OAuth grant would be labelled `api_key`.
+   * Same discriminator `mcpPrincipalKey` already uses.
+   */
+  oauthGrantId?: string | null;
 }): Promise<AuthContext | null> {
+  const principal: PrincipalKind = apiKey.oauthGrantId
+    ? { kind: 'oauth_grant', grantId: apiKey.oauthGrantId }
+    : { kind: 'api_key', apiKeyId: apiKey.id };
+
   const user = {
     id: apiKey.createdBy,
     email: `apikey-${apiKey.name}@breeze.local`,
@@ -1921,6 +1954,9 @@ async function buildAuthFromApiKey(apiKey: {
     }
     const allowedSiteIds = authz.allowedSiteIds;
     return {
+      // `user` here is the key's CREATOR (apiKey.createdBy), not a caller who
+      // logged in. Without this discriminator the two are indistinguishable.
+      principal,
       user,
       token: {} as AuthContext['token'],
       partnerId,
@@ -1976,6 +2012,7 @@ async function buildAuthFromApiKey(apiKey: {
   };
 
   return {
+    principal,
     user,
     token: {} as AuthContext['token'],
     partnerId: apiKey.partnerId,

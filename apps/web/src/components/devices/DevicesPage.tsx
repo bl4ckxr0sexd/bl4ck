@@ -40,6 +40,7 @@ import ProgressBar from '../shared/ProgressBar';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { scopeConfirmMessage } from '@/lib/scopeConfirmMessage';
 import { DECOMMISSION_BLOCKED_BULK_ACTIONS, isCommandQueueable } from './bulkActionGating';
+import { asList } from '@/lib/asList';
 // Initializes the shared i18next singleton. Islands hydrate independently, so
 // an island that hydrates before whichever other island happens to pull i18n in
 // would otherwise render raw keys (and mismatch the SSR markup).
@@ -412,6 +413,14 @@ export default function DevicesPage() {
             d.reliabilityTrend === 'degrading'
               ? d.reliabilityTrend
               : null,
+          // RDS per-session helper mode (Task 12): validated against the known
+          // values so an unexpected API value falls back to null rather than
+          // leaking through the type — Tasks 13/14 gate the session picker on
+          // this being exactly 'on-demand'.
+          helperLifecycleMode:
+            d.helperLifecycleMode === 'always-on' || d.helperLifecycleMode === 'on-demand'
+              ? d.helperLifecycleMode
+              : null,
         };
       });
 
@@ -450,7 +459,7 @@ export default function DevicesPage() {
       let orgsList: Org[] = [];
       if (orgsResponse.ok) {
         const orgsData = await orgsResponse.json();
-        orgsList = orgsData.data ?? orgsData.orgs ?? orgsData ?? [];
+        orgsList = asList(orgsData, 'orgs');
       } else {
         console.warn('Failed to fetch orgs:', orgsResponse.status);
       }
@@ -459,7 +468,7 @@ export default function DevicesPage() {
       let sitesList: Site[] = [];
       if (sitesResponse.ok) {
         const sitesData = await sitesResponse.json();
-        sitesList = sitesData.data ?? sitesData.sites ?? sitesData ?? [];
+        sitesList = asList(sitesData, 'sites');
       } else {
         console.warn('Failed to fetch sites:', sitesResponse.status);
       }
@@ -595,7 +604,7 @@ export default function DevicesPage() {
     setScriptTargetDevices([]);
   };
 
-  const handleScriptSelect = (script: Script, runAs: ScriptRunAsSelection, parameters?: Record<string, unknown>) => {
+  const handleScriptSelect = (script: Script, runAs: ScriptRunAsSelection, parameters?: Record<string, unknown>, _targetSessionId?: number) => {
     // Gate script execution behind a scope-naming confirm dialog. Capture the
     // target devices now: ScriptPickerModal calls onClose() right after
     // onSelect(), and closeScriptPicker() resets scriptTargetDevices to [] —
@@ -719,7 +728,8 @@ export default function DevicesPage() {
           break;
 
         case 'deploy-software':
-          void navigateTo('/software');
+          // Carry the device into the deploy wizard via the hash (#2866).
+          void navigateTo(`/software#deploy=${device.id}`);
           return;
 
         case 'terminal':
@@ -852,6 +862,23 @@ export default function DevicesPage() {
       });
     }
 
+    // Compare is navigation, not an agent command — nothing queues, so the
+    // decommissioned gate below doesn't apply (comparing a decommissioned
+    // device's last-known data is legitimate). The menu gates on a 2-4
+    // selection, but that invariant isn't enforced here: the network-row
+    // filter above can shrink the set below 2 (a 1-device "comparison" is
+    // useless — refuse it with an explanation), and the slice caps at
+    // DeviceCompare's 4-device limit rather than trusting the caller.
+    if (action === 'compare') {
+      if (selectedDevices.length < 2) {
+        showToast({ type: 'error', message: t('devicesPage.toasts.compareNeedsTwo') });
+        return;
+      }
+      const ids = selectedDevices.slice(0, 4).map(d => d.id);
+      void navigateTo(`/devices/compare?ids=${ids.join(',')}`);
+      return;
+    }
+
     // Decommissioned gate (#2465). Agent commands are QUEUED, not delivered
     // live: the API refuses exactly one status — `decommissioned` — and any
     // other device (offline included) has its command stored `pending` and run
@@ -905,7 +932,18 @@ export default function DevicesPage() {
     }
 
     if (action === 'deploy-software') {
-      void navigateTo('/software');
+      // Carry the bulk selection into the deploy wizard via the hash (#2866);
+      // SoftwareCatalog consumes #deploy=<id>,... and opens the wizard with
+      // those devices pre-selected. Cap at 200 ids for URL-length safety —
+      // 200 UUIDs is ~7.4 KB, close to common ~8 KB URL limits.
+      let deployIds = deviceIds;
+      if (deployIds.length > 200) {
+        console.warn(
+          `deploy-software: truncating selection from ${deployIds.length} to 200 devices (URL-length safety)`,
+        );
+        deployIds = deployIds.slice(0, 200);
+      }
+      void navigateTo(`/software#deploy=${deployIds.join(',')}`);
       return;
     }
 

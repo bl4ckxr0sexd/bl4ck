@@ -78,6 +78,8 @@ import {
   unregisterTerminalOutputCallback,
   getActiveTerminalSession,
   createTerminalWsRoutes,
+  __createTerminalSharedLeasesForTest,
+  __resetTerminalWsForTest,
   getActiveTerminalSessionCount,
   getActiveTerminalSessionIds
 } from './terminalWs';
@@ -141,7 +143,10 @@ function captureWsHandlers(sessionId: string, ticket?: string) {
     return (_c: any, _next: any) => {};
   });
 
-  createTerminalWsRoutes(upgradeWebSocket);
+  // Every capture gets its own lease manager, but generations are globally
+  // monotonic — a replaced generation can never reuse a prior identity.
+  const testSharedLeases = __createTerminalSharedLeasesForTest();
+  createTerminalWsRoutes(upgradeWebSocket, { sharedLeases: testSharedLeases });
 
   // Simulate the Hono context the factory expects
   const fakeContext = {
@@ -215,6 +220,9 @@ function setupSuccessfulValidation(overrides?: { osType?: string }) {
 
 describe('terminalWs', () => {
   beforeEach(() => {
+    // Ownership is now exact: a leftover session from a prior test would
+    // legitimately refuse replacement, so start each test from a clean map.
+    __resetTerminalWsForTest();
     vi.clearAllMocks();
   });
 
@@ -269,6 +277,51 @@ describe('terminalWs', () => {
           })
         })
       );
+    });
+
+    it('assigns a unique command id to every data message, even within the same millisecond (#2870)', async () => {
+      // Two keystrokes relayed in the same millisecond used to share a
+      // `term-data-${Date.now()}` id; the agent dedupes on command id and
+      // silently dropped the second keystroke. Freeze Date.now to force the
+      // worst case and require distinct ids anyway.
+      vi.mocked(sendCommandToAgent).mockClear();
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_785_210_843_666);
+      try {
+        await handlers.onMessage(
+          { data: JSON.stringify({ type: 'data', data: 'h' }) },
+          ws
+        );
+        await handlers.onMessage(
+          { data: JSON.stringify({ type: 'data', data: 'o' }) },
+          ws
+        );
+        await handlers.onMessage(
+          { data: JSON.stringify({ type: 'resize', cols: 80, rows: 24 }) },
+          ws
+        );
+
+        const ids = vi.mocked(sendCommandToAgent).mock.calls.map(
+          ([, command]) => (command as { id: string }).id
+        );
+        expect(ids).toHaveLength(3);
+        expect(new Set(ids).size).toBe(3);
+        expect(ids[0]).toMatch(/^term-data-1785210843666-\d+$/);
+        expect(ids[1]).toMatch(/^term-data-1785210843666-\d+$/);
+        expect(ids[2]).toMatch(/^term-resize-1785210843666-\d+$/);
+
+        // Exactly one agent delivery per user input message — terminal
+        // commands are relayed straight over the agent WS and are never
+        // persisted to device_commands, so there is no second (heartbeat
+        // claim) delivery path for them.
+        const dataCalls = vi.mocked(sendCommandToAgent).mock.calls.filter(
+          ([, command]) => (command as { type: string }).type === 'terminal_data'
+        );
+        expect(dataCalls).toHaveLength(2);
+        expect(dataCalls[0]![1].payload).toMatchObject({ data: 'h' });
+        expect(dataCalls[1]![1].payload).toMatchObject({ data: 'o' });
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
 
     it('relays resize messages to the agent', async () => {
@@ -344,6 +397,64 @@ describe('terminalWs', () => {
       expect(ws.send).toHaveBeenCalledWith(
         expect.stringContaining('"pong"')
       );
+    });
+
+    it('makes a foreign socket inert for input, pong, close, and error', async () => {
+      const owner = getActiveTerminalSession(SESSION_ID);
+      expect(owner).toBeDefined();
+      const originalPongAt = owner!.lastPongAt;
+      const foreignWs = wsMock();
+      vi.mocked(sendCommandToAgent).mockClear();
+      vi.mocked(db.update).mockClear();
+      vi.spyOn(Date, 'now').mockReturnValue(originalPongAt + 10_000);
+
+      await handlers.onMessage(
+        { data: JSON.stringify({ type: 'data', data: 'foreign\n' }) },
+        foreignWs
+      );
+      await handlers.onMessage(
+        { data: JSON.stringify({ type: 'resize', cols: 100, rows: 30 }) },
+        foreignWs
+      );
+      await handlers.onMessage(
+        { data: JSON.stringify({ type: 'pong' }) },
+        foreignWs
+      );
+      await handlers.onClose({}, foreignWs);
+      await handlers.onError(new Error('foreign socket'), foreignWs);
+
+      expect(sendCommandToAgent).not.toHaveBeenCalled();
+      expect(db.update).not.toHaveBeenCalled();
+      expect(getActiveTerminalSession(SESSION_ID)).toBe(owner);
+      expect(owner!.lastPongAt).toBe(originalPongAt);
+    });
+
+    it('makes handlers captured by a replaced generation inert', async () => {
+      const staleHandlers = handlers;
+      const staleWs = ws;
+
+      await staleHandlers.onClose({}, staleWs);
+
+      setupSuccessfulValidation();
+      const replacementHandlers = captureWsHandlers(SESSION_ID, 'replacement-ticket');
+      const replacementWs = wsMock();
+      await replacementHandlers.onOpen({}, replacementWs);
+      const replacement = getActiveTerminalSession(SESSION_ID);
+      expect(replacement).toBeDefined();
+
+      vi.mocked(sendCommandToAgent).mockClear();
+      vi.mocked(db.update).mockClear();
+
+      await staleHandlers.onMessage(
+        { data: JSON.stringify({ type: 'data', data: 'stale\n' }) },
+        staleWs
+      );
+      await staleHandlers.onClose({}, staleWs);
+      await staleHandlers.onError(new Error('stale socket'), staleWs);
+
+      expect(sendCommandToAgent).not.toHaveBeenCalled();
+      expect(db.update).not.toHaveBeenCalled();
+      expect(getActiveTerminalSession(SESSION_ID)).toBe(replacement);
     });
   });
 

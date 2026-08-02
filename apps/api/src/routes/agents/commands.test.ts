@@ -38,9 +38,11 @@ vi.mock('../../db/schema', () => ({
     agentId: 'devices.agent_id',
   },
   deploymentResults: {
+    id: 'deployment_results.id',
     deploymentId: 'deployment_results.deployment_id',
     deviceId: 'deployment_results.device_id',
     status: 'deployment_results.status',
+    retryCount: 'deployment_results.retry_count',
   },
 }));
 
@@ -79,9 +81,16 @@ vi.mock('../../services/auditBaselineService', () => ({
 
 vi.mock('../../services/sentry', () => ({
   captureException: vi.fn(),
+  // BREEZE-X: the terminal CAS now runs through dbWriteExpectingRows, which
+  // calls captureMessage on the 0-row branch. Omitting it here would fail the
+  // whole route with "captureMessage is not a function".
+  captureMessage: vi.fn(),
 }));
 
+import { captureMessage } from '../../services/sentry';
 import { commandsRoutes } from './commands';
+import { and, eq } from 'drizzle-orm';
+import { deploymentResults } from '../../db/schema';
 
 describe('agent commands routes', () => {
   let app: Hono;
@@ -360,6 +369,254 @@ describe('agent commands routes', () => {
     expect(serialized).not.toContain('BODYb64lineTwo');
   });
 
+  // Retry race guard (this fix): a sw-install commandId's optional
+  // `-<attempt>` suffix must gate the deployment_results UPDATE on
+  // retryCount, so a late result from an attempt a retry already superseded
+  // is dropped instead of landing on the new attempt's fresh 'pending' row.
+  describe('sw-install attempt-suffix retry guard', () => {
+    const deploymentUuid = '11111111-1111-4111-8111-111111111111';
+    const deviceUuid = '33333333-3333-4333-8333-333333333333';
+
+    function makeSwApp() {
+      const swApp = new Hono();
+      swApp.use('*', async (c, next) => {
+        c.set('agent', {
+          deviceId: deviceUuid,
+          agentId: 'agent-1',
+          orgId: 'org-1',
+          siteId: 'site-1',
+          role: 'agent',
+        });
+        await next();
+      });
+      swApp.route('/agents', commandsRoutes);
+      return swApp;
+    }
+
+    it('parses the attempt suffix and guards the UPDATE on retryCount', async () => {
+      const swCommandId = `sw-install-${deploymentUuid}-${deviceUuid}-2`;
+      const updateChain = chainMock([{ id: 'dr-1' }]);
+      updateMock.mockReturnValueOnce(updateChain);
+
+      const res = await makeSwApp().request(`/agents/${agentId}/commands/${swCommandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commandId: swCommandId, status: 'completed', exitCode: 0 }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(updateChain.where).toHaveBeenCalledWith(
+        and(
+          eq(deploymentResults.deploymentId, deploymentUuid),
+          eq(deploymentResults.deviceId, deviceUuid),
+          eq(deploymentResults.status, 'pending'),
+          eq(deploymentResults.retryCount, 2),
+        ),
+      );
+    });
+
+    it('drops (and logs) a late result whose attempt suffix no longer matches the row current retryCount', async () => {
+      // Attempt 1's command id delivers late after a retry bumped retryCount
+      // to 2 — the UPDATE's retryCount=1 condition matches zero real rows.
+      const swCommandId = `sw-install-${deploymentUuid}-${deviceUuid}-1`;
+      const updateChain = chainMock([]);
+      updateMock.mockReturnValueOnce(updateChain);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const res = await makeSwApp().request(`/agents/${agentId}/commands/${swCommandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commandId: swCommandId, status: 'completed', exitCode: 0 }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(updateChain.where).toHaveBeenCalledWith(
+        and(
+          eq(deploymentResults.deploymentId, deploymentUuid),
+          eq(deploymentResults.deviceId, deviceUuid),
+          eq(deploymentResults.status, 'pending'),
+          eq(deploymentResults.retryCount, 1),
+        ),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('attempt=1'));
+      warnSpy.mockRestore();
+    });
+
+    it('defaults to attempt 0 for a legacy commandId with no attempt suffix', async () => {
+      const swCommandId = `sw-install-${deploymentUuid}-${deviceUuid}`;
+      const updateChain = chainMock([{ id: 'dr-1' }]);
+      updateMock.mockReturnValueOnce(updateChain);
+
+      const res = await makeSwApp().request(`/agents/${agentId}/commands/${swCommandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commandId: swCommandId, status: 'completed', exitCode: 0 }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(updateChain.where).toHaveBeenCalledWith(
+        and(
+          eq(deploymentResults.deploymentId, deploymentUuid),
+          eq(deploymentResults.deviceId, deviceUuid),
+          eq(deploymentResults.status, 'pending'),
+          eq(deploymentResults.retryCount, 0),
+        ),
+      );
+    });
+  });
+
+  // Offline-fallback path: the install command was queued as a device_commands
+  // row (UUID id), so the result flows through the UUID branch and must ALSO
+  // reconcile the matching deployment_results row via the payload deploymentId.
+  describe('queued software_install result reconciliation', () => {
+    const deploymentUuid = '44444444-4444-4444-8444-444444444444';
+
+    function swInstallCommandRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: commandId,
+        deviceId: 'device-1',
+        type: 'software_install',
+        status: 'sent',
+        targetRole: 'agent',
+        payload: { deploymentId: deploymentUuid, downloadUrl: 'https://dl/pkg.exe' },
+        ...overrides,
+      };
+    }
+
+    // Queued (offline-fallback) commands don't use the sw-install-<dep>-<device>-<attempt>
+    // id shape — the device_commands row carries a plain UUID — so the attempt
+    // number for the retry guard travels in the payload instead (written by
+    // buildAndDispatchSoftwareInstalls). This proves it threads through here too.
+    it('guards the deployment_results UPDATE on the payload retryCount for a queued result', async () => {
+      selectMock.mockReturnValueOnce(chainMock([swInstallCommandRow({
+        payload: { deploymentId: deploymentUuid, downloadUrl: 'https://dl/pkg.exe', retryCount: 1 },
+      })]));
+      const deviceCommandsChain = chainMock([{ id: commandId }]);
+      const deploymentResultsChain = chainMock([{ id: 'dr-1' }]);
+      updateMock
+        .mockReturnValueOnce(deviceCommandsChain)
+        .mockReturnValueOnce(deploymentResultsChain);
+
+      const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commandId, status: 'completed', exitCode: 0 }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(deploymentResultsChain.where).toHaveBeenCalledWith(
+        and(
+          eq(deploymentResults.deploymentId, deploymentUuid),
+          eq(deploymentResults.deviceId, 'device-1'),
+          eq(deploymentResults.status, 'pending'),
+          eq(deploymentResults.retryCount, 1),
+        ),
+      );
+    });
+
+    it('updates both device_commands and deployment_results for a queued install result', async () => {
+      selectMock.mockReturnValueOnce(chainMock([swInstallCommandRow()]));
+      const deviceCommandsChain = chainMock([{ id: commandId }]);
+      const deploymentResultsChain = chainMock([]);
+      updateMock
+        .mockReturnValueOnce(deviceCommandsChain)
+        .mockReturnValueOnce(deploymentResultsChain);
+
+      const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commandId,
+          status: 'completed',
+          exitCode: 0,
+          stdout: 'installed',
+          durationMs: 12_000,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ success: true });
+
+      // device_commands terminal write happened…
+      const cmdStored = deviceCommandsChain.set.mock.calls[0][0];
+      expect(cmdStored.status).toBe('completed');
+
+      // …and the deployment_results row was reconciled with the shared mapping.
+      const drStored = deploymentResultsChain.set.mock.calls[0][0];
+      expect(drStored.status).toBe('completed');
+      expect(drStored.exitCode).toBe(0);
+      expect(drStored.output).toBe('installed');
+      expect(drStored.completedAt).toBeInstanceOf(Date);
+      // startedAt reconstructed from durationMs.
+      expect(drStored.completedAt.getTime() - drStored.startedAt.getTime()).toBe(12_000);
+    });
+
+    it('maps a completed result with non-zero exit code to a failed deployment_results row', async () => {
+      selectMock.mockReturnValueOnce(chainMock([swInstallCommandRow()]));
+      const deviceCommandsChain = chainMock([{ id: commandId }]);
+      const deploymentResultsChain = chainMock([]);
+      updateMock
+        .mockReturnValueOnce(deviceCommandsChain)
+        .mockReturnValueOnce(deploymentResultsChain);
+
+      const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commandId,
+          status: 'completed',
+          exitCode: 1603,
+          stderr: 'msi fatal error',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const drStored = deploymentResultsChain.set.mock.calls[0][0];
+      expect(drStored.status).toBe('failed');
+      expect(drStored.exitCode).toBe(1603);
+      expect(drStored.errorMessage).toBe('msi fatal error');
+    });
+
+    it('is a no-op on a second result delivery (device_commands already terminal)', async () => {
+      selectMock.mockReturnValueOnce(chainMock([swInstallCommandRow({ status: 'completed' })]));
+
+      const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commandId,
+          status: 'completed',
+          exitCode: 0,
+        }),
+      });
+
+      // Route accepts the replay but writes nothing — neither device_commands
+      // nor deployment_results.
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ success: true });
+      expect(updateMock).not.toHaveBeenCalled();
+    });
+
+    it('skips deployment_results reconciliation when the payload has no deploymentId', async () => {
+      selectMock.mockReturnValueOnce(chainMock([swInstallCommandRow({ payload: {} })]));
+      updateMock.mockReturnValueOnce(chainMock([{ id: commandId }]));
+
+      const res = await app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commandId,
+          status: 'completed',
+          exitCode: 0,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      // Only the device_commands terminal write — no deployment_results update.
+      expect(updateMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('rejects normal agent results for watchdog-targeted commands', async () => {
     selectMock.mockReturnValueOnce(
       chainMock([
@@ -420,5 +677,72 @@ describe('agent commands routes', () => {
     };
     expect(handlerArg.error).toBe('verify failed [PRIVATE_KEY_REDACTED] end');
     expect(JSON.stringify(handlerArg)).not.toContain('BEGIN PRIVATE KEY');
+  });
+
+  // BREEZE-X: the REST twin of the WS terminal compare-and-set used to return
+  // {success:true} on 0 rows with no signal at all, so a cross-transport race
+  // could not be confirmed from the WS side alone. It now reports with its own
+  // cas_label and the same prior_status evidence.
+  describe('terminal CAS 0-row branch', () => {
+    function queueTerminalCas(updatedRows: unknown[], priorRow?: unknown) {
+      // 1st select: the command pre-read (still non-terminal, so the route
+      // does NOT short-circuit and actually attempts the CAS).
+      selectMock.mockReturnValueOnce(
+        chainMock([
+          {
+            id: commandId,
+            deviceId: 'device-1',
+            type: 'run_script',
+            status: 'sent',
+            targetRole: 'agent',
+          },
+        ])
+      );
+      // 2nd select (0-row branch only): the prior-status diagnostic re-read.
+      selectMock.mockReturnValueOnce(chainMock(priorRow === undefined ? [] : [priorRow]));
+      updateMock.mockReturnValueOnce(chainMock(updatedRows));
+    }
+
+    async function postResult() {
+      return app.request(`/agents/${agentId}/commands/${commandId}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commandId, status: 'completed', exitCode: 0, stdout: 'ok' }),
+      });
+    }
+
+    it('reports the 0-row CAS to Sentry with cas_label + prior_status', async () => {
+      queueTerminalCas([], {
+        status: 'failed',
+        result: { status: 'timeout', error: 'no response', timedOutBy: 'server' },
+      });
+
+      const res = await postResult();
+
+      // Behaviour is unchanged for the agent — this is observability only.
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ success: true });
+
+      expect(captureMessage).toHaveBeenCalledTimes(1);
+      const call = vi.mocked(captureMessage).mock.calls[0]!;
+      expect(call[1]).toBe('warning');
+      expect(call[3]).toEqual({
+        cas_label: 'device_commands.rest_result_terminal_cas',
+        prior_status: 'failed:server-timeout',
+      });
+      // Pre-read + the diagnostic re-read, nothing more.
+      expect(selectMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not re-read the row or capture anything when the CAS moves a row', async () => {
+      queueTerminalCas([{ id: commandId }], { status: 'failed', result: null });
+
+      const res = await postResult();
+
+      expect(res.status).toBe(200);
+      expect(captureMessage).not.toHaveBeenCalled();
+      // Only the pre-read: the diagnostic read must stay on the 0-row branch.
+      expect(selectMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -65,17 +65,35 @@ vi.mock('../middleware/auth', () => ({
     return next();
   }),
   requireMfa: vi.fn(() => async (_c: any, next: any) => next()),
+  // Not exercised by this file's tests (which cover the inventory routes'
+  // site scope, not the download-policy routes), but software.ts now
+  // registers PUT /download-policy/sites/:siteId with requireSiteAccess in
+  // its middleware chain at module-load time, so the mock must export it.
+  requireSiteAccess: vi.fn(() => async (_c: any, next: any) => next()),
 }));
 
 vi.mock('../services/auditEvents', () => ({ writeRouteAudit: vi.fn() }));
+
+vi.mock('../services/softwareDownloadPolicy', () => ({
+  getOrganizationSoftwareDownloadPolicy: vi.fn(),
+  setOrganizationSoftwareDownloadPolicy: vi.fn(),
+  setSiteSoftwareDownloadPolicy: vi.fn(),
+}));
 vi.mock('../services/deploymentTargetResolver', () => ({
   resolveDeploymentTargets: vi.fn().mockResolvedValue([]),
 }));
-vi.mock('../services/s3Storage', () => ({
-  uploadBinary: vi.fn(),
-  getPresignedUrl: vi.fn(),
-  isS3Configured: vi.fn(() => false),
-}));
+vi.mock('../services/s3Storage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/s3Storage')>();
+  return {
+    uploadBinary: vi.fn(),
+    getPresignedUrl: vi.fn(),
+    isS3Configured: vi.fn(() => false),
+    // routes/software.ts branches on these with `instanceof` (#2794); a mock
+    // that omits them makes the export access throw.
+    S3ConfigError: actual.S3ConfigError,
+    S3OperationError: actual.S3OperationError,
+  };
+});
 vi.mock('./agentWs', () => ({ sendCommandToAgent: vi.fn() }));
 
 const ORG_ID = 'org-111';

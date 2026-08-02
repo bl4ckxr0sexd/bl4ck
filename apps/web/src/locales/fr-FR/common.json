@@ -32,6 +32,7 @@
     "productCatalog": "Catalogue de produits",
     "softwareLibrary": "Bibliothèque logicielle",
     "softwarePolicies": "Politiques logicielles",
+    "deviceGroups": "Groupes d'appareils",
     "configPolicies": "Politiques de configuration",
     "integrations": "Intégrations",
     "backup": "Sauvegarde",
@@ -641,7 +642,7 @@
       }
     },
     "search": {
-      "prompt": "Rechercher des appareils, scripts, alertes, utilisateurs et paramètres",
+      "prompt": "Rechercher dans Breeze",
       "placeholder": "Rechercher des appareils, scripts, alertes, utilisateurs et paramètres...",
       "searching": "Cherche...",
       "startTyping": "Commencez à taper pour rechercher entre appareils, scripts, alertes, utilisateurs et paramètres.",

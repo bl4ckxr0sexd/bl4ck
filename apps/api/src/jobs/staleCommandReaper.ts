@@ -10,6 +10,8 @@ import {
   patchJobResults,
   deployments,
   deploymentDevices,
+  softwareDeployments,
+  deploymentResults,
   remoteSessions,
   restoreJobs,
   backupJobs,
@@ -24,6 +26,7 @@ import { captureException } from '../services/sentry';
 import { recordBackupCommandTimeout, recordRestoreTimeout } from '../services/backupMetrics';
 import { revokeViewerSession } from '../services/viewerTokenRevocation';
 import { queueBackupStopCommand } from '../services/commandQueue';
+import { envInt } from '../utils/envInt';
 
 const QUEUE_NAME = 'stale-command-reaper';
 const REAP_INTERVAL_MS = 2 * 60 * 1000; // every 2 minutes
@@ -38,13 +41,16 @@ const REAP_INTERVAL_MS = 2 * 60 * 1000; // every 2 minutes
 // `.limit(0)` returns zero rows, which would silently disable the
 // reaper. Normalize to `Number.MAX_SAFE_INTEGER` so the consistent
 // "cap=0 == unlimited" knob actually behaves that way here.
-const RAW_MAX_REAP = Number(process.env.STALE_REAPER_MAX_PER_RUN ?? '5000');
-const MAX_REAP_PER_RUN =
-  Number.isFinite(RAW_MAX_REAP) && RAW_MAX_REAP > 0
-    ? RAW_MAX_REAP
-    : RAW_MAX_REAP === 0
-      ? Number.MAX_SAFE_INTEGER
-      : 5000; // negative / NaN fall back to default rather than disabling the reaper
+//
+// Exported (and pure) so the mapping is testable without re-importing this
+// module: the env read stays at module scope, only the derivation moves.
+export function resolveMaxReapPerRun(raw: number): number {
+  if (raw > 0) return raw;
+  if (raw === 0) return Number.MAX_SAFE_INTEGER;
+  return 5000; // negative falls back to the default rather than disabling the reaper
+}
+
+const MAX_REAP_PER_RUN = resolveMaxReapPerRun(envInt('STALE_REAPER_MAX_PER_RUN', 5000));
 const SHORTEST_TIMEOUT_MS = 5 * 60 * 1000; // conservative SQL pre-filter
 
 // Backup-related command types — used to guard backup-specific Prometheus metrics
@@ -57,6 +63,19 @@ const BACKUP_COMMAND_TYPES = new Set([
 
 // Deployment/patch stale thresholds
 const DEPLOYMENT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+// Software deployment (`deployment_results`) stale thresholds — §1.5 of the
+// 2026-07-28 software-deployment-visibility plan. Exported for tests.
+//
+// Tier 1 (delivered but silent): 55 min sits above the agent's own hard
+// ceilings (15 min download + 30 min install,
+// agent/internal/remote/tools/software_install.go:22-26), so the server only
+// declares a timeout after the agent's ceilings have provably lapsed.
+export const SOFTWARE_INSTALL_TIMEOUT_MS = 55 * 60 * 1000;
+// Tier 2 (queued for an offline device, never delivered): the queued
+// device_commands row may legitimately wait for the device to reconnect, so
+// it gets a much longer leash before the deployment expires.
+export const SOFTWARE_QUEUED_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 const REMOTE_SESSION_PENDING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const REMOTE_SESSION_ACTIVE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours (zombie safety net)
 
@@ -543,6 +562,137 @@ async function reapStaleDeploymentDevices(): Promise<number> {
   return reaped;
 }
 
+/**
+ * Reap stale System-A software deployment result rows (`deployment_results`)
+ * that the agent result path will never terminate on its own. Two tiers:
+ *
+ *  Tier 1 (delivered but silent): the install command provably reached the
+ *  agent — WS-dispatched directly (`device_command_id` NULL) or the linked
+ *  `device_commands` row is 'sent'/'completed' — and the parent deployment's
+ *  `dispatched_at` is older than SOFTWARE_INSTALL_TIMEOUT_MS.
+ *
+ *  Tier 2 (queued, never delivered): the linked `device_commands` row is
+ *  still 'pending' (device offline, waiting to reconnect). Spared until
+ *  `dispatched_at` is older than SOFTWARE_QUEUED_EXPIRY_MS, then failed AND
+ *  the queued command is cancelled so it can't fire on a later reconnect.
+ *
+ * Rows whose deployment has `dispatched_at` NULL (scheduled, not yet
+ * dispatched) are NEVER candidates — the SQL filter excludes them.
+ *
+ * A linked command in a terminal state ('failed'/'cancelled') or whose row
+ * has vanished matches neither tier's delivery proof; those fall through to
+ * the Tier 2 expiry as a backstop so the result row can't zombie forever
+ * (the guarded command-cancel is a no-op for non-pending rows).
+ */
+export async function reapStaleSoftwareDeploymentResults(): Promise<number> {
+  const now = Date.now();
+  const timeoutCutoff = new Date(now - SOFTWARE_INSTALL_TIMEOUT_MS);
+
+  // Conservative SQL pre-filter at the Tier 1 cutoff (the tighter of the
+  // two); per-row tier logic below applies the precise threshold. Mirrors
+  // the SHORTEST_TIMEOUT_MS pattern used elsewhere in this file.
+  const candidates = await db
+    .select({
+      id: deploymentResults.id,
+      deviceCommandId: deploymentResults.deviceCommandId,
+      dispatchedAt: softwareDeployments.dispatchedAt,
+      commandStatus: deviceCommands.status,
+    })
+    .from(deploymentResults)
+    .innerJoin(softwareDeployments, eq(softwareDeployments.id, deploymentResults.deploymentId))
+    .leftJoin(deviceCommands, eq(deviceCommands.id, deploymentResults.deviceCommandId))
+    .where(
+      and(
+        eq(deploymentResults.status, 'pending'),
+        isNotNull(softwareDeployments.dispatchedAt),
+        lt(softwareDeployments.dispatchedAt, timeoutCutoff),
+      ),
+    )
+    .limit(MAX_REAP_PER_RUN);
+
+  let reaped = 0;
+
+  for (const row of candidates) {
+    // Never reap a not-yet-dispatched (scheduled) deployment's rows.
+    // The SQL filter already excludes these; keep the guard for defense.
+    if (!row.dispatchedAt) continue;
+
+    const dispatchedAgoMs = now - row.dispatchedAt.getTime();
+
+    const delivered =
+      row.deviceCommandId === null ||
+      row.commandStatus === 'sent' ||
+      row.commandStatus === 'completed';
+
+    let errorMessage: string;
+    if (delivered) {
+      // Tier 1 — the SQL filter already applies this cutoff; re-check per
+      // row (precise-threshold-in-JS pattern used elsewhere in this file).
+      if (dispatchedAgoMs < SOFTWARE_INSTALL_TIMEOUT_MS) continue;
+      errorMessage = 'Server-side timeout: no response from agent';
+    } else {
+      // Tier 2 — queued for an offline device (or delivery unprovable):
+      // spare until the queued-expiry window lapses.
+      if (dispatchedAgoMs < SOFTWARE_QUEUED_EXPIRY_MS) continue;
+      errorMessage = 'Device did not come online before the deployment expired';
+    }
+
+    const completedAt = new Date();
+
+    // Guarded on status='pending' so a concurrent real result always wins.
+    const updated = await db
+      .update(deploymentResults)
+      .set({
+        status: 'failed',
+        completedAt,
+        errorMessage,
+      })
+      .where(
+        and(
+          eq(deploymentResults.id, row.id),
+          eq(deploymentResults.status, 'pending'),
+        ),
+      )
+      .returning({ id: deploymentResults.id });
+
+    if (updated.length === 0) continue;
+    reaped++;
+
+    // Tier 2: cancel the still-queued device_commands row so the install
+    // can't fire when the device eventually reconnects. Guarded on
+    // status='pending' — if the agent claimed it mid-reap, leave it be.
+    if (!delivered && row.deviceCommandId) {
+      try {
+        await db
+          .update(deviceCommands)
+          .set({
+            status: 'cancelled',
+            completedAt,
+            result: {
+              status: 'cancelled',
+              error: errorMessage,
+              cancelledBy: 'stale-command-reaper',
+            },
+          })
+          .where(
+            and(
+              eq(deviceCommands.id, row.deviceCommandId),
+              eq(deviceCommands.status, 'pending'),
+            ),
+          );
+      } catch (error) {
+        console.error(
+          `[StaleCommandReaper] Failed to cancel queued command ${row.deviceCommandId} for expired deployment result ${row.id}:`,
+          error,
+        );
+        captureException(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  }
+
+  return reaped;
+}
+
 async function reapStaleRemoteSessions(): Promise<number> {
   const pendingCutoff = new Date(Date.now() - REMOTE_SESSION_PENDING_TIMEOUT_MS);
   const activeCutoff = new Date(Date.now() - REMOTE_SESSION_ACTIVE_TIMEOUT_MS);
@@ -780,6 +930,7 @@ function createWorker(): Worker<ReaperJobData> {
         ['scriptExecutions', reapStaleScriptExecutions],
         ['patchJobResults', reapStalePatchJobResults],
         ['deploymentDevices', reapStaleDeploymentDevices],
+        ['softwareDeploymentResults', reapStaleSoftwareDeploymentResults],
         ['remoteSessions', reapStaleRemoteSessions],
         ['backupJobs', reapStaleBackupJobs],
       ] as const;

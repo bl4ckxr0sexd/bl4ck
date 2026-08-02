@@ -74,6 +74,75 @@
       "unknown": "La verifica richiede attenzione. Ripeti il test della connessione o avvia di nuovo il consenso."
     }
   },
+  "m365CustomerGraphActions": {
+    "title": "Azioni Customer Graph",
+    "description": "Accesso in lettura-scrittura agli utenti Microsoft 365 concesso da un amministratore del cliente, usato per azioni come la reimpostazione delle password utente. Qui Breeze non richiede mai un segreto o un certificato del tenant.",
+    "selectOrganization": "Seleziona un'organizzazione per gestire Customer Graph Actions.",
+    "loading": "Caricamento connessione Customer Graph Actions.",
+    "unavailable": "I dettagli della connessione non sono disponibili.",
+    "onboardingUnavailable": "L'onboarding Customer Graph Actions non è abilitato per questa organizzazione.",
+    "callback": {
+      "active": "Consenso Microsoft completato. Lo stato aggiornato della connessione è mostrato di seguito.",
+      "degraded": "Consenso Microsoft completato, ma la connessione richiede attenzione. I dettagli aggiornati sono mostrati di seguito."
+    },
+    "tenant": "Tenant verificato",
+    "tenantId": "ID tenant",
+    "manifest": "Manifest delle autorizzazioni",
+    "manifestVersion": "Versione manifest {{version}}",
+    "unnamedTenant": "Tenant senza nome",
+    "notVerified": "Non verificato",
+    "lastVerifiedAt": "Ultima verifica della connessione",
+    "never": "Mai",
+    "none": "Nessuno",
+    "microsoftConsentHelp": "La disconnessione in Breeze non rimuove il consenso a livello tenant in Microsoft Entra.",
+    "microsoftConsentDocs": "Gestisci autorizzazioni applicazione Microsoft",
+    "status": {
+      "pending-consent": "Consenso in sospeso",
+      "verifying": "Verifica in corso",
+      "active": "Attivo",
+      "degraded": "Degradato",
+      "suspended": "Sospeso",
+      "revoked": "Revocato"
+    },
+    "grants": {
+      "required": "Autorizzazioni richieste",
+      "observed": "Autorizzazioni osservate",
+      "missing": "Autorizzazioni mancanti",
+      "unexpectedAlert": "Rilevate autorizzazioni inattese",
+      "unknownPermission": "Autorizzazione sconosciuta (ruolo {{appRoleId}})",
+      "grantsVerifiedAt": "Autorizzazioni verificate"
+    },
+    "actions": {
+      "connect": "Connetti",
+      "reconsent": "Rinnova consenso",
+      "retest": "Ripeti test",
+      "disconnect": "Disconnetti da Breeze",
+      "permissionRequired": "Per queste azioni è richiesta l'autorizzazione di scrittura sull'organizzazione.",
+      "consentFailed": "Impossibile avviare il consenso.",
+      "retestFailed": "Impossibile ripetere il test della connessione.",
+      "retestSucceeded": "Nuovo test della connessione completato.",
+      "disconnectWarning": "La disconnessione impedisce a Breeze di usare questa connessione. Il consenso Microsoft a livello tenant resta attivo finché un amministratore del cliente non lo rimuove in Microsoft Entra.",
+      "disconnectFailed": "Impossibile disconnettere la connessione.",
+      "disconnectSucceeded": "Connessione Breeze disconnessa."
+    },
+    "errors": {
+      "consent_expired": "La sessione di consenso è scaduta. Avvia di nuovo il consenso.",
+      "consent_state_mismatch": "Impossibile verificare la sessione di consenso. Avvia di nuovo il consenso.",
+      "consent_cancelled": "Il consenso Microsoft è stato annullato.",
+      "admin_role_required": "Un Global Administrator o Privileged Role Administrator deve concedere il consenso.",
+      "tenant_mismatch": "Microsoft ha restituito un tenant diverso. Avvia di nuovo il consenso per questa organizzazione.",
+      "tenant_already_bound": "Questo tenant Microsoft è già connesso a un'altra organizzazione.",
+      "credential_unavailable": "La credenziale della connessione non è disponibile. Contatta un amministratore Breeze.",
+      "identity_token_invalid": "Verifica dell'identità dell'amministratore Microsoft non riuscita.",
+      "application_token_invalid": "Verifica dell'applicazione Microsoft non riuscita.",
+      "grant_missing": "Mancano una o più autorizzazioni Microsoft richieste.",
+      "grant_unexpected": "Microsoft segnala autorizzazioni esterne al manifest approvato.",
+      "manifest_stale": "Le autorizzazioni concesse usano un manifest precedente. Concedi di nuovo il consenso.",
+      "organization_probe_failed": "Controllo dell'organizzazione Microsoft non riuscito. Ripeti il test della connessione.",
+      "executor_unavailable": "Il servizio di verifica non è disponibile. Ripeti il test più tardi.",
+      "unknown": "La verifica richiede attenzione. Ripeti il test della connessione o avvia di nuovo il consenso."
+    }
+  },
   "communicationIntegrations": {
     "critical": "Critica",
     "high": "Alta",
@@ -95,7 +164,7 @@
     "slack": "Slack",
     "connectAWorkspaceWithOAuthAndPostAlerts": "Connetti un workspace con OAuth e pubblica avvisi nei canali. ",
     "workspace": "Workspace",
-    "workspaceID": "Workspace ID: ",
+    "workspaceID": "Workspace ID: {{id}}",
     "connectWorkspace": "Connetti workspace ",
     "oauthRedirectStartsWhenYouConnectASlack": "Il redirect OAuth parte quando connetti un workspace Slack. ",
     "defaultChannel": "Canale predefinito",
@@ -265,10 +334,7 @@
     "unmap": "Rimuovi mappatura ",
     "noHuntressOrganizationsDiscoveredYetSaveCredentialsAnd": "Nessuna organizzazione Huntress ancora rilevata. Salva le credenziali ed esegui Sincronizza ora. ",
     "noOrganizationsMatchTheCurrentFilter": "Nessuna organizzazione corrisponde al filtro attuale. ",
-    "showing": "Visualizzazione ",
-    "of": "di ",
     "previous": "Precedente ",
-    "page": "Pagina ",
     "next": "Successiva ",
     "recentIncidents": "Incidenti recenti",
     "liveStatusError": "Impossibile caricare completamente lo stato in tempo reale di Huntress. I dati di copertura e incidenti di seguito potrebbero essere incompleti o non aggiornati.",
@@ -307,7 +373,9 @@
     "update": "Aggiorna",
     "saveAndConnect": "Salva e connetti",
     "unknownTime": "Ora sconosciuta",
-    "askAdminToConnect": "Huntress è configurato una sola volta a livello partner è condiviso con ogni organizzazione. Chiedi al tuo amministratore MSP di connetterlo."
+    "askAdminToConnect": "Huntress è configurato una sola volta a livello partner è condiviso con ogni organizzazione. Chiedi al tuo amministratore MSP di connetterlo.",
+    "showingRange": "Visualizzazione {{start}}–{{end}} di {{total}}",
+    "pageOf": "Pagina {{current}} di {{total}}"
   },
   "integrationsPage": {
     "webhooks": "Webhooks",
@@ -728,7 +796,7 @@
     "stripeDashboard": "dashboard Stripe ",
     "loadingStripeConnection": "Caricamento connessione Stripe...",
     "couldNotLoadStripeConnection": "Impossibile caricare la connessione Stripe.",
-    "key": "chiave •••• ",
+    "key": "chiave •••• {{last4}}",
     "skLiveOrRkLive": "sk_live_… or rk_live_…",
     "connected": "Connesso",
     "live": "In tempo reale",
@@ -878,15 +946,14 @@
     "loadingWebhooks": "Caricamento webhook...",
     "tryAgain": "Riprova ",
     "webhooks": "Webhooks",
-    "endpoints": "endpoint, ",
-    "averageSuccessRate": "% tasso medio di successo ",
     "addWebhook": "Aggiungi webhook ",
     "events": "Eventi",
     "lastTriggered": "Ultima attivazione",
     "successRate": "Tasso di successo",
     "anErrorOccurred": "Si è verificato un errore",
     "justNow": "Proprio ora",
-    "url": "URL"
+    "url": "URL",
+    "endpointsSummary": "{{total}} endpoint, {{successRate}}% tasso medio di successo"
   },
   "webhookTestPanel": {
     "failedToFetchTestHistory": "Impossibile recuperare la cronologia dei test",

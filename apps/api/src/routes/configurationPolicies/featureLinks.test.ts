@@ -664,7 +664,7 @@ describe('featureLinks routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           featureType: 'alert_rule',
-          inlineSettings: { items: [{ name: 'Weekly offline', conditions: { type: 'offline', durationMinutes: 10080 } }] },
+          inlineSettings: { items: [{ name: 'Weekly offline', conditions: [{ type: 'offline', durationMinutes: 10080 }] }] },
         }),
       });
 
@@ -681,7 +681,7 @@ describe('featureLinks routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           featureType: 'alert_rule',
-          inlineSettings: { items: [{ name: 'Offline 1h', conditions: { type: 'offline', durationMinutes: 60 } }] },
+          inlineSettings: { items: [{ name: 'Offline 1h', conditions: [{ type: 'offline', durationMinutes: 60 }] }] },
         }),
       });
 
@@ -698,11 +698,214 @@ describe('featureLinks routes', () => {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          inlineSettings: { items: [{ name: 'Too long', conditions: { type: 'offline', durationMinutes: 4320 } }] },
+          inlineSettings: { items: [{ name: 'Too long', conditions: [{ type: 'offline', durationMinutes: 4320 }] }] },
         }),
       });
 
       expect(res.status).toBe(400);
+      expect(updateFeatureLinkMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // alert_rule / monitoring inline-settings pre-validation.
+  //
+  // decomposeInlineSettings parses both with `.parse()`, so without a route-level
+  // safeParse the ZodError reaches app.onError and the client gets a generic 500
+  // (plus a Sentry event) instead of the schema's own message — the monitoring
+  // write barrier's "moved to the Alerts feature" pointer never reached anyone.
+  // ============================================================
+
+  describe('alert_rule / monitoring inlineSettings validation → 400, never 500', () => {
+    beforeEach(() => {
+      validateFeaturePolicyExistsMock.mockResolvedValue({ valid: true });
+      addFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'alert_rule' });
+      updateFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'alert_rule' });
+    });
+
+    it('POST alert_rule with a `custom` condition → 400 with issues (not 500)', async () => {
+      getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'alert_rule',
+          inlineSettings: { items: [{ name: 'Custom', conditions: [{ type: 'custom', customCondition: 'x' }] }] },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(String(body.error)).toMatch(/alert_rule/i);
+      expect(Array.isArray(body.issues)).toBe(true);
+      expect((body.issues as unknown[]).length).toBeGreaterThan(0);
+      expect(addFeatureLinkMock).not.toHaveBeenCalled();
+    });
+
+    it('POST alert_rule accepts an aliased metric name + durationMinutes → 201', async () => {
+      getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'alert_rule',
+          inlineSettings: {
+            items: [{ name: 'Sustained CPU', conditions: [{ type: 'metric', metric: 'cpuPercent', operator: 'gt', value: 90, durationMinutes: 15 }] }],
+          },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      // durationMinutes must survive normalization — the threshold handler reads it.
+      const [, , , inlineSettings] = addFeatureLinkMock.mock.calls[0] as any[];
+      expect(inlineSettings.items[0].conditions[0]).toMatchObject({
+        metric: 'cpuPercent',
+        durationMinutes: 15,
+      });
+    });
+
+    it('POST monitoring with non-empty alertRules → 400 naming the Alerts feature', async () => {
+      getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
+      addFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'monitoring' });
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'monitoring',
+          inlineSettings: {
+            checkIntervalSeconds: 60,
+            watches: [],
+            alertRules: [{ name: 'High CPU', conditions: [{ type: 'metric', metric: 'cpu', operator: 'gt', value: 80 }] }],
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(JSON.stringify(body.issues)).toContain('moved to the Alerts feature');
+      expect(addFeatureLinkMock).not.toHaveBeenCalled();
+    });
+
+    it('POST monitoring with only watches → 201 (the barrier does not block ordinary saves)', async () => {
+      getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
+      addFeatureLinkMock.mockResolvedValue({ id: LINK_ID, featureType: 'monitoring' });
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'monitoring',
+          inlineSettings: { checkIntervalSeconds: 60, watches: [{ watchType: 'service', name: 'Spooler' }] },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      // Validate-only: the stored JSONB must NOT gain the deprecated barrier keys.
+      const [, , , inlineSettings] = addFeatureLinkMock.mock.calls[0] as any[];
+      expect(inlineSettings).not.toHaveProperty('alertRules');
+      expect(inlineSettings).not.toHaveProperty('eventLogAlerts');
+    });
+
+    it('PATCH alert_rule with a `custom` condition → 400 with issues (not 500)', async () => {
+      getConfigPolicyMock.mockResolvedValue({
+        ...STUB_POLICY,
+        featureLinks: [{ id: LINK_ID, featureType: 'alert_rule' }],
+      });
+      const res = await app.request(`/${POLICY_ID}/features/${LINK_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inlineSettings: { items: [{ name: 'Custom', conditions: [{ type: 'custom', customCondition: 'x' }] }] },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(Array.isArray(body.issues)).toBe(true);
+      expect(updateFeatureLinkMock).not.toHaveBeenCalled();
+    });
+
+    // Union flattening (lib/zodIssues.ts). Conditions are a union nested inside
+    // items[], so Zod's own report is a single `invalid_union` whose message is
+    // the useless string "Invalid input" — the tech saw that in a toast with no
+    // hint which field was wrong.
+    it('POST alert_rule with an unknown metric → 400 naming the field and the accepted metrics', async () => {
+      getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'alert_rule',
+          inlineSettings: { items: [{ name: 'Bogus', conditions: [{ type: 'metric', metric: 'bogus', operator: 'gt', value: 80 }] }] },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      const issuesText = JSON.stringify(body.issues);
+      expect(issuesText).toContain('cpu');
+      expect(JSON.parse(issuesText).some((i: any) => i.path.join('.') === 'items.0.conditions.0.metric')).toBe(true);
+      // `details` is derived from the same flattened set, so whichever the web
+      // client renders first it never gets the bare placeholder.
+      expect(JSON.stringify(body.details)).toContain('items.0.conditions.0.metric');
+      expect(JSON.stringify(body.details)).not.toMatch(/"Invalid input"/);
+      expect(addFeatureLinkMock).not.toHaveBeenCalled();
+    });
+
+    it('PATCH alert_rule with an unknown metric → 400 naming the field', async () => {
+      getConfigPolicyMock.mockResolvedValue({
+        ...STUB_POLICY,
+        featureLinks: [{ id: LINK_ID, featureType: 'alert_rule' }],
+      });
+      const res = await app.request(`/${POLICY_ID}/features/${LINK_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inlineSettings: { items: [{ name: 'Bogus', conditions: [{ type: 'metric', metric: 'bogus', operator: 'gt', value: 80 }] }] },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect((body.issues as any[]).some((i) => i.path.join('.') === 'items.0.conditions.0.metric')).toBe(true);
+      expect(JSON.stringify(body.details)).toContain('items.0.conditions.0.metric');
+      expect(updateFeatureLinkMock).not.toHaveBeenCalled();
+    });
+
+    it('POST alert_rule accepts `threshold` as a type alias and canonicalizes it to metric', async () => {
+      getConfigPolicyMock.mockResolvedValue(STUB_POLICY);
+      const res = await app.request(`/${POLICY_ID}/features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featureType: 'alert_rule',
+          inlineSettings: { items: [{ name: 'Legacy threshold', conditions: [{ type: 'threshold', metric: 'cpu', operator: 'gt', value: 90 }] }] },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      const [, , , inlineSettings] = addFeatureLinkMock.mock.calls[0] as any[];
+      expect(inlineSettings.items[0].conditions[0].type).toBe('metric');
+    });
+
+    it('PATCH monitoring with non-empty alertRules → 400 naming the Alerts feature', async () => {
+      getConfigPolicyMock.mockResolvedValue({
+        ...STUB_POLICY,
+        featureLinks: [{ id: LINK_ID, featureType: 'monitoring' }],
+      });
+      const res = await app.request(`/${POLICY_ID}/features/${LINK_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inlineSettings: {
+            watches: [],
+            alertRules: [{ name: 'High CPU', conditions: [{ type: 'metric', metric: 'cpu', operator: 'gt', value: 80 }] }],
+          },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(JSON.stringify(body.issues)).toContain('moved to the Alerts feature');
       expect(updateFeatureLinkMock).not.toHaveBeenCalled();
     });
   });

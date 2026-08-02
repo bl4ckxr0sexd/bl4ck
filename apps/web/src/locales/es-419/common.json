@@ -32,6 +32,7 @@
     "productCatalog": "Catálogo de productos",
     "softwareLibrary": "Biblioteca de software",
     "softwarePolicies": "Políticas de software",
+    "deviceGroups": "Grupos de dispositivos",
     "configPolicies": "Políticas de configuración",
     "integrations": "Integraciones",
     "backup": "Respaldo",
@@ -641,7 +642,7 @@
       }
     },
     "search": {
-      "prompt": "Buscar dispositivos, scripts, alertas, usuarios, configuraciones",
+      "prompt": "Buscar en Breeze",
       "placeholder": "Buscar dispositivos, scripts, alertas, usuarios, configuraciones…",
       "searching": "Buscando…",
       "startTyping": "Empiece a escribir para buscar en dispositivos, scripts, alertas, usuarios y configuraciones.",

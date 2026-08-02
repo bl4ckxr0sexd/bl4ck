@@ -13,7 +13,6 @@ import (
 	"syscall"
 )
 
-const desktopEntryDir = "/etc/xdg/autostart"
 const desktopEntryPath = "/etc/xdg/autostart/bl4ck-helper.desktop"
 
 func packageExtension() string { return ".AppImage" }
@@ -58,35 +57,6 @@ func installPackage(appImagePath, binaryPath string) error {
 	return nil
 }
 
-// renderAutoStartEntry returns the XDG desktop entry content for the given
-// binary path. The Exec= value is quoted with %q so that paths containing
-// spaces or other shell-special characters are handled correctly.
-func renderAutoStartEntry(binaryPath string) string {
-	return fmt.Sprintf(`[Desktop Entry]
-Type=Application
-Name=BL4CK Helper
-Exec=%q
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-`, binaryPath)
-}
-
-func installAutoStart(binaryPath string) error {
-	entry := renderAutoStartEntry(binaryPath)
-
-	if err := os.MkdirAll(desktopEntryDir, 0755); err != nil {
-		return fmt.Errorf("create autostart dir: %w", err)
-	}
-
-	if err := os.WriteFile(desktopEntryPath, []byte(entry), 0644); err != nil {
-		return fmt.Errorf("write desktop entry: %w", err)
-	}
-
-	log.Info("installed XDG autostart entry", "path", desktopEntryPath)
-	return nil
-}
-
 func removeAutoStart() error {
 	if err := os.Remove(desktopEntryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove desktop entry: %w", err)
@@ -104,7 +74,7 @@ func stopByPID(pid int) error {
 	return nil
 }
 
-// stopByPIDIfOurs terminates pid only if it is a Breeze helper process. It
+// stopByPIDIfOurs terminates pid only if it is a BL4CK helper process. It
 // verifies the image path (via /proc/<pid>/exe) and, if it matches, signals the
 // process. Returns (true, nil) when the helper was signalled, (false, nil) when
 // the pid is gone or is not a helper, and (false, err) when a confirmed helper

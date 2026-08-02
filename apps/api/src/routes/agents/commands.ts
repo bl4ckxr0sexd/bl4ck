@@ -3,7 +3,9 @@ import { zValidator } from '../../lib/validation';
 import { z } from 'zod';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, runOutsideDbContext, withSystemDbAccessContext } from '../../db';
-import { deviceCommands, deploymentResults } from '../../db/schema';
+import { dbWriteExpectingRows } from '../../db/dbWriteExpectingRows';
+import { commandCasPriorStatusTags } from '../../services/commandCasDiagnostics';
+import { deviceCommands } from '../../db/schema';
 import type { AgentAuthContext } from '../../middleware/agentAuth';
 import { writeAuditEvent } from '../../services/auditEvents';
 import {
@@ -32,6 +34,10 @@ import { updateRestoreJobByCommandId } from '../../services/restoreResultPersist
 import { detectResultValidationFamily, validateCriticalCommandResult, DR_COMMAND_TYPES } from '../../services/agentCommandResultValidation';
 import { redactSecretsFromOutput, redactAgentResultErrorFields } from '../../services/secretRedaction';
 import { isRawStdoutArtifactCommand } from '../../services/commandAudit';
+import {
+  applySoftwareInstallResult,
+  SW_INSTALL_COMMAND_ID_REGEX,
+} from '../../services/softwareDeploymentResult';
 
 export const commandsRoutes = new Hono();
 const ACCEPTED_COMMAND_RESULT_STATUSES = ['pending', 'sent'] as const;
@@ -173,50 +179,27 @@ commandsRoutes.post(
     // intentionally have no device_commands row.
     if (!uuidRegex.test(commandId)) {
       // Software install commands carry their tracking IDs in the commandId
-      // itself: `sw-install-<deploymentUuid>-<deviceUuid>`. Persist the
-      // outcome to deployment_results so the dashboard reflects reality.
-      const swInstallMatch = commandId.match(
-        /^sw-install-([0-9a-f-]{36})-([0-9a-f-]{36})$/i,
-      );
+      // itself: `sw-install-<deploymentUuid>-<deviceUuid>-<attemptNumber>`.
+      // Persist the outcome to deployment_results so the dashboard reflects
+      // reality. The attempt suffix is optional (legacy ids default to 0);
+      // applySoftwareInstallResult rejects results whose attempt no longer
+      // matches the row's current retryCount (superseded by a retry).
+      const swInstallMatch = commandId.match(SW_INSTALL_COMMAND_ID_REGEX);
       if (swInstallMatch) {
-        const [, deploymentIdFromCmd, deviceIdFromCmd] = swInstallMatch;
+        const [, deploymentIdFromCmd, deviceIdFromCmd, attemptFromCmd] = swInstallMatch;
         if (deploymentIdFromCmd && deviceIdFromCmd && deviceIdFromCmd === deviceId) {
-          const drStatus =
-            data.status === 'completed'
-              ? data.exitCode && data.exitCode !== 0
-                ? 'failed'
-                : 'completed'
-              : 'failed';
-          const completedAt = new Date();
-          // Prefer agent-reported startedAt (post-#631); fall back to
-          // reconstructing from durationMs for older agents that don't carry it.
-          const startedAt = data.startedAt
-            ? new Date(data.startedAt)
-            : data.durationMs
-              ? new Date(completedAt.getTime() - data.durationMs)
-              : completedAt;
-          await db
-            .update(deploymentResults)
-            .set({
-              status: drStatus,
-              startedAt,
-              completedAt,
-              exitCode: data.exitCode ?? null,
-              // Defense-in-depth: redact PEM private-key blocks from persisted
-              // software-install output/errors (mirrors buildStoredCommandResult).
-              output: data.stdout != null ? redactSecretsFromOutput(data.stdout) : null,
-              errorMessage:
-                data.error != null
-                  ? redactSecretsFromOutput(data.error)
-                  : data.stderr != null
-                    ? redactSecretsFromOutput(data.stderr)
-                    : null,
-            })
-            .where(and(
-              eq(deploymentResults.deploymentId, deploymentIdFromCmd),
-              eq(deploymentResults.deviceId, deviceId),
-              eq(deploymentResults.status, 'pending'),
-            ));
+          await applySoftwareInstallResult({
+            deploymentId: deploymentIdFromCmd,
+            deviceId,
+            status: data.status,
+            exitCode: data.exitCode,
+            stdout: data.stdout,
+            stderr: data.stderr,
+            error: data.error,
+            startedAt: data.startedAt,
+            durationMs: data.durationMs,
+            attemptNumber: attemptFromCmd ? parseInt(attemptFromCmd, 10) : 0,
+          });
         }
       }
       return c.json({ success: true });
@@ -287,32 +270,44 @@ commandsRoutes.post(
     // write can touch — it makes the guard's invariant in db/index.ts true on
     // this path too. Without it, this route was the largest remaining source of
     // BREEZE-7 events after the WS path was fixed.
-    const updated = await runOutsideDbContext(async () => withSystemDbAccessContext(async () => {
-      const query = db
-        .update(deviceCommands)
-        .set({
-          status: normalizedData.status === 'completed' ? 'completed' : 'failed',
-          completedAt: new Date(),
-          result: buildStoredCommandResult(command.type, normalizedData, stdout),
-          // Credentials ride the payload for some commands (e.g. FileVault
-          // rotation); blank them once the command is terminal.
-          ...(hasSensitivePayload(command.type) ? { payload: null } : {}),
-        })
-        .where(and(
-          eq(deviceCommands.id, commandId),
-          eq(deviceCommands.deviceId, deviceId),
-          eq(deviceCommands.targetRole, agent.role),
-          inArray(deviceCommands.status, ACCEPTED_COMMAND_RESULT_STATUSES)
-        )) as any;
+    //
+    // BREEZE-X: this branch used to return `{success:true}` silently on 0 rows,
+    // so the WS twin's Sentry warning had no REST-side counterpart to correlate
+    // against — you could not confirm a cross-transport race from one side
+    // alone. It gets its own `cas_label` and the same `prior_status` tag. It
+    // should be RARER than the WS twin because the terminal pre-read above
+    // usually short-circuits first — which is itself a useful signal.
+    let updated: unknown;
+    const updatedRows = await runOutsideDbContext(async () => withSystemDbAccessContext(async () =>
+      dbWriteExpectingRows(
+        'device_commands.rest_result_terminal_cas',
+        async () => {
+          const query = db
+            .update(deviceCommands)
+            .set({
+              status: normalizedData.status === 'completed' ? 'completed' : 'failed',
+              completedAt: new Date(),
+              result: buildStoredCommandResult(command.type, normalizedData, stdout),
+              // Credentials ride the payload for some commands (e.g. FileVault
+              // rotation); blank them once the command is terminal.
+              ...(hasSensitivePayload(command.type) ? { payload: null } : {}),
+            })
+            .where(and(
+              eq(deviceCommands.id, commandId),
+              eq(deviceCommands.deviceId, deviceId),
+              eq(deviceCommands.targetRole, agent.role),
+              inArray(deviceCommands.status, ACCEPTED_COMMAND_RESULT_STATUSES)
+            )) as any;
 
-      return typeof query.returning === 'function'
-        ? query.returning({ id: deviceCommands.id })
-        : query;
-    }));
+          updated = typeof query.returning === 'function'
+            ? await query.returning({ id: deviceCommands.id })
+            : await query;
 
-    const updatedRows = Array.isArray(updated)
-      ? updated
-      : [];
+          return Array.isArray(updated) ? updated : [];
+        },
+        () => commandCasPriorStatusTags(commandId)
+      )
+    ));
 
     if (updated === undefined) {
       console.warn(`[agents] command result update returned undefined for ${commandId} — treating as failed update`);
@@ -361,6 +356,40 @@ commandsRoutes.post(
         await handleSensitiveDataCommandResult(command, normalizedData);
       } catch (err) {
         console.error(`[agents] sensitive data post-processing failed for ${commandId}:`, err);
+        captureException(err);
+      }
+    }
+
+    // Offline-queued software installs (dispatchSoftwareInstallToDevice
+    // fallback): the result arrives with the device_commands UUID instead of
+    // the sw-install-<deployment>-<device>-<attempt> id, so reconcile the
+    // matching deployment_results row here. deviceId comes from the
+    // authenticated agent context; the payload's deploymentId/retryCount were
+    // written server-side at queue time (see buildAndDispatchSoftwareInstalls).
+    // The status='pending' + retryCount=attempt guard in the helper makes
+    // replays AND results from a retry-superseded queued command a no-op.
+    if (command.type === 'software_install') {
+      try {
+        const payload =
+          command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
+            ? (command.payload as Record<string, unknown>)
+            : {};
+        if (typeof payload.deploymentId === 'string') {
+          await applySoftwareInstallResult({
+            deploymentId: payload.deploymentId,
+            deviceId,
+            status: normalizedData.status,
+            exitCode: normalizedData.exitCode,
+            stdout: normalizedData.stdout,
+            stderr: normalizedData.stderr,
+            error: normalizedData.error,
+            startedAt: normalizedData.startedAt,
+            durationMs: normalizedData.durationMs,
+            attemptNumber: typeof payload.retryCount === 'number' ? payload.retryCount : 0,
+          });
+        }
+      } catch (err) {
+        console.error(`[agents] software install deployment-result reconciliation failed for ${commandId}:`, err);
         captureException(err);
       }
     }

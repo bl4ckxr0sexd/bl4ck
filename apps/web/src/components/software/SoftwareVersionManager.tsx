@@ -9,6 +9,7 @@ import {
   CheckCircle,
   Upload,
 } from "lucide-react";
+import { asList } from '@/lib/asList';
 import type { DetectionRule } from "@breeze/shared";
 import { cn } from "@/lib/utils";
 import { fetchWithAuth } from "../../stores/auth";
@@ -118,7 +119,7 @@ export default function SoftwareVersionManager({
             ),
           );
         const payload = await response.json();
-        const catalogData = payload.data ?? payload ?? [];
+        const catalogData = asList(payload);
         if (Array.isArray(catalogData) && catalogData.length > 0) {
           resolvedCatalogId = String(
             (catalogData[0] as Record<string, unknown>).id,
@@ -136,10 +137,7 @@ export default function SoftwareVersionManager({
       if (versionsResponse.ok) {
         const versionsPayload = await versionsResponse.json();
         const versionsList =
-          versionsPayload.data ??
-          versionsPayload.versions ??
-          versionsPayload ??
-          [];
+          asList(versionsPayload, 'versions');
         const normalizedVersions = Array.isArray(versionsList)
           ? versionsList.map((v: Record<string, unknown>, i: number) =>
               normalizeVersion(v, i),
@@ -170,7 +168,7 @@ export default function SoftwareVersionManager({
         const res = await fetchWithAuth("/custom-fields?limit=100");
         if (!res.ok || cancelled) return;
         const payload = await res.json();
-        const rows = payload.data ?? payload ?? [];
+        const rows = asList(payload);
         if (Array.isArray(rows)) {
           setCustomFields(
             rows
@@ -303,7 +301,16 @@ export default function SoftwareVersionManager({
         setUploadProgress(90);
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error ?? "Failed to upload version");
+          // Always show the status. Every API failure path returns a JSON body
+          // with an `error` key, so the bare fallback means the response was
+          // not JSON at all — a reverse-proxy 413/502/504 HTML page or a
+          // truncated connection. Including the status makes that case
+          // distinguishable from an API-level failure at a glance (#2794).
+          const detail =
+            typeof errData.error === "string"
+              ? errData.error
+              : "Failed to upload version";
+          throw new Error(`${detail} (HTTP ${response.status})`);
         }
         const newVersionData = await response.json();
         const newVersion = normalizeVersion(

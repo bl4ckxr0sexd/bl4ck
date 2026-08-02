@@ -152,6 +152,13 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
   'routes/agents/inventory.ts:PUT /:id/network',
   'routes/agents/inventory.ts:PUT /:id/software',
   'routes/agents/inventory.ts:PUT /:id/warranty-info',
+  // Agent-token mTLS renewal confirm (Wave 5 Task 4/6). The atomic
+  // activate+demote writes device_mtls_certificates and devices.mtls_cert_*
+  // for the AUTHENTICATED agent's own device only — deviceId is device.id
+  // from the bearer match and the pending row is 404'd unless
+  // pendingRow.deviceId === device.id. No user session, no user-supplied
+  // device input, so allowedSiteIds never applies.
+  'routes/agents/mtls.ts:POST /renew-cert/confirm',
   'routes/agents/sessions.ts:PUT /:id/sessions',
   'routes/agents/state.ts:PUT /:id/config-state',
   'routes/agents/state.ts:PUT /:id/registry-state',
@@ -169,6 +176,10 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
   // ---- Not the bug class: platform-admin-only, portal-session auth, or a
   // mobile/OAuth device row (not an RMM device with a site).
   'routes/admin/abuse.ts:POST /partners/:id/suspend-for-abuse',
+  // Resolves a mobile/OAuth device row (mobile_devices, no site_id/org_id) to
+  // scope authenticator registration — already narrowed by userId, tighter
+  // than site-scope, so a site gate is not meaningful here.
+  'routes/authenticator.ts:POST /devices',
   'routes/lifecycle.ts:GET /admin/users/:userId/mobile-devices',
   'routes/lifecycle.ts:GET /me/mobile-devices',
   'routes/mobile.ts:POST /devices',
@@ -183,9 +194,12 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
   // per-device rows), so no cross-site device data is disclosed (returns
   // re-verified 2026-05-31). NB: totals still span the org incl. other
   // sites — site-scoping the aggregates themselves is a separate product call.
+  // routes/metrics.ts:GET / and GET /trends were exempted here as org-wide
+  // aggregates with the note that site-scoping them was "a separate product
+  // call". Wave 2 made that call: GET / now applies the allowed-site
+  // predicate to every aggregate and GET /trends denies site-restricted
+  // callers outright, so the ratchet correctly demands these entries go.
   'routes/huntress.ts:GET /status',
-  'routes/metrics.ts:GET /',
-  'routes/metrics.ts:GET /trends',
   'routes/sentinelOne.ts:GET /status',
   'routes/softwarePolicies.ts:GET /compliance/overview',
   'routes/updateRings.ts:GET /:id/compliance',
@@ -208,6 +222,9 @@ const SITE_SCOPE_INPUT_EXEMPT: ReadonlySet<string> = new Set<string>([
 // future regression where a non-user-auth file is migrated to plain user auth.
 const SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK: ReadonlySet<string> = new Set<string>([
   // Mobile/OAuth device rows keyed on the user — not RMM devices with a site.
+  // routes/authenticator.ts resolves the row itself — already narrowed by
+  // userId, tighter than site-scope.
+  'routes/authenticator.ts:POST /devices',
   'routes/mobile.ts:POST /devices',
   'routes/mobile.ts:POST /notifications/register',
   'routes/lifecycle.ts:GET /admin/users/:userId/mobile-devices',
@@ -220,8 +237,6 @@ const SITE_SCOPE_INPUT_EXEMPT_USER_SESSION_OK: ReadonlySet<string> = new Set<str
   // re-verification test (added in #1041) accepts them. (Site-scoping the
   // aggregate totals themselves is a separate product call.)
   'routes/huntress.ts:GET /status',
-  'routes/metrics.ts:GET /',
-  'routes/metrics.ts:GET /trends',
   'routes/sentinelOne.ts:GET /status',
   'routes/softwarePolicies.ts:GET /compliance/overview',
   'routes/updateRings.ts:GET /:id/compliance',

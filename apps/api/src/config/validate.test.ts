@@ -44,6 +44,11 @@ const validEnv = {
   // many "production happy-path" tests below from tripping the new check.
   // Tests that assert the missing/invalid IS_HOSTED throw override this.
   IS_HOSTED: 'true',
+  // Production-required (Wave 3 live authorization): the event-socket
+  // permission epoch mode must be declared explicitly so a rolling deploy
+  // never guesses its compatibility posture. Tests that assert the
+  // missing/invalid throw override this.
+  EVENT_PERMISSION_EPOCH_MODE: 'compat',
 };
 
 describe('validateConfig', () => {
@@ -199,6 +204,107 @@ describe('validateConfig', () => {
       }, () => {
         expect(() => validateConfig()).not.toThrow();
       });
+    });
+  });
+
+  describe('M365 customer Graph-actions onboarding + reveal key', () => {
+    it('refuses boot when actions onboarding is enabled without a complete descriptor', () => {
+      withEnv({
+        ...validEnv,
+        M365_CUSTOMER_GRAPH_ACTIONS_ONBOARDING_ENABLED: 'true',
+        M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID: '',
+      }, () => {
+        expect(() => validateConfig()).toThrow(/M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID/);
+      });
+    });
+
+    it('requires APP_ENCRYPTION_KEY_ID when write-action tools are enabled', () => {
+      // Tools-enabled boot also validates the full actions executor descriptor
+      // (Task 4's validateM365CustomerGraphActionsRuntimeConfigAtBoot, which
+      // runs before the new key-id check) — supply a complete, valid
+      // descriptor here so this test isolates the APP_ENCRYPTION_KEY_ID rule
+      // rather than tripping the earlier descriptor check.
+      const dir = mkdtempSync(join(tmpdir(), 'breeze-m365-actions-boot-'));
+      const signingJwkFile = join(dir, 'signing.jwk');
+      writeFileSync(signingJwkFile, JSON.stringify({
+        kty: 'OKP',
+        crv: 'Ed25519',
+        alg: 'EdDSA',
+        use: 'sig',
+        kid: 'graph-actions-api-1',
+        x: Buffer.alloc(32, 1).toString('base64url'),
+        d: Buffer.alloc(32, 2).toString('base64url'),
+      }), { mode: 0o600 });
+      chmodSync(signingJwkFile, 0o600);
+
+      try {
+        withEnv({
+          ...validEnv,
+          M365_GRAPH_ACTIONS_TOOLS_ENABLED: 'true',
+          M365_GRAPH_ACTIONS_TOOLS_ORG_IDS: '*',
+          M365_CUSTOMER_GRAPH_ACTIONS_CLIENT_ID: '33333333-3333-4333-8333-333333333333',
+          M365_CUSTOMER_GRAPH_ACTIONS_CREDENTIAL_VERSION: '0123456789abcdef0123456789abcdef',
+          M365_CUSTOMER_GRAPH_ACTIONS_VAULT_REF:
+            'akv://customer-vault.vault.azure.net/m365-customer-graph-actions/0123456789abcdef0123456789abcdef',
+          M365_GRAPH_ACTIONS_EXECUTOR_URL: 'https://m365-graph-actions.internal.example.test',
+          M365_GRAPH_ACTIONS_EXECUTOR_AUDIENCE: 'm365-graph-actions-executor',
+          M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_PRIVATE_JWK_FILE: signingJwkFile,
+          M365_GRAPH_ACTIONS_EXECUTOR_SIGNING_KID: 'graph-actions-api-1',
+          PUBLIC_URL: 'https://console.example.test',
+          APP_ENCRYPTION_KEY_ID: '',
+        }, () => {
+          expect(() => validateConfig()).toThrow(/APP_ENCRYPTION_KEY_ID/);
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('M365 communications-delegated (comms) boot validation', () => {
+    it('fails boot when comms onboarding is enabled without a client id', () => {
+      withEnv({
+        ...validEnv,
+        M365_COMMS_ONBOARDING_ENABLED: 'true',
+        M365_COMMS_CLIENT_ID: '',
+      }, () => {
+        expect(() => validateConfig()).toThrow(/M365_COMMS_CLIENT_ID is required/);
+      });
+    });
+
+    it('fails boot when comms tools are enabled without a user allowlist', () => {
+      // The loader never reads the tools allowlist (it's on the hot
+      // tool-registration path), so the boot validator must check it
+      // explicitly — this proves the call site in validate.ts is wired.
+      const dir = mkdtempSync(join(tmpdir(), 'breeze-m365-comms-boot-'));
+      const signingJwkFile = join(dir, 'signing.jwk');
+      writeFileSync(signingJwkFile, JSON.stringify({
+        kty: 'OKP',
+        crv: 'Ed25519',
+        alg: 'EdDSA',
+        use: 'sig',
+        kid: 'comms-kid-1',
+        x: Buffer.alloc(32, 1).toString('base64url'),
+        d: Buffer.alloc(32, 2).toString('base64url'),
+      }), { mode: 0o600 });
+      chmodSync(signingJwkFile, 0o600);
+
+      try {
+        withEnv({
+          ...validEnv,
+          M365_COMMS_TOOLS_ENABLED: 'true',
+          M365_COMMS_CLIENT_ID: '33333333-3333-4333-8333-333333333333',
+          M365_COMMS_EXECUTOR_URL: 'https://comms-executor.internal.example.test',
+          M365_COMMS_EXECUTOR_AUDIENCE: 'm365-communications-executor',
+          M365_COMMS_EXECUTOR_SIGNING_PRIVATE_JWK_FILE: signingJwkFile,
+          M365_COMMS_EXECUTOR_SIGNING_KID: 'comms-kid-1',
+          PUBLIC_URL: 'https://console.example.test',
+        }, () => {
+          expect(() => validateConfig()).toThrow(/M365_COMMS_TOOLS_USER_IDS/);
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -958,6 +1064,216 @@ describe('validateConfig', () => {
     });
   });
 
+  // ---- Security remediation Wave 5, Task 6 — agent certificate/device
+  // binding mode --------------------------------------------------------
+  describe('AGENT_MTLS_BINDING_MODE', () => {
+    it('defaults to off when unset', () => {
+      withEnv(validEnv, () => {
+        const config = validateConfig();
+        expect(config.AGENT_MTLS_BINDING_MODE).toBe('off');
+      });
+    });
+
+    it('accepts audit', () => {
+      withEnv({ ...validEnv, AGENT_MTLS_BINDING_MODE: 'audit' }, () => {
+        const config = validateConfig();
+        expect(config.AGENT_MTLS_BINDING_MODE).toBe('audit');
+      });
+    });
+
+    it('accepts enforce', () => {
+      withEnv({ ...validEnv, AGENT_MTLS_BINDING_MODE: 'enforce' }, () => {
+        const config = validateConfig();
+        expect(config.AGENT_MTLS_BINDING_MODE).toBe('enforce');
+      });
+    });
+
+    it('boot-refuses an invalid value instead of silently falling back', () => {
+      withEnv({ ...validEnv, AGENT_MTLS_BINDING_MODE: 'bogus' }, () => {
+        expect(() => validateConfig()).toThrow('AGENT_MTLS_BINDING_MODE');
+      });
+    });
+
+    it('an absent value keeps production booting (default stays off)', () => {
+      withEnv({ ...validEnv, NODE_ENV: 'production', CORS_ALLOWED_ORIGINS: 'https://app.breeze.io', TRUST_PROXY_HEADERS: 'false' }, () => {
+        const config = validateConfig();
+        expect(config.AGENT_MTLS_BINDING_MODE).toBe('off');
+      });
+    });
+  });
+
+  // ---- Security remediation Wave 6, Task 9 — agent manifest-signing-key-ID
+  // compatibility control. Explicit boolean: only 'true'/'false' are valid,
+  // default 'false'. This is one of the two variables Task 9 owns; both
+  // MUST be validated (declared in envSchema AND read in the safeParse pick
+  // list in validateConfig()) or the value silently never reaches the parser
+  // (issue #2896's exact shape).
+  describe('AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID', () => {
+    it('defaults to false when unset', () => {
+      withEnv(validEnv, () => {
+        const config = validateConfig();
+        expect(config.AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID).toBe('false');
+      });
+    });
+
+    it('accepts an explicit false', () => {
+      withEnv({ ...validEnv, AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID: 'false' }, () => {
+        const config = validateConfig();
+        expect(config.AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID).toBe('false');
+      });
+    });
+
+    it('accepts an explicit true', () => {
+      withEnv({ ...validEnv, AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID: 'true' }, () => {
+        const config = validateConfig();
+        expect(config.AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID).toBe('true');
+      });
+    });
+
+    // Also guards the exact bug class named in the task: a variable declared
+    // in envSchema but missing from the safeParse pick list is always
+    // undefined at parse time, so the schema default silently wins and an
+    // invalid value is accepted at boot instead of refusing to start. A bare
+    // `.toThrow()` regression-guard variant of this test would add nothing
+    // beyond the message assertion below, since a thrown error already
+    // proves the pick-list omission didn't regress — so only one test.
+    it('boot-refuses an invalid value instead of silently falling back to false', () => {
+      withEnv({ ...validEnv, AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID: 'yes' }, () => {
+        expect(() => validateConfig()).toThrow('AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID');
+      });
+    });
+
+    it('an absent value keeps production booting (default stays false)', () => {
+      withEnv({ ...validEnv, NODE_ENV: 'production', CORS_ALLOWED_ORIGINS: 'https://app.breeze.io', TRUST_PROXY_HEADERS: 'false' }, () => {
+        const config = validateConfig();
+        expect(config.AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID).toBe('false');
+      });
+    });
+  });
+
+  // ---- Security remediation Wave 6, Task 9 (approved deviation D1) —
+  // managed-software destination policy mode. compat is the default and the
+  // safe state (Task 5 always fails closed on a private destination for a
+  // capability-0 device); enforce is the fleet-upgraded end state.
+  describe('MANAGED_SOFTWARE_POLICY_MODE', () => {
+    it('defaults to compat when unset', () => {
+      withEnv(validEnv, () => {
+        const config = validateConfig();
+        expect(config.MANAGED_SOFTWARE_POLICY_MODE).toBe('compat');
+      });
+    });
+
+    it('accepts an explicit compat', () => {
+      withEnv({ ...validEnv, MANAGED_SOFTWARE_POLICY_MODE: 'compat' }, () => {
+        const config = validateConfig();
+        expect(config.MANAGED_SOFTWARE_POLICY_MODE).toBe('compat');
+      });
+    });
+
+    it('accepts enforce', () => {
+      withEnv({ ...validEnv, MANAGED_SOFTWARE_POLICY_MODE: 'enforce' }, () => {
+        const config = validateConfig();
+        expect(config.MANAGED_SOFTWARE_POLICY_MODE).toBe('enforce');
+      });
+    });
+
+    // Also guards the same pick-list-omission bug class as
+    // AGENT_REQUIRE_MANIFEST_SIGNING_KEY_ID above (see that describe block's
+    // comment) — a bare `.toThrow()` regression-guard variant would add
+    // nothing over the message assertion below, so only one test.
+    it('boot-refuses an invalid value instead of silently falling back to compat', () => {
+      withEnv({ ...validEnv, MANAGED_SOFTWARE_POLICY_MODE: 'strict' }, () => {
+        expect(() => validateConfig()).toThrow('MANAGED_SOFTWARE_POLICY_MODE');
+      });
+    });
+
+    it('an absent value keeps production booting (default stays compat)', () => {
+      withEnv({ ...validEnv, NODE_ENV: 'production', CORS_ALLOWED_ORIGINS: 'https://app.breeze.io', TRUST_PROXY_HEADERS: 'false' }, () => {
+        const config = validateConfig();
+        expect(config.MANAGED_SOFTWARE_POLICY_MODE).toBe('compat');
+      });
+    });
+  });
+
+  // ---- Security remediation Wave 5, Task 8 (TRANSPORT-001) — canonical
+  // PUBLIC_API_URL form, required only when FORCE_HTTPS=true --------------
+  describe('PUBLIC_API_URL canonical form (gated on FORCE_HTTPS)', () => {
+    it('is not required when FORCE_HTTPS is unset — does not retroactively boot-refuse existing deployments', () => {
+      withEnv(validEnv, () => {
+        expect(() => validateConfig()).not.toThrow();
+      });
+    });
+
+    it('is not required when FORCE_HTTPS is explicitly false', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'false' }, () => {
+        expect(() => validateConfig()).not.toThrow();
+      });
+    });
+
+    it('boot-refuses when FORCE_HTTPS=true and PUBLIC_API_URL is missing', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'true' }, () => {
+        expect(() => validateConfig()).toThrow('PUBLIC_API_URL');
+      });
+    });
+
+    it('boot-refuses when FORCE_HTTPS=1 and PUBLIC_API_URL is missing (accepts the "1" truthy form too)', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: '1' }, () => {
+        expect(() => validateConfig()).toThrow('PUBLIC_API_URL');
+      });
+    });
+
+    it('boot-refuses a non-https PUBLIC_API_URL when FORCE_HTTPS=true', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'true', PUBLIC_API_URL: 'http://api.example.com' }, () => {
+        expect(() => validateConfig()).toThrow('PUBLIC_API_URL');
+      });
+    });
+
+    it('boot-refuses a PUBLIC_API_URL with embedded userinfo when FORCE_HTTPS=true', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'true', PUBLIC_API_URL: 'https://user:pass@api.example.com' }, () => {
+        expect(() => validateConfig()).toThrow('PUBLIC_API_URL');
+      });
+    });
+
+    it('boot-refuses a PUBLIC_API_URL with a query string when FORCE_HTTPS=true', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'true', PUBLIC_API_URL: 'https://api.example.com?x=1' }, () => {
+        expect(() => validateConfig()).toThrow('PUBLIC_API_URL');
+      });
+    });
+
+    it('boot-refuses a PUBLIC_API_URL with a fragment when FORCE_HTTPS=true', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'true', PUBLIC_API_URL: 'https://api.example.com#section' }, () => {
+        expect(() => validateConfig()).toThrow('PUBLIC_API_URL');
+      });
+    });
+
+    it('boot-refuses a malformed PUBLIC_API_URL when FORCE_HTTPS=true', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'true', PUBLIC_API_URL: 'not a url' }, () => {
+        expect(() => validateConfig()).toThrow('PUBLIC_API_URL');
+      });
+    });
+
+    it('accepts a canonical https PUBLIC_API_URL when FORCE_HTTPS=true', () => {
+      withEnv({
+        ...validEnv,
+        NODE_ENV: 'production',
+        CORS_ALLOWED_ORIGINS: 'https://app.breeze.io',
+        TRUST_PROXY_HEADERS: 'true',
+        FORCE_HTTPS: 'true',
+        PUBLIC_API_URL: 'https://api.breeze.example.com',
+      }, () => {
+        const config = validateConfig();
+        expect(config.PUBLIC_API_URL).toBe('https://api.breeze.example.com');
+      });
+    });
+
+    it('accepts a canonical https PUBLIC_API_URL with a non-default port when FORCE_HTTPS=true', () => {
+      withEnv({ ...validEnv, FORCE_HTTPS: 'true', PUBLIC_API_URL: 'https://api.example.com:8443' }, () => {
+        const config = validateConfig();
+        expect(config.PUBLIC_API_URL).toBe('https://api.example.com:8443');
+      });
+    });
+  });
+
   // ---- OAuth DCR (Dynamic Client Registration) hardening (Task 21) -------
   // When DCR is on in production it must declare an anti-spam posture: EITHER
   // gate registration behind an initial-access-token (OAUTH_DCR_REQUIRE_IAT)
@@ -1094,6 +1410,88 @@ describe('validateConfig', () => {
         NODE_ENV: 'development',
         OAUTH_DCR_ENABLED: 'true',
         OAUTH_DCR_REQUIRE_IAT: '',
+      }, () => {
+        expect(() => validateConfig()).not.toThrow();
+      });
+    });
+  });
+
+  // ---- Wave 3 live-authorization rollout controls -------------------------
+  // OAUTH_AUTH_EPOCH_ENFORCE_AFTER and EVENT_PERMISSION_EPOCH_MODE decide how
+  // long pre-Wave-3 OAuth tokens and version-one event tickets keep working.
+  // Both refusals live here rather than in config/env.ts: env.ts is imported
+  // by this validator, by jobs, by seeds and by scripts, so a module-scope
+  // throw there would preempt this aggregated report and take down unrelated
+  // processes that never touch OAuth or event sockets.
+  describe('live authorization rollout config', () => {
+    const prodEnv = {
+      ...validEnv,
+      NODE_ENV: 'production',
+      CORS_ALLOWED_ORIGINS: 'https://app.breeze.io',
+      TRUST_PROXY_HEADERS: 'true',
+    };
+
+    it('refuses boot in production when EVENT_PERMISSION_EPOCH_MODE is missing', () => {
+      withEnv({ ...prodEnv, EVENT_PERMISSION_EPOCH_MODE: '' }, () => {
+        expect(() => validateConfig()).toThrow(/EVENT_PERMISSION_EPOCH_MODE/i);
+      });
+    });
+
+    it.each(['compat', 'enforce'])(
+      'boots in production with EVENT_PERMISSION_EPOCH_MODE=%s',
+      (mode) => {
+        withEnv({ ...prodEnv, EVENT_PERMISSION_EPOCH_MODE: mode }, () => {
+          expect(() => validateConfig()).not.toThrow();
+        });
+      },
+    );
+
+    // Shape is enforced in EVERY environment — an unrecognized mode would
+    // otherwise fall back to the closed value at import and silently change
+    // ticket acceptance.
+    it.each(['development', 'production'])(
+      'refuses boot in %s when EVENT_PERMISSION_EPOCH_MODE is not compat or enforce',
+      (nodeEnv) => {
+        withEnv({ ...prodEnv, NODE_ENV: nodeEnv, EVENT_PERMISSION_EPOCH_MODE: 'strict' }, () => {
+          expect(() => validateConfig()).toThrow(/EVENT_PERMISSION_EPOCH_MODE must be compat or enforce/i);
+        });
+      },
+    );
+
+    it('refuses boot in production when MCP_OAUTH_ENABLED=true and OAUTH_AUTH_EPOCH_ENFORCE_AFTER is missing', () => {
+      withEnv({ ...prodEnv, MCP_OAUTH_ENABLED: 'true', OAUTH_AUTH_EPOCH_ENFORCE_AFTER: '' }, () => {
+        expect(() => validateConfig()).toThrow(/OAUTH_AUTH_EPOCH_ENFORCE_AFTER/i);
+      });
+    });
+
+    it('does not require OAUTH_AUTH_EPOCH_ENFORCE_AFTER when OAuth is disabled', () => {
+      withEnv({ ...prodEnv, MCP_OAUTH_ENABLED: 'false', OAUTH_AUTH_EPOCH_ENFORCE_AFTER: '' }, () => {
+        expect(() => validateConfig()).not.toThrow();
+      });
+    });
+
+    // A local timestamp would move the compatibility boundary with the host
+    // timezone, so an explicit UTC/offset suffix is mandatory everywhere.
+    it.each(['development', 'production'])(
+      'refuses boot in %s when OAUTH_AUTH_EPOCH_ENFORCE_AFTER has no UTC/offset suffix',
+      (nodeEnv) => {
+        withEnv({
+          ...prodEnv,
+          NODE_ENV: nodeEnv,
+          OAUTH_AUTH_EPOCH_ENFORCE_AFTER: '2026-08-06T00:30:00',
+        }, () => {
+          expect(() => validateConfig()).toThrow(/OAUTH_AUTH_EPOCH_ENFORCE_AFTER/i);
+        });
+      },
+    );
+
+    it('accepts an absolute UTC OAUTH_AUTH_EPOCH_ENFORCE_AFTER in production', () => {
+      withEnv({
+        ...prodEnv,
+        MCP_OAUTH_ENABLED: 'true',
+        OAUTH_JWKS_PRIVATE_JWK: '{"kty":"oct"}',
+        OAUTH_COOKIE_SECRET: 'prod-test-oauth-cookie-secret-32-chars-min-strong-random',
+        OAUTH_AUTH_EPOCH_ENFORCE_AFTER: '2026-08-06T00:30:00Z',
       }, () => {
         expect(() => validateConfig()).not.toThrow();
       });
@@ -1277,6 +1675,10 @@ describe('validateConfig', () => {
         MCP_OAUTH_ENABLED: 'true',
         OAUTH_JWKS_PRIVATE_JWK: '{"keys":[{"kty":"OKP"}]}',
         OAUTH_COOKIE_SECRET: 'a-strong-random-cookie-secret-32-chars-min',
+        // Wave 3: enabling OAuth in production also requires the absolute
+        // auth-epoch compatibility deadline. Asserted on its own in the
+        // "live authorization rollout config" suite above.
+        OAUTH_AUTH_EPOCH_ENFORCE_AFTER: '2026-08-06T00:30:00Z',
       }, () => {
         expect(() => validateConfig()).not.toThrow();
       });

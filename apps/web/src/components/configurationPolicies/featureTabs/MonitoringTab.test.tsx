@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import MonitoringTab from './MonitoringTab';
@@ -49,6 +49,152 @@ function renderTab() {
     />,
   );
 }
+
+// Alert-rule ownership moved to the alert_rule feature link (2026-07-30
+// consolidation). The API now REJECTS a monitoring payload carrying either key,
+// so this tab must neither render editors for them nor echo a legacy link's
+// values back on save.
+describe('MonitoringTab alert-rule consolidation', () => {
+  const legacyLink = {
+    id: 'link-1',
+    featureType: 'monitoring' as const,
+    featurePolicyId: null,
+    inlineSettings: {
+      checkIntervalSeconds: 90,
+      watches: [
+        {
+          watchType: 'service',
+          name: 'nginx',
+          enabled: true,
+          alertOnStop: true,
+          alertAfterConsecutiveFailures: 2,
+          alertSeverity: 'high',
+          thresholdDurationSeconds: 300,
+          autoRestart: false,
+          maxRestartAttempts: 3,
+          restartCooldownSeconds: 300,
+        },
+      ],
+      // Pre-consolidation rows, still persisted on the link.
+      eventLogAlerts: [
+        {
+          name: 'Security errors',
+          category: 'security',
+          level: 'error',
+          countThreshold: 1,
+          windowMinutes: 15,
+          severity: 'high',
+          enabled: true,
+        },
+      ],
+      alertRules: [
+        {
+          name: 'High CPU',
+          severity: 'high',
+          conditions: [{ type: 'metric', metric: 'cpu', operator: 'gt', value: 80 }],
+          cooldownMinutes: 15,
+          autoResolve: false,
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock.mockResolvedValue(makeJsonResponse({ data: [] }));
+    saveMock.mockResolvedValue({
+      id: 'link-1',
+      featureType: 'monitoring',
+      featurePolicyId: null,
+      inlineSettings: {},
+    });
+  });
+
+  it('renders no metric-rule or event-log-rule editor, only a pointer to the Alerts feature', () => {
+    renderTab();
+
+    expect(screen.queryByText('Metric & Status Alert Rules')).toBeNull();
+    expect(screen.queryByText('Event Log Alerts')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add Rule' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add Alert' })).toBeNull();
+    // The surviving agent-side section is untouched.
+    expect(screen.getByText('Service & Process Watches')).toBeTruthy();
+    expect(screen.getByTestId('monitoring-alerts-pointer').textContent).toContain(
+      'configured in the Alerts feature',
+    );
+  });
+
+  it('omits alertRules/eventLogAlerts from the save payload entirely', async () => {
+    renderTab();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+    await waitFor(() => expect(saveMock).toHaveBeenCalled());
+
+    const settings = saveMock.mock.calls.at(-1)![1].inlineSettings as Record<string, unknown>;
+    expect(Object.keys(settings).sort()).toEqual(['checkIntervalSeconds', 'watches']);
+  });
+
+  it('does not echo a legacy link\'s alertRules/eventLogAlerts back on save', async () => {
+    render(
+      <MonitoringTab
+        policyId="policy-1"
+        existingLink={legacyLink}
+        linkedPolicyId={null}
+        onLinkChanged={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+    await waitFor(() => expect(saveMock).toHaveBeenCalled());
+
+    const settings = saveMock.mock.calls.at(-1)![1].inlineSettings as Record<string, unknown>;
+    expect(settings).not.toHaveProperty('alertRules');
+    expect(settings).not.toHaveProperty('eventLogAlerts');
+    // The keys this tab still owns survive the round-trip.
+    expect(settings.checkIntervalSeconds).toBe(90);
+    expect(settings.watches).toHaveLength(1);
+  });
+
+  it('tells the tech where the legacy rules went instead of dropping them silently', () => {
+    render(
+      <MonitoringTab
+        policyId="policy-1"
+        existingLink={legacyLink}
+        linkedPolicyId={null}
+        onLinkChanged={vi.fn()}
+      />,
+    );
+
+    const notice = screen.getByTestId('monitoring-legacy-alert-rules-notice');
+    // One alertRules entry + one eventLogAlerts entry on the fixture link.
+    expect(notice.textContent).toContain('2');
+    expect(notice.textContent).toContain('Alerts');
+    // Non-blocking: saving the tab still works.
+    expect(
+      (screen.getByRole('button', { name: /^Save$/i }) as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+
+  it('shows no legacy notice for a link that never carried alert rules', () => {
+    renderTab();
+    expect(screen.queryByTestId('monitoring-legacy-alert-rules-notice')).toBeNull();
+  });
+
+  it('navigates to the Alerts tab from the legacy notice', () => {
+    render(
+      <MonitoringTab
+        policyId="policy-1"
+        existingLink={legacyLink}
+        linkedPolicyId={null}
+        onLinkChanged={vi.fn()}
+      />,
+    );
+
+    window.location.hash = '';
+    fireEvent.click(screen.getByTestId('monitoring-legacy-alert-rules-link'));
+    expect(window.location.hash).toBe('#alert_rule');
+  });
+});
 
 describe('MonitoringTab disclosure keyboard toggle (issue #1932)', () => {
   beforeEach(() => {
@@ -130,5 +276,37 @@ describe('MonitoringTab disclosure keyboard toggle (issue #1932)', () => {
     fireEvent.keyDown(header, { key: 'ArrowDown' });
 
     expect(header.getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+// The feature-tab strip in ConfigPolicyDetailPage is hash-driven (useHashTab),
+// so the pointer switches tabs by writing `#alert_rule` — exactly what the
+// strip's own buttons do.
+describe('MonitoringTab pointer to the Alerts feature', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock.mockResolvedValue(makeJsonResponse({ data: [] }));
+    window.location.hash = '#monitoring';
+  });
+
+  it('navigates to the alert_rule tab when the pointer link is clicked', () => {
+    renderTab();
+
+    const link = screen.getByTestId('monitoring-alerts-pointer-link');
+    expect(within(screen.getByTestId('monitoring-alerts-pointer')).getByTestId(
+      'monitoring-alerts-pointer-link',
+    )).toBe(link);
+
+    fireEvent.click(link);
+
+    expect(window.location.hash).toBe('#alert_rule');
+  });
+
+  it('keeps the explanatory sentence alongside the link', () => {
+    renderTab();
+
+    const pointer = screen.getByTestId('monitoring-alerts-pointer');
+    expect(pointer.textContent).toContain('configured in the Alerts feature');
+    expect(pointer.textContent).toContain('Open Alerts');
   });
 });

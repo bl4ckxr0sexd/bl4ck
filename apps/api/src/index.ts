@@ -149,7 +149,8 @@ import { peripheralControlRoutes } from './routes/peripheralControl';
 import { browserSecurityRoutes } from './routes/browserSecurity';
 import { c2cRoutes, m365CallbackRoute } from './routes/c2c';
 import { googleRoutes } from './routes/google';
-import { m365ConsentCallbackRoutes } from './routes/m365ConsentCallback';
+import { m365ActionsConsentCallbackRoutes, m365ConsentCallbackRoutes } from './routes/m365ConsentCallback';
+import { m365CustomerGraphActionsRoutes } from './routes/m365CustomerGraphActions';
 import { m365CustomerGraphReadRoutes } from './routes/m365CustomerGraphRead';
 import { m365Routes } from './routes/m365';
 import { onedriveRoutes } from './routes/onedrive';
@@ -184,6 +185,14 @@ import { initializeMlOutputRetention, shutdownMlOutputRetention } from './jobs/m
 import { initializeIPHistoryRetention, shutdownIPHistoryRetention } from './jobs/ipHistoryRetention';
 import { initializeChangeLogRetention, shutdownChangeLogRetention } from './jobs/changeLogRetention';
 import { initializeOauthCleanupWorker, shutdownOauthCleanupWorker } from './jobs/oauthCleanup';
+import {
+  initializeOAuthRevocationRetryWorker,
+  shutdownOAuthRevocationRetryWorker,
+} from './jobs/oauthRevocationRetryWorker';
+import {
+  initializeMtlsCertificateRevocationWorker,
+  shutdownMtlsCertificateRevocationWorker,
+} from './jobs/mtlsCertificateRevocation';
 import { initializeAuthEmailWorker, shutdownAuthEmailWorker } from './jobs/authEmailWorker';
 import { initializeQuoteSendWorker, shutdownQuoteSendWorker } from './jobs/quoteSendQueue';
 import {
@@ -200,6 +209,14 @@ import {
   shutdownAuditChainAnchorWorker,
 } from './jobs/auditChainAnchor';
 import { initializeTenantErasureWorker, shutdownTenantErasureWorker } from './jobs/tenantErasure';
+import {
+  initializeDesktopSessionFinalizationWorker,
+  shutdownDesktopSessionFinalizationWorker,
+} from './jobs/desktopSessionFinalizationWorker';
+import {
+  initializeDesktopSessionOrphanRecovery,
+  shutdownDesktopSessionOrphanRecovery,
+} from './services/desktopSessionOrphanRecovery';
 import { initializeDiscoveryWorker, shutdownDiscoveryWorker } from './jobs/discoveryWorker';
 import { initializeNetworkBaselineWorker, shutdownNetworkBaselineWorker } from './jobs/networkBaselineWorker';
 import { initializeSnmpWorker, shutdownSnmpWorker } from './jobs/snmpWorker';
@@ -209,6 +226,8 @@ import { initializeUnifiTelemetryWorker } from './jobs/unifiTelemetryWorker';
 import { initializeSnmpRetention, shutdownSnmpRetention } from './jobs/snmpRetention';
 import { initializeReliabilityRetention, shutdownReliabilityRetention } from './jobs/reliabilityRetention';
 import { initializeProcessSampleRetention, shutdownProcessSampleRetention } from './jobs/processSampleRetention';
+import { initializeDeviceMetricsRetention, shutdownDeviceMetricsRetention } from './jobs/deviceMetricsRetention';
+import { initializeServiceProcessCheckRetention, shutdownServiceProcessCheckRetention } from './jobs/serviceProcessCheckRetention';
 import { initializePlaybookRetention, shutdownPlaybookRetention } from './jobs/playbookRetention';
 import { initializePolicyEvaluationWorker, shutdownPolicyEvaluationWorker } from './jobs/policyEvaluationWorker';
 import { initializeAutomationWorker, shutdownAutomationWorker } from './jobs/automationWorker';
@@ -258,6 +277,7 @@ import {
   shutdownIncidentSlaMonitor,
 } from './jobs/incidentJobs';
 import { initializeStaleCommandReaper, shutdownStaleCommandReaper } from './jobs/staleCommandReaper';
+import { initializeSoftwareDeploymentScheduler, shutdownSoftwareDeploymentScheduler } from './jobs/softwareDeploymentScheduler';
 import { initializePamJobs, shutdownPamJobs } from './jobs/pamJobs';
 import { initializeApprovalExpiryReaper, shutdownApprovalExpiryReaper } from './jobs/approvalExpiryReaper';
 import { initializeOffboardingDrainReaper, shutdownOffboardingDrainReaper } from './jobs/offboardingDrainReaper';
@@ -304,6 +324,7 @@ import { syncBinaries } from './services/binarySync';
 import * as dbModule from './db';
 import { deviceGroups, devices, securityThreats, webhookDeliveries, webhooks as webhooksTable } from './db/schema';
 import { and, eq, sql } from 'drizzle-orm';
+import { envInt } from './utils/envInt';
 
 const { db } = dbModule;
 const runWithSystemDbAccess = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -504,6 +525,7 @@ const FALLBACK_AUDIT_EXCLUDE_PREFIXES = [
   '/agent-ws',      // WebSocket upgrade (not HTTP mutations)
   '/desktop-ws',    // WebSocket upgrade
   '/dev',           // local dev-only push routes
+  '/time-entries',  // explicit per-entry audit ownership in route handlers
 ];
 
 const FALLBACK_AUDIT_EXCLUDE_PATHS: RegExp[] = [
@@ -965,7 +987,9 @@ api.route('/', m365CallbackRoute); // Public callback (no auth) — must precede
 api.route('/c2c', c2cRoutes);
 api.route('/google', googleRoutes);
 api.route('/m365', m365ConsentCallbackRoutes); // Public two-phase consent callback; mount before authenticated M365 routes
+api.route('/m365', m365ActionsConsentCallbackRoutes); // Public actions-profile callback (/m365/actions-consent/callback); distinct path, same base, no collision
 api.route('/m365', m365CustomerGraphReadRoutes);
+api.route('/m365/customer-graph-actions', m365CustomerGraphActionsRoutes);
 api.route('/m365', m365Routes);
 api.route('/onedrive', onedriveRoutes);
 api.route('/dr', drRoutes);
@@ -1220,8 +1244,15 @@ async function initializeWorkers(): Promise<void> {
     ['ipHistoryRetention', initializeIPHistoryRetention],
     ['reliabilityRetention', initializeReliabilityRetention],
     ['processSampleRetention', initializeProcessSampleRetention],
+    ['deviceMetricsRetention', initializeDeviceMetricsRetention],
+    ['serviceProcessCheckRetention', initializeServiceProcessCheckRetention],
     ['changeLogRetention', initializeChangeLogRetention],
     ['oauthCleanup', initializeOauthCleanupWorker],
+    ['oauthRevocationRetryWorker', async () => { initializeOAuthRevocationRetryWorker(); }],
+    // Wave 5 Task 3: durable/idempotent provider certificate revocation
+    // (worker + 5-minute sweep for due retries and expired pending-activation
+    // rows). initializeMtlsCertificateRevocationWorker is synchronous.
+    ['mtlsCertificateRevocationWorker', async () => { initializeMtlsCertificateRevocationWorker(); }],
     // SR2-22: out-of-band auth-email worker (forgot-password issuance/send).
     // initializeAuthEmailWorker is synchronous (returns void), so wrap it.
     ['authEmailWorker', async () => { initializeAuthEmailWorker(); }],
@@ -1233,6 +1264,8 @@ async function initializeWorkers(): Promise<void> {
     ['auditChainVerify', initializeAuditChainVerifyWorker],
     ['auditChainAnchor', initializeAuditChainAnchorWorker],
     ['tenantErasure', initializeTenantErasureWorker],
+    ['desktopSessionFinalization', initializeDesktopSessionFinalizationWorker],
+    ['desktopSessionOrphanRecovery', initializeDesktopSessionOrphanRecovery],
     ['playbookRetention', initializePlaybookRetention],
     ['discoveryWorker', initializeDiscoveryWorker],
     ['networkBaselineWorker', initializeNetworkBaselineWorker],
@@ -1270,6 +1303,7 @@ async function initializeWorkers(): Promise<void> {
     ['incidentTimelineEnricher', initializeIncidentTimelineEnricher],
     ['incidentSlaMonitor', initializeIncidentSlaMonitor],
     ['staleCommandReaper', initializeStaleCommandReaper],
+    ['softwareDeploymentScheduler', initializeSoftwareDeploymentScheduler],
     ['pamJobs', initializePamJobs],
     ['approvalExpiryReaper', initializeApprovalExpiryReaper],
     ['offboardingDrainReaper', initializeOffboardingDrainReaper],
@@ -1423,8 +1457,12 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownMlOutputRetention,
     shutdownReliabilityRetention,
     shutdownProcessSampleRetention,
+    shutdownDeviceMetricsRetention,
+    shutdownServiceProcessCheckRetention,
     shutdownChangeLogRetention,
     shutdownOauthCleanupWorker,
+    shutdownOAuthRevocationRetryWorker,
+    shutdownMtlsCertificateRevocationWorker,
     shutdownAuthEmailWorker,
     shutdownQuoteSendWorker,
     shutdownEnrollmentKeyCleanupWorker,
@@ -1433,6 +1471,8 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownAuditChainVerifyWorker,
     shutdownAuditChainAnchorWorker,
     shutdownTenantErasureWorker,
+    shutdownDesktopSessionOrphanRecovery,
+    shutdownDesktopSessionFinalizationWorker,
     shutdownPlaybookRetention,
     shutdownSecurityPostureWorker,
     shutdownReliabilityWorker,
@@ -1454,6 +1494,7 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     shutdownAlertCorrelationWorker,
     shutdownAlertWorkers,
     shutdownStaleCommandReaper,
+    shutdownSoftwareDeploymentScheduler,
     shutdownPamJobs,
     shutdownApprovalExpiryReaper,
     shutdownOffboardingDrainReaper,
@@ -1498,7 +1539,7 @@ async function shutdownRuntime(signal: NodeJS.Signals): Promise<void> {
     // Bounded grace for in-flight requests to finish, then force-close stragglers
     // so server.close() can't hang on keep-alive connections.
     await new Promise<void>((resolve) =>
-      setTimeout(resolve, Number(process.env.SHUTDOWN_DRAIN_MS ?? '5000'))
+      setTimeout(resolve, envInt('SHUTDOWN_DRAIN_MS', 5000))
     );
     if (typeof httpServer.closeAllConnections === 'function') {
       httpServer.closeAllConnections();

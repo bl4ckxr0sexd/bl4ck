@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
 import { zValidator } from '../../lib/validation';
+import { zodValidationErrorBody } from '../../lib/zodIssues';
 import type { AuthContext } from '../../middleware/auth';
 import { hasSatisfiedMfa, requirePermission, requireScope } from '../../middleware/auth';
 import {
+  alertRuleInlineSettingsSchema,
   backupInlineSettingsSchema,
   backupProfileLinkedInlineSettingsSchema,
+  monitoringInlineSettingsSchema,
   onedriveHelperInlineSettingsSchema,
   patchInlineSettingsSchema,
 } from '@breeze/shared/validators';
@@ -128,7 +131,7 @@ featureLinkRoutes.post(
       if (!parsed.success) {
         // `issues` included so the web client (extractApiError) can render the messages.
         return c.json(
-          { error: 'Invalid patch settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+          zodValidationErrorBody('Invalid patch settings', parsed.error),
           400
         );
       }
@@ -143,7 +146,7 @@ featureLinkRoutes.post(
       const parsed = schema.safeParse(data.inlineSettings);
       if (!parsed.success) {
         return c.json(
-          { error: 'Invalid backup settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+          zodValidationErrorBody('Invalid backup settings', parsed.error),
           400
         );
       }
@@ -154,7 +157,7 @@ featureLinkRoutes.post(
       const parsed = pamInlineSettingsSchema.safeParse(data.inlineSettings);
       if (!parsed.success) {
         return c.json(
-          { error: 'Invalid pam settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+          zodValidationErrorBody('Invalid pam settings', parsed.error),
           400
         );
       }
@@ -165,7 +168,7 @@ featureLinkRoutes.post(
       const parsed = remoteAccessInlineSettingsSchema.safeParse(data.inlineSettings);
       if (!parsed.success) {
         return c.json(
-          { error: 'Invalid remote access settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+          zodValidationErrorBody('Invalid remote access settings', parsed.error),
           400
         );
       }
@@ -176,7 +179,7 @@ featureLinkRoutes.post(
       const parsed = onedriveHelperInlineSettingsSchema.safeParse(data.inlineSettings);
       if (!parsed.success) {
         return c.json(
-          { error: 'Invalid onedrive_helper settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+          zodValidationErrorBody('Invalid onedrive_helper settings', parsed.error),
           400
         );
       }
@@ -184,10 +187,37 @@ featureLinkRoutes.post(
     }
 
     // Reject offline alert rules whose duration exceeds the re-eval horizon —
-    // such a rule could never fire (issue #1982).
+    // such a rule could never fire (issue #1982). Runs BEFORE the schema parse
+    // below so an oversized-but-well-formed duration gets this specific message
+    // rather than the enum/range message.
     if (data.featureType === 'alert_rule' && data.inlineSettings) {
       const violation = findOfflineDurationViolation(data.inlineSettings);
       if (violation) return c.json({ error: violation }, 400);
+    }
+
+    if (data.featureType === 'alert_rule' && data.inlineSettings) {
+      const parsed = alertRuleInlineSettingsSchema.safeParse(data.inlineSettings);
+      if (!parsed.success) {
+        return c.json(
+          zodValidationErrorBody('Invalid alert_rule settings', parsed.error),
+          400
+        );
+      }
+      data.inlineSettings = parsed.data;
+    }
+
+    if (data.featureType === 'monitoring' && data.inlineSettings) {
+      const parsed = monitoringInlineSettingsSchema.safeParse(data.inlineSettings);
+      if (!parsed.success) {
+        return c.json(
+          zodValidationErrorBody('Invalid monitoring settings', parsed.error),
+          400
+        );
+      }
+      // Validate only — deliberately NOT `data.inlineSettings = parsed.data`.
+      // The schema defaults the deprecated `alertRules`/`eventLogAlerts` write
+      // barrier keys to `[]`, and normalizing would write those dead keys back
+      // into the stored JSONB mirror on every save.
     }
 
     // addFeatureLink returns null (instead of throwing) on a duplicate — see the
@@ -268,7 +298,7 @@ featureLinkRoutes.patch(
         const parsed = patchInlineSettingsSchema.safeParse(data.inlineSettings ?? {});
         if (!parsed.success) {
           return c.json(
-            { error: 'Invalid patch settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+            zodValidationErrorBody('Invalid patch settings', parsed.error),
             400
           );
         }
@@ -288,7 +318,7 @@ featureLinkRoutes.patch(
         const parsed = schema.safeParse(data.inlineSettings);
         if (!parsed.success) {
           return c.json(
-            { error: 'Invalid backup settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+            zodValidationErrorBody('Invalid backup settings', parsed.error),
             400
           );
         }
@@ -298,7 +328,7 @@ featureLinkRoutes.patch(
         const parsed = pamInlineSettingsSchema.safeParse(data.inlineSettings);
         if (!parsed.success) {
           return c.json(
-            { error: 'Invalid pam settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+            zodValidationErrorBody('Invalid pam settings', parsed.error),
             400
           );
         }
@@ -308,7 +338,7 @@ featureLinkRoutes.patch(
         const parsed = remoteAccessInlineSettingsSchema.safeParse(data.inlineSettings);
         if (!parsed.success) {
           return c.json(
-            { error: 'Invalid remote access settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+            zodValidationErrorBody('Invalid remote access settings', parsed.error),
             400
           );
         }
@@ -318,17 +348,37 @@ featureLinkRoutes.patch(
         const parsed = onedriveHelperInlineSettingsSchema.safeParse(data.inlineSettings);
         if (!parsed.success) {
           return c.json(
-            { error: 'Invalid onedrive_helper settings', details: parsed.error.flatten(), issues: parsed.error.issues },
+            zodValidationErrorBody('Invalid onedrive_helper settings', parsed.error),
             400
           );
         }
         data.inlineSettings = parsed.data;
       }
       // Reject offline alert rules whose duration exceeds the re-eval horizon —
-      // such a rule could never fire (issue #1982).
+      // such a rule could never fire (issue #1982). Runs before the schema parse
+      // so the specific message wins (same ordering as the POST route).
       if (existingLink.featureType === 'alert_rule') {
         const violation = findOfflineDurationViolation(data.inlineSettings);
         if (violation) return c.json({ error: violation }, 400);
+
+        const parsed = alertRuleInlineSettingsSchema.safeParse(data.inlineSettings);
+        if (!parsed.success) {
+          return c.json(
+            zodValidationErrorBody('Invalid alert_rule settings', parsed.error),
+            400
+          );
+        }
+        data.inlineSettings = parsed.data;
+      }
+      if (existingLink.featureType === 'monitoring') {
+        const parsed = monitoringInlineSettingsSchema.safeParse(data.inlineSettings);
+        if (!parsed.success) {
+          return c.json(
+            zodValidationErrorBody('Invalid monitoring settings', parsed.error),
+            400
+          );
+        }
+        // Validate only — see the POST route for why parsed.data isn't written back.
       }
     }
 

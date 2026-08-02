@@ -74,6 +74,75 @@
       "unknown": "Verification needs attention. Retest the connection or start consent again."
     }
   },
+  "m365CustomerGraphActions": {
+    "title": "Customer Graph Actions",
+    "description": "Read-write Microsoft 365 user access granted by a customer administrator, used for actions such as resetting user passwords. Breeze never asks for a tenant secret or certificate here.",
+    "selectOrganization": "Select an organization to manage Customer Graph Actions.",
+    "loading": "Loading Customer Graph Actions connection.",
+    "unavailable": "Connection details are unavailable.",
+    "onboardingUnavailable": "Customer Graph Actions onboarding is not enabled for this organization.",
+    "callback": {
+      "active": "Microsoft consent completed. The refreshed connection status is shown below.",
+      "degraded": "Microsoft consent completed, but the connection needs attention. Refreshed details are shown below."
+    },
+    "tenant": "Verified tenant",
+    "tenantId": "Tenant ID",
+    "manifest": "Permission manifest",
+    "manifestVersion": "Manifest version {{version}}",
+    "unnamedTenant": "Unnamed tenant",
+    "notVerified": "Not verified",
+    "lastVerifiedAt": "Last connection verification",
+    "never": "Never",
+    "none": "None",
+    "microsoftConsentHelp": "Disconnecting in Breeze does not remove tenant-wide consent in Microsoft Entra.",
+    "microsoftConsentDocs": "Manage Microsoft application permissions",
+    "status": {
+      "pending-consent": "Pending consent",
+      "verifying": "Verifying",
+      "active": "Active",
+      "degraded": "Degraded",
+      "suspended": "Suspended",
+      "revoked": "Revoked"
+    },
+    "grants": {
+      "required": "Required permissions",
+      "observed": "Observed permissions",
+      "missing": "Missing permissions",
+      "unexpectedAlert": "Unexpected permissions detected",
+      "unknownPermission": "Unknown permission (role {{appRoleId}})",
+      "grantsVerifiedAt": "Permissions verified"
+    },
+    "actions": {
+      "connect": "Connect",
+      "reconsent": "Re-consent",
+      "retest": "Retest",
+      "disconnect": "Disconnect from Breeze",
+      "permissionRequired": "Organization write permission is required for these actions.",
+      "consentFailed": "Consent could not be started.",
+      "retestFailed": "The connection could not be retested.",
+      "retestSucceeded": "Connection retest completed.",
+      "disconnectWarning": "Disconnecting stops Breeze from using this connection. Microsoft tenant-wide consent remains until a customer administrator removes it in Microsoft Entra.",
+      "disconnectFailed": "The connection could not be disconnected.",
+      "disconnectSucceeded": "Breeze connection disconnected."
+    },
+    "errors": {
+      "consent_expired": "The consent session expired. Start consent again.",
+      "consent_state_mismatch": "The consent session could not be verified. Start consent again.",
+      "consent_cancelled": "Microsoft consent was cancelled.",
+      "admin_role_required": "A Global Administrator or Privileged Role Administrator must grant consent.",
+      "tenant_mismatch": "Microsoft returned a different tenant. Start consent again for this organization.",
+      "tenant_already_bound": "This Microsoft tenant is already connected to another organization.",
+      "credential_unavailable": "The connection credential is unavailable. Contact a Breeze administrator.",
+      "identity_token_invalid": "Microsoft administrator identity verification failed.",
+      "application_token_invalid": "Microsoft application verification failed.",
+      "grant_missing": "One or more required Microsoft permissions are missing.",
+      "grant_unexpected": "Microsoft reports permissions outside the approved manifest.",
+      "manifest_stale": "The granted permissions use an older manifest. Grant consent again.",
+      "organization_probe_failed": "The Microsoft organization check failed. Retest the connection.",
+      "executor_unavailable": "The verification service is unavailable. Retest later.",
+      "unknown": "Verification needs attention. Retest the connection or start consent again."
+    }
+  },
   "communicationIntegrations": {
     "critical": "Critical",
     "high": "High",
@@ -95,7 +164,7 @@
     "slack": "Slack",
     "connectAWorkspaceWithOAuthAndPostAlerts": "Connect a workspace with OAuth and post alerts to channels. ",
     "workspace": "Workspace",
-    "workspaceID": "Workspace ID: ",
+    "workspaceID": "Workspace ID: {{id}}",
     "connectWorkspace": "Connect workspace ",
     "oauthRedirectStartsWhenYouConnectASlack": "OAuth redirect starts when you connect a Slack workspace. ",
     "defaultChannel": "Default channel",
@@ -265,10 +334,7 @@
     "unmap": "Unmap ",
     "noHuntressOrganizationsDiscoveredYetSaveCredentialsAnd": "No Huntress organizations discovered yet. Save credentials and run Sync Now. ",
     "noOrganizationsMatchTheCurrentFilter": "No organizations match the current filter. ",
-    "showing": "Showing ",
-    "of": "of ",
     "previous": "Previous ",
-    "page": "Page ",
     "next": "Next ",
     "recentIncidents": "Recent incidents",
     "liveStatusError": "Live Huntress status could not be fully loaded. Coverage and incident data below may be incomplete or out of date.",
@@ -307,7 +373,9 @@
     "update": "Update",
     "saveAndConnect": "Save & Connect",
     "unknownTime": "Unknown time",
-    "askAdminToConnect": "Huntress is configured once at the partner level and shared across every organization. Ask your MSP administrator to connect it."
+    "askAdminToConnect": "Huntress is configured once at the partner level and shared across every organization. Ask your MSP administrator to connect it.",
+    "showingRange": "Showing {{start}}–{{end}} of {{total}}",
+    "pageOf": "Page {{current}} of {{total}}"
   },
   "integrationsPage": {
     "webhooks": "Webhooks",
@@ -728,7 +796,7 @@
     "stripeDashboard": "Stripe dashboard ",
     "loadingStripeConnection": "Loading Stripe connection…",
     "couldNotLoadStripeConnection": "Could not load Stripe connection.",
-    "key": "key •••• ",
+    "key": "key •••• {{last4}}",
     "skLiveOrRkLive": "sk_live_… or rk_live_…",
     "connected": "Connected",
     "live": "Live",
@@ -878,15 +946,14 @@
     "loadingWebhooks": "Loading webhooks...",
     "tryAgain": "Try again ",
     "webhooks": "Webhooks",
-    "endpoints": "endpoints, ",
-    "averageSuccessRate": "% average success rate ",
     "addWebhook": "Add webhook ",
     "events": "Events",
     "lastTriggered": "Last Triggered",
     "successRate": "Success Rate",
     "anErrorOccurred": "An error occurred",
     "justNow": "Just now",
-    "url": "URL"
+    "url": "URL",
+    "endpointsSummary": "{{total}} endpoints, {{successRate}}% average success rate"
   },
   "webhookTestPanel": {
     "failedToFetchTestHistory": "Failed to fetch test history",
