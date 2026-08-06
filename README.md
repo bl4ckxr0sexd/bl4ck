@@ -511,7 +511,7 @@ Breeze is free and open source. If it helps your team, you can support ongoing d
 ### Sponsors
 
 <!-- sponsors:start -->
-_No public sponsors yet. [Become the first sponsor →](https://github.com/sponsors/LanternOps)_
+<a href="https://github.com/clozano65"><img src="https://avatars.githubusercontent.com/u/45998142?v=4&amp;s=128" width="64" height="64" alt="clozano65" title="clozano65 (@clozano65)" /></a>
 <!-- sponsors:end -->
 
 ---
