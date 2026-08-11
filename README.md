@@ -511,7 +511,7 @@ Breeze is free and open source. If it helps your team, you can support ongoing d
 ### Sponsors
 
 <!-- sponsors:start -->
-<a href="https://github.com/clozano65"><img src="https://avatars.githubusercontent.com/u/45998142?v=4&amp;s=128" width="64" height="64" alt="clozano65" title="clozano65 (@clozano65)" /></a>
+<a href="https://github.com/clozano65"><img src="https://avatars.githubusercontent.com/u/45998142?u=371b4369054c6e9d240c1afc7a102c09b48f981d&amp;v=4&amp;s=128" width="64" height="64" alt="Cesar Lozano" title="Cesar Lozano (@clozano65)" /></a>
 <!-- sponsors:end -->
 
 ---
