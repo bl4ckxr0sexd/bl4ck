@@ -561,6 +561,7 @@ Thank you to everyone who has contributed to Breeze.
 <a href="https://github.com/Emilien-Etadam"><img src="https://avatars.githubusercontent.com/u/56485277?v=4&amp;s=128" width="64" height="64" alt="Emilien-Etadam" title="Emilien-Etadam (@Emilien-Etadam)" /></a>
 <a href="https://github.com/CookieSource"><img src="https://avatars.githubusercontent.com/u/36531905?v=4&amp;s=128" width="64" height="64" alt="CookieSource" title="CookieSource (@CookieSource)" /></a>
 <a href="https://github.com/LewisLosa"><img src="https://avatars.githubusercontent.com/u/95869100?v=4&amp;s=128" width="64" height="64" alt="LewisLosa" title="LewisLosa (@LewisLosa)" /></a>
+<a href="https://github.com/hcaldicott"><img src="https://avatars.githubusercontent.com/u/1539430?v=4&amp;s=128" width="64" height="64" alt="hcaldicott" title="hcaldicott (@hcaldicott)" /></a>
 <!-- contributors:end -->
 
 ### Community
