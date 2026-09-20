@@ -559,6 +559,7 @@ Thank you to everyone who has contributed to Breeze.
 <a href="https://github.com/bdunncompany"><img src="https://avatars.githubusercontent.com/u/17571793?v=4&amp;s=128" width="64" height="64" alt="bdunncompany" title="bdunncompany (@bdunncompany)" /></a>
 <a href="https://github.com/ramphex"><img src="https://avatars.githubusercontent.com/u/43665314?v=4&amp;s=128" width="64" height="64" alt="ramphex" title="ramphex (@ramphex)" /></a>
 <a href="https://github.com/fabicarvano"><img src="https://avatars.githubusercontent.com/u/205927015?v=4&amp;s=128" width="64" height="64" alt="fabicarvano" title="fabicarvano (@fabicarvano)" /></a>
+<a href="https://github.com/advenimus"><img src="https://avatars.githubusercontent.com/u/102630001?v=4&amp;s=128" width="64" height="64" alt="advenimus" title="advenimus (@advenimus)" /></a>
 <a href="https://github.com/Emilien-Etadam"><img src="https://avatars.githubusercontent.com/u/56485277?v=4&amp;s=128" width="64" height="64" alt="Emilien-Etadam" title="Emilien-Etadam (@Emilien-Etadam)" /></a>
 <a href="https://github.com/mvthul"><img src="https://avatars.githubusercontent.com/u/53946558?v=4&amp;s=128" width="64" height="64" alt="mvthul" title="mvthul (@mvthul)" /></a>
 <a href="https://github.com/CookieSource"><img src="https://avatars.githubusercontent.com/u/36531905?v=4&amp;s=128" width="64" height="64" alt="CookieSource" title="CookieSource (@CookieSource)" /></a>
