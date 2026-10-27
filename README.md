@@ -574,6 +574,7 @@ Thank you to everyone who has contributed to Breeze.
 <a href="https://github.com/LewisLosa"><img src="https://avatars.githubusercontent.com/u/95869100?v=4&amp;s=128" width="64" height="64" alt="LewisLosa" title="LewisLosa (@LewisLosa)" /></a>
 <a href="https://github.com/jay23606"><img src="https://avatars.githubusercontent.com/u/4602056?v=4&amp;s=128" width="64" height="64" alt="jay23606" title="jay23606 (@jay23606)" /></a>
 <a href="https://github.com/JayDawgZA"><img src="https://avatars.githubusercontent.com/u/278054780?v=4&amp;s=128" width="64" height="64" alt="JayDawgZA" title="JayDawgZA (@JayDawgZA)" /></a>
+<a href="https://github.com/JonathanPitre"><img src="https://avatars.githubusercontent.com/u/15003329?v=4&amp;s=128" width="64" height="64" alt="JonathanPitre" title="JonathanPitre (@JonathanPitre)" /></a>
 <a href="https://github.com/travroo321"><img src="https://avatars.githubusercontent.com/u/39356748?v=4&amp;s=128" width="64" height="64" alt="travroo321" title="travroo321 (@travroo321)" /></a>
 <!-- contributors:end -->
 
