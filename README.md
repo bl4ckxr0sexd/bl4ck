@@ -569,6 +569,7 @@ Thank you to everyone who has contributed to Breeze.
 <a href="https://github.com/JonathanPitre"><img src="https://avatars.githubusercontent.com/u/15003329?v=4&amp;s=128" width="64" height="64" alt="JonathanPitre" title="JonathanPitre (@JonathanPitre)" /></a>
 <a href="https://github.com/Emilien-Etadam"><img src="https://avatars.githubusercontent.com/u/56485277?v=4&amp;s=128" width="64" height="64" alt="Emilien-Etadam" title="Emilien-Etadam (@Emilien-Etadam)" /></a>
 <a href="https://github.com/Jay-Starlux"><img src="https://avatars.githubusercontent.com/u/122799880?v=4&amp;s=128" width="64" height="64" alt="Jay-Starlux" title="Jay-Starlux (@Jay-Starlux)" /></a>
+<a href="https://github.com/sr1k3sh"><img src="https://avatars.githubusercontent.com/u/45138040?v=4&amp;s=128" width="64" height="64" alt="sr1k3sh" title="sr1k3sh (@sr1k3sh)" /></a>
 <a href="https://github.com/aayush-ashok"><img src="https://avatars.githubusercontent.com/u/54711854?v=4&amp;s=128" width="64" height="64" alt="aayush-ashok" title="aayush-ashok (@aayush-ashok)" /></a>
 <a href="https://github.com/CookieSource"><img src="https://avatars.githubusercontent.com/u/36531905?v=4&amp;s=128" width="64" height="64" alt="CookieSource" title="CookieSource (@CookieSource)" /></a>
 <a href="https://github.com/obsidiangroup"><img src="https://avatars.githubusercontent.com/u/54423468?v=4&amp;s=128" width="64" height="64" alt="obsidiangroup" title="obsidiangroup (@obsidiangroup)" /></a>
