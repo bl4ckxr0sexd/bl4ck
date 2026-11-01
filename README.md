@@ -563,10 +563,10 @@ Thank you to everyone who has contributed to Breeze.
 <a href="https://github.com/ramphex"><img src="https://avatars.githubusercontent.com/u/43665314?v=4&amp;s=128" width="64" height="64" alt="ramphex" title="ramphex (@ramphex)" /></a>
 <a href="https://github.com/advenimus"><img src="https://avatars.githubusercontent.com/u/102630001?v=4&amp;s=128" width="64" height="64" alt="advenimus" title="advenimus (@advenimus)" /></a>
 <a href="https://github.com/hcaldicott"><img src="https://avatars.githubusercontent.com/u/1539430?v=4&amp;s=128" width="64" height="64" alt="hcaldicott" title="hcaldicott (@hcaldicott)" /></a>
+<a href="https://github.com/JonathanPitre"><img src="https://avatars.githubusercontent.com/u/15003329?v=4&amp;s=128" width="64" height="64" alt="JonathanPitre" title="JonathanPitre (@JonathanPitre)" /></a>
 <a href="https://github.com/mvthul"><img src="https://avatars.githubusercontent.com/u/53946558?v=4&amp;s=128" width="64" height="64" alt="mvthul" title="mvthul (@mvthul)" /></a>
 <a href="https://github.com/PJF16"><img src="https://avatars.githubusercontent.com/u/1500446?v=4&amp;s=128" width="64" height="64" alt="PJF16" title="PJF16 (@PJF16)" /></a>
 <a href="https://github.com/bgatestmg"><img src="https://avatars.githubusercontent.com/u/153768976?v=4&amp;s=128" width="64" height="64" alt="bgatestmg" title="bgatestmg (@bgatestmg)" /></a>
-<a href="https://github.com/JonathanPitre"><img src="https://avatars.githubusercontent.com/u/15003329?v=4&amp;s=128" width="64" height="64" alt="JonathanPitre" title="JonathanPitre (@JonathanPitre)" /></a>
 <a href="https://github.com/Emilien-Etadam"><img src="https://avatars.githubusercontent.com/u/56485277?v=4&amp;s=128" width="64" height="64" alt="Emilien-Etadam" title="Emilien-Etadam (@Emilien-Etadam)" /></a>
 <a href="https://github.com/Jay-Starlux"><img src="https://avatars.githubusercontent.com/u/122799880?v=4&amp;s=128" width="64" height="64" alt="Jay-Starlux" title="Jay-Starlux (@Jay-Starlux)" /></a>
 <a href="https://github.com/sr1k3sh"><img src="https://avatars.githubusercontent.com/u/45138040?v=4&amp;s=128" width="64" height="64" alt="sr1k3sh" title="sr1k3sh (@sr1k3sh)" /></a>
