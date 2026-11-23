@@ -565,6 +565,7 @@ Thank you to everyone who has contributed to Breeze.
 <a href="https://github.com/PJF16"><img src="https://avatars.githubusercontent.com/u/1500446?v=4&amp;s=128" width="64" height="64" alt="PJF16" title="PJF16 (@PJF16)" /></a>
 <a href="https://github.com/advenimus"><img src="https://avatars.githubusercontent.com/u/102630001?v=4&amp;s=128" width="64" height="64" alt="advenimus" title="advenimus (@advenimus)" /></a>
 <a href="https://github.com/jasonhorneco"><img src="https://avatars.githubusercontent.com/u/195944883?v=4&amp;s=128" width="64" height="64" alt="jasonhorneco" title="jasonhorneco (@jasonhorneco)" /></a>
+<a href="https://github.com/jeffharlan"><img src="https://avatars.githubusercontent.com/u/135848464?v=4&amp;s=128" width="64" height="64" alt="jeffharlan" title="jeffharlan (@jeffharlan)" /></a>
 <a href="https://github.com/hcaldicott"><img src="https://avatars.githubusercontent.com/u/1539430?v=4&amp;s=128" width="64" height="64" alt="hcaldicott" title="hcaldicott (@hcaldicott)" /></a>
 <a href="https://github.com/mvthul"><img src="https://avatars.githubusercontent.com/u/53946558?v=4&amp;s=128" width="64" height="64" alt="mvthul" title="mvthul (@mvthul)" /></a>
 <a href="https://github.com/sr1k3sh"><img src="https://avatars.githubusercontent.com/u/45138040?v=4&amp;s=128" width="64" height="64" alt="sr1k3sh" title="sr1k3sh (@sr1k3sh)" /></a>
